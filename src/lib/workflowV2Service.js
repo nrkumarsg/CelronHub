@@ -63,15 +63,15 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
 
     const fullPrefix = `${prefix}-${yy}${mm}-`;
 
-    // Fetch the latest number, excluding revisions to avoid parsing errors like -R1
+    // Fetch the latest numbers across all months to find the absolute maximum serial number
     let query = supabase
         .from('workflow_documents')
         .select('document_no')
         .eq('company_id', companyId)
-        .ilike('document_no', `${fullPrefix}%`)
+        .ilike('document_no', `${prefix}-%`)
         .not('document_no', 'ilike', '%-R%') // Exclude revisions
-        .order('document_no', { ascending: false })
-        .limit(1);
+        .order('created_at', { ascending: false })
+        .limit(100);
 
     if (type !== 'Job') {
         query = query.eq('document_type', type);
@@ -83,11 +83,17 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
     if (type === 'Job') nextNum = 6051;
 
     if (data && data.length > 0) {
-        const lastNo = data[0].document_no;
-        const parts = lastNo.split('-');
-        const lastIncremental = parseInt(parts[parts.length - 1], 10);
-        if (!isNaN(lastIncremental)) {
-            nextNum = lastIncremental + 1;
+        let maxNum = 0;
+        for (const doc of data) {
+            const parts = doc.document_no.split('-');
+            const lastPart = parts[parts.length - 1];
+            const num = parseInt(lastPart, 10);
+            if (!isNaN(num) && num > maxNum) {
+                maxNum = num;
+            }
+        }
+        if (maxNum > 0) {
+            nextNum = maxNum + 1;
         }
     }
 
