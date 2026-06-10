@@ -860,6 +860,8 @@ export const duplicateWorkflowDocument = async (docId, overrides = {}) => {
         customer_po_date: null,
         customer_po_by_id: null,
         customer_po_attachment_url: null,
+        drive_folder_id: null,
+        gdrive_folder_id: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         ...overrides
