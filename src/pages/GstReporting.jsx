@@ -61,13 +61,13 @@ export default function GstReporting() {
             const [docsRes, expRes, jobsRes] = await Promise.all([
                 supabase
                     .from('workflow_documents')
-                    .select('*, partners(name)')
+                    .select('*')
                     .eq('company_id', profile.company_id)
                     .in('document_type', ['Tax Invoice', 'Proforma Invoice', 'Purchase Order'])
                     .order('issue_date', { ascending: false }),
                 supabase
                     .from('job_expenses')
-                    .select('*, partner:supplier_id(name)')
+                    .select('*')
                     .eq('company_id', profile.company_id)
                     .order('invoice_date', { ascending: false }),
                 supabase
@@ -80,8 +80,42 @@ export default function GstReporting() {
             if (docsRes.error) throw docsRes.error;
             if (expRes.error) throw expRes.error;
 
-            setDocuments(docsRes.data || []);
-            setExpenses(expRes.data || []);
+            const docs = docsRes.data || [];
+            const expenses = expRes.data || [];
+
+            // Combine all partner IDs from both documents and expenses to fetch in a single query
+            const allPartnerIds = [
+                ...new Set([
+                    ...docs.map(d => d.partner_id),
+                    ...expenses.map(e => e.supplier_id)
+                ].filter(Boolean))
+            ];
+
+            if (allPartnerIds.length > 0) {
+                const { data: partnersData, error: pError } = await supabase
+                    .from('partners')
+                    .select('id, name')
+                    .in('id', allPartnerIds);
+
+                if (!pError && partnersData) {
+                    const partnerMap = Object.fromEntries(partnersData.map(p => [p.id, p]));
+                    
+                    docs.forEach(d => {
+                        if (d.partner_id) {
+                            d.partners = partnerMap[d.partner_id];
+                        }
+                    });
+
+                    expenses.forEach(e => {
+                        if (e.supplier_id) {
+                            e.partner = partnerMap[e.supplier_id];
+                        }
+                    });
+                }
+            }
+
+            setDocuments(docs);
+            setExpenses(expenses);
             setJobs(jobsRes.data || []);
             
             // Create job number -> ID map
@@ -118,16 +152,17 @@ export default function GstReporting() {
         if (!inRange) return false;
 
         if (doc.document_type === 'Tax Invoice') {
-            return doc.assigned_job_no && doc.document_no;
+            return !!doc.document_no;
         }
 
         if (doc.document_type === 'Proforma Invoice') {
             // Only include Proforma if there is NO Tax Invoice for this job in the entire documents list
-            const hasTaxInvoice = documents.some(d => 
+            // (or if it's a direct Proforma Invoice with no job)
+            const hasTaxInvoice = doc.assigned_job_no ? documents.some(d => 
                 d.document_type === 'Tax Invoice' && 
                 d.assigned_job_no === doc.assigned_job_no
-            );
-            return doc.assigned_job_no && doc.document_no && !hasTaxInvoice;
+            ) : false;
+            return doc.document_no && !hasTaxInvoice;
         }
 
         return false;
@@ -507,7 +542,7 @@ export default function GstReporting() {
             </div>
 
             {/* Quick Add Modal */}
-            <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Quick Add Bill/Voucher" icon={Plus}>
+            <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Quick Add Bill/Voucher" icon={Plus} size="xl">
                 <QuickExpenseAdd 
                     company_id={profile?.company_id}
                     partners={partners}

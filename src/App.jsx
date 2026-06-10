@@ -11,6 +11,8 @@ import Partners from './pages/Partners';
 import PartnerForm from './pages/PartnerForm';
 import ContactsForm from './pages/ContactsForm';
 import ContactsDirectory from './pages/ContactsDirectory';
+import AiEmailParser from './pages/AiEmailParser';
+import AiDriveCardParser from './pages/AiDriveCardParser';
 import VesselsDirectory from './pages/VesselsDirectory';
 import VesselForm from './pages/VesselForm';
 import VesselTracking from './pages/VesselTracking';
@@ -28,6 +30,7 @@ import EnquiryDetails from './pages/workflows/EnquiryDetails';
 import JobDetails from './pages/workflows/JobDetails';
 import UnifiedSupplierHub from './pages/workflows/UnifiedSupplierHub';
 import WorkflowV2Board from './pages/workflows/WorkflowV2Board';
+import JobsDashboard from './pages/workflows/JobsDashboard';
 import EnquiryList from './pages/workflows/EnquiryList';
 import WorkflowEditor from './pages/workflows/WorkflowEditor';
 import StatementOfAccount from './pages/workflows/StatementOfAccount';
@@ -57,6 +60,7 @@ import FloatSupplierOrder from './pages/workflows/FloatSupplierOrder';
 import CommercialWallPage from './pages/CommercialWallPage';
 import SearchResults from './pages/SearchResults';
 import ApkManagement from './pages/admin/ApkManagement';
+import ActivityLogs from './pages/admin/ActivityLogs';
 import BillsPortal from './pages/accounts/BillsPortal';
 
 
@@ -134,6 +138,8 @@ function App() {
 
               {/* Partners Module */}
               <Route path="/partners" element={<ProtectedRoute requiredModule="partners"><Partners /></ProtectedRoute>} />
+              <Route path="/partners/ai-parser" element={<ProtectedRoute requiredModule="partners"><AiEmailParser /></ProtectedRoute>} />
+              <Route path="/partners/ai-drive-parser" element={<ProtectedRoute requiredModule="partners"><AiDriveCardParser /></ProtectedRoute>} />
               <Route path="/partners/:id" element={<ProtectedRoute requiredModule="partners"><PartnerForm /></ProtectedRoute>} />
 
               <Route path="/categories" element={<ProtectedRoute><CategoriesDirectory /></ProtectedRoute>} />
@@ -159,6 +165,7 @@ function App() {
 
               {/* Workflows & Universal Finder Module */}
               <Route path="/unified-supplier-hub" element={<ProtectedRoute><UnifiedSupplierHub /></ProtectedRoute>} />
+              <Route path="/workflows/jobs-dashboard" element={<ProtectedRoute><JobsDashboard /></ProtectedRoute>} />
               <Route path="/workflows" element={<ProtectedRoute><WorkflowV2Board /></ProtectedRoute>} />
               <Route path="/enquiries" element={<ProtectedRoute><EnquiryList /></ProtectedRoute>} />
               <Route path="/quotations" element={<ProtectedRoute><WorkflowV2Board /></ProtectedRoute>} />
@@ -218,6 +225,7 @@ function App() {
               
               {/* Admin Tools */}
               <Route path="/admin/apks" element={<ProtectedRoute><ApkManagement /></ProtectedRoute>} />
+              <Route path="/admin/logs" element={<ProtectedRoute><ActivityLogs /></ProtectedRoute>} />
 
               {/* Direct APK Download Redirect (Handles /apks/scanner etc) */}
               <Route path="/apks/:identifier" element={<ApkDownloadHandler />} />

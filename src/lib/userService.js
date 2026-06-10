@@ -30,12 +30,37 @@ export const getProfile = async (userId) => {
 
 export const getAllProfiles = async () => {
     try {
-        const { data, error } = await supabase
+        // Fetch profiles first
+        const { data: profiles, error: profilesError } = await supabase
             .from('profiles')
-            .select('*, company:companies(name)')
+            .select('*')
             .order('created_at', { ascending: false });
 
-        if (error) throw error;
+        if (profilesError) throw profilesError;
+
+        if (!profiles || profiles.length === 0) {
+            return { data: [], error: null };
+        }
+
+        // Fetch all companies to map them in memory separately
+        const { data: companies } = await supabase
+            .from('companies')
+            .select('id, name');
+
+        // Create a lookup map for companies
+        const companyMap = {};
+        if (companies) {
+            companies.forEach(c => {
+                companyMap[c.id] = c;
+            });
+        }
+
+        // Map the company info to each profile in memory
+        const data = profiles.map(p => ({
+            ...p,
+            company: p.company_id ? companyMap[p.company_id] : null
+        }));
+
         return { data, error: null };
     } catch (error) {
         console.error('Error fetching all profiles:', error);
@@ -68,9 +93,20 @@ export const updateProfile = async (userId, updates) => {
 
 export const createProfileManually = async (profileData) => {
     try {
+        const isNrKumar = profileData.email?.toLowerCase() === 'nrkumarsg@gmail.com';
+        // Clean the payload to keep only database-level columns and prevent schema cache errors
+        const payload = {
+            id: profileData.id,
+            email: profileData.email,
+            role: profileData.role || (isNrKumar ? 'superadmin' : 'user'),
+            status: profileData.status || 'active',
+            company_id: profileData.company_id,
+            accessible_modules: profileData.accessible_modules || []
+        };
+
         const { data, error } = await supabase
             .from('profiles')
-            .insert([profileData])
+            .insert([payload])
             .select()
             .single();
 

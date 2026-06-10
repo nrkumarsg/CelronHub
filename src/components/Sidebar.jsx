@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, Link, NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe, History } from 'lucide-react';
 
 import { useAuth } from '../contexts/AuthContext';
 import { getTodos } from '../lib/todoService';
@@ -249,7 +249,7 @@ export default function Sidebar() {
                     <span className="nav-text" style={{ fontWeight: 800, color: '#6366f1' }}>Quote2Customers</span>
                 </NavLink>
 
-                <NavLink to="/workflows?type=Job" className={`nav-link ${(location.pathname === '/workflows' && location.search.includes('type=Job')) ? 'active' : ''}`} title="JOBS">
+                <NavLink to="/workflows/jobs-dashboard" className={`nav-link ${(location.pathname === '/workflows/jobs-dashboard' || (location.pathname === '/workflows' && location.search.includes('type=Job'))) ? 'active' : ''}`} title="JOBS">
                     <ShieldCheck size={20} color="#10b981" />
                     <span className="nav-text" style={{ fontWeight: 800, color: '#10b981' }}>JOBS</span>
                 </NavLink>
@@ -270,12 +270,24 @@ export default function Sidebar() {
                 >
                     <CheckCircle size={20} color="#22c55e" />
                     <span className="nav-text" style={{ fontWeight: 800, color: '#22c55e' }}>Payment Received</span>
-                </NavLink>
-
-                <NavLink to="/soa" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Statement of Account">
+                </NavLink>                <NavLink 
+                    to="/soa" 
+                    className={({ isActive }) => `nav-link ${isActive && !location.search.includes('tab=automated') ? 'active' : ''}`} 
+                    title="Statement of Account"
+                >
                     <ClipboardList size={20} color="#ec4899" />
                     <span className="nav-text" style={{ fontWeight: 800, color: '#ec4899' }}>Statement of Account</span>
                 </NavLink>
+                {isPinned && (
+                    <NavLink 
+                        to="/soa?tab=automated" 
+                        className={`nav-link shortcut-link ${(location.pathname === '/soa' && location.search.includes('tab=automated')) ? 'active' : ''}`} 
+                        title="Automated Dispatch Center"
+                    >
+                        <CalendarDays size={16} color="#ec4899" style={{ marginLeft: '12px' }} />
+                        <span className="nav-text" style={{ fontSize: '0.85rem', color: '#f472b6', fontWeight: 600 }}>Automated SOA Dispatch</span>
+                    </NavLink>
+                )}
 
                 <div className="nav-separator" />
                 <span className="nav-group-header">Finance &amp; Accounts</span>
@@ -423,16 +435,32 @@ export default function Sidebar() {
                     <>
                         <span className="nav-group-header">Partnership</span>
                         {hasAccess('partners') && (
-                            <NavLink to="/partners" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Partners">
-                                <Building2 size={20} color="#94a3b8" />
-                                <span className="nav-text">Partners</span>
-                            </NavLink>
+                            <>
+                                <NavLink to="/partners" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end title="Partners">
+                                    <Building2 size={20} color="#94a3b8" />
+                                    <span className="nav-text">Partners</span>
+                                </NavLink>
+                                {isPinned && (
+                                    <NavLink to="/partners/ai-drive-parser" className={({ isActive }) => `nav-link shortcut-link ${isActive ? 'active' : ''}`} title="AI Drive Card Scanner">
+                                        <HardDrive size={16} color="#ec4899" style={{ marginLeft: '12px' }} />
+                                        <span className="nav-text" style={{ fontSize: '0.85rem', color: '#f472b6', fontWeight: 600 }}>AI Drive Card Scanner</span>
+                                    </NavLink>
+                                )}
+                            </>
                         )}
                         {hasAccess('contacts') && (
-                            <NavLink to="/contacts" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Contacts">
-                                <Users size={20} color="#94a3b8" />
-                                <span className="nav-text">Contacts</span>
-                            </NavLink>
+                            <>
+                                <NavLink to="/contacts" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end title="Contacts">
+                                    <Users size={20} color="#94a3b8" />
+                                    <span className="nav-text">Contacts</span>
+                                </NavLink>
+                                {isPinned && (
+                                    <NavLink to="/partners/ai-parser" className={({ isActive }) => `nav-link shortcut-link ${isActive ? 'active' : ''}`} title="AI Email & Contact Parser">
+                                        <Sparkles size={16} color="#a855f7" style={{ marginLeft: '12px' }} />
+                                        <span className="nav-text" style={{ fontSize: '0.85rem', color: '#c084fc', fontWeight: 600 }}>AI Email &amp; Contact Parser</span>
+                                    </NavLink>
+                                )}
+                            </>
                         )}
                         <div className="nav-separator" />
                     </>
@@ -529,6 +557,12 @@ export default function Sidebar() {
                             <Smartphone size={20} color="#10b981" />
                             <span className="nav-text">APK Manager</span>
                         </NavLink>
+                        {profile?.role === 'superadmin' && (
+                            <NavLink to="/admin/logs" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Activity Logs">
+                                <History size={20} color="#a855f7" />
+                                <span className="nav-text" style={{ color: '#c084fc' }}>Activity Logs</span>
+                            </NavLink>
+                        )}
                     </>
                 )}
 

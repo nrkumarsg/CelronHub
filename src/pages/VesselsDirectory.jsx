@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit, Trash2, Download, Upload, Search, Ship, Printer, MapPin } from 'lucide-react';
+import { Plus, Edit, Trash2, Download, Upload, Search, Ship, Printer, MapPin, ArrowUpDown, ChevronDown } from 'lucide-react';
 import Papa from 'papaparse';
 import { useVesselsStore } from '../lib/vesselsStore';
 import Pagination from '../components/Pagination';
@@ -9,6 +9,8 @@ export default function VesselsDirectory() {
     const { vessels, loading, fetchVessels, deleteVessel, addVessel } = useVesselsStore();
     const [searchTerm, setSearchTerm] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
+    const [sortKey, setSortKey] = useState('name');
+    const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
     const itemsPerPage = 10;
     const navigate = useNavigate();
     const fileInputRef = useRef(null);
@@ -91,7 +93,25 @@ export default function VesselsDirectory() {
         );
     });
 
-    const paginatedVessels = filteredVessels.slice(
+    const sortedVessels = [...filteredVessels].sort((a, b) => {
+        let valA, valB;
+        if (sortKey === 'name') {
+            valA = a.vessel_name || '';
+            valB = b.vessel_name || '';
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        } else if (sortKey === 'type') {
+            valA = a.vessel_type || '';
+            valB = b.vessel_type || '';
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        } else if (sortKey === 'created_at') {
+            valA = a.created_at ? new Date(a.created_at) : 0;
+            valB = b.created_at ? new Date(b.created_at) : 0;
+            return sortDirection === 'desc' ? valB - valA : valA - valB;
+        }
+        return 0;
+    });
+
+    const paginatedVessels = sortedVessels.slice(
         (currentPage - 1) * itemsPerPage,
         currentPage * itemsPerPage
     );
@@ -153,6 +173,27 @@ export default function VesselsDirectory() {
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
+                </div>
+
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 16px', gap: '8px', minWidth: '200px' }}>
+                    <ArrowUpDown size={16} color="#94a3b8" style={{ flexShrink: 0 }} />
+                    <select
+                        value={`${sortKey}-${sortDirection}`}
+                        onChange={(e) => {
+                            const [key, dir] = e.target.value.split('-');
+                            setSortKey(key);
+                            setSortDirection(dir);
+                        }}
+                        style={{ appearance: 'none', background: 'transparent', border: 'none', outline: 'none', color: '#475569', fontSize: '0.9rem', fontWeight: 500, padding: '10px 24px 10px 0', cursor: 'pointer', width: '100%' }}
+                    >
+                        <option value="name-desc">Vessel Name (Z-A)</option>
+                        <option value="name-asc">Vessel Name (A-Z)</option>
+                        <option value="type-desc">Vessel Type (Z-A)</option>
+                        <option value="type-asc">Vessel Type (A-Z)</option>
+                        <option value="created_at-desc">Date Added (Newest)</option>
+                        <option value="created_at-asc">Date Added (Oldest)</option>
+                    </select>
+                    <ChevronDown size={14} color="#94a3b8" style={{ position: 'absolute', right: '16px', pointerEvents: 'none' }} />
                 </div>
             </div>
 

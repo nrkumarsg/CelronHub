@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Upload, Download, Trash2, Edit, MapPin, Printer } from 'lucide-react';
+import { Plus, Search, Upload, Download, Trash2, Edit, MapPin, Printer, ArrowUpDown, ChevronDown } from 'lucide-react';
 import { useWorkLocationsStore } from '../lib/workLocationsStore';
 import Papa from 'papaparse';
 import Pagination from '../components/Pagination';
@@ -10,6 +10,8 @@ export default function WorkLocationsDirectory() {
     const { workLocations, loading, fetchWorkLocations, deleteWorkLocation, addWorkLocation } = useWorkLocationsStore();
     const [searchTerm, setSearchTerm] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
+    const [sortKey, setSortKey] = useState('name');
+    const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
     const itemsPerPage = 10;
     const [isImporting, setIsImporting] = useState(false);
 
@@ -25,7 +27,25 @@ export default function WorkLocationsDirectory() {
         );
     });
 
-    const paginatedLocations = filteredLocations.slice(
+    const sortedLocations = [...filteredLocations].sort((a, b) => {
+        let valA, valB;
+        if (sortKey === 'name') {
+            valA = a.location_name || '';
+            valB = b.location_name || '';
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        } else if (sortKey === 'pincode') {
+            valA = a.pincode || '';
+            valB = b.pincode || '';
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        } else if (sortKey === 'created_at') {
+            valA = a.created_at ? new Date(a.created_at) : 0;
+            valB = b.created_at ? new Date(b.created_at) : 0;
+            return sortDirection === 'desc' ? valB - valA : valA - valB;
+        }
+        return 0;
+    });
+
+    const paginatedLocations = sortedLocations.slice(
         (currentPage - 1) * itemsPerPage,
         currentPage * itemsPerPage
     );
@@ -165,6 +185,27 @@ export default function WorkLocationsDirectory() {
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
+                </div>
+
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 16px', gap: '8px', minWidth: '200px' }}>
+                    <ArrowUpDown size={16} color="#94a3b8" style={{ flexShrink: 0 }} />
+                    <select
+                        value={`${sortKey}-${sortDirection}`}
+                        onChange={(e) => {
+                            const [key, dir] = e.target.value.split('-');
+                            setSortKey(key);
+                            setSortDirection(dir);
+                        }}
+                        style={{ appearance: 'none', background: 'transparent', border: 'none', outline: 'none', color: '#475569', fontSize: '0.9rem', fontWeight: 500, padding: '10px 24px 10px 0', cursor: 'pointer', width: '100%' }}
+                    >
+                        <option value="name-desc">Location Name (Z-A)</option>
+                        <option value="name-asc">Location Name (A-Z)</option>
+                        <option value="pincode-desc">Pincode (Z-A)</option>
+                        <option value="pincode-asc">Pincode (A-Z)</option>
+                        <option value="created_at-desc">Date Added (Newest)</option>
+                        <option value="created_at-asc">Date Added (Oldest)</option>
+                    </select>
+                    <ChevronDown size={14} color="#94a3b8" style={{ position: 'absolute', right: '16px', pointerEvents: 'none' }} />
                 </div>
             </div>
 

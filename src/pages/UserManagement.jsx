@@ -130,6 +130,53 @@ const UserManagement = () => {
                 alert("Error: " + res.error.message);
             }
         } else {
+            // If we created a new company, provision a Google Drive folder and Document Settings
+            if (!editingCompany && res.data) {
+                const newCompany = res.data;
+                try {
+                    const token = localStorage.getItem('google_access_token');
+                    let newFolderId = null;
+                    
+                    if (token) {
+                        const { getDocumentSettings } = await import('../lib/store');
+                        const { getOrCreateFolder } = await import('../lib/driveService');
+                        
+                        let parentFolderId = null;
+                        if (currentUserProfile?.company_id) {
+                            const currentSettings = await getDocumentSettings(currentUserProfile.company_id);
+                            const rawParent = currentSettings?.gdrive_celron_root_id || currentSettings?.google_drive_folder_id;
+                            if (rawParent) {
+                                parentFolderId = rawParent;
+                                if (parentFolderId.includes('drive.google.com')) {
+                                    const match = parentFolderId.match(/\/d\/([^/]+)/) || parentFolderId.match(/\/folders\/([^/?]+)/);
+                                    parentFolderId = match ? match[1] : parentFolderId;
+                                }
+                            }
+                        }
+                        
+                        if (!parentFolderId) {
+                            alert(`Notice: No Google Drive root folder is configured. The folder "${newCompany.name}" will be created in your main Google Drive root directory.`);
+                        }
+                        
+                        newFolderId = await getOrCreateFolder(token, newCompany.name, parentFolderId || 'root');
+                    } else {
+                        alert(`Notice: Google Drive is not connected. The company "${newCompany.name}" was created, but no Google Drive folder was provisioned.`);
+                    }
+                    
+                    const { saveDocumentSettings } = await import('../lib/store');
+                    await saveDocumentSettings({
+                        company_id: newCompany.id,
+                        company_name: newCompany.name,
+                        google_drive_folder_id: newFolderId ? `https://drive.google.com/drive/folders/${newFolderId}` : null,
+                        allow_signup: true,
+                        base_currency: 'SGD'
+                    });
+                } catch (driveErr) {
+                    console.error('Failed to provision GDrive folder or Document Settings:', driveErr);
+                    alert(`Company created, but Google Drive/Document Settings provisioning failed: ${driveErr.message || driveErr}`);
+                }
+            }
+
             setIsCompanyModalOpen(false);
             setEditingCompany(null);
             setCompanyForm({ name: '', slug: '', logo_url: '' });
@@ -289,9 +336,7 @@ const UserManagement = () => {
                                                     disabled={user.role === 'superadmin' && currentUserProfile?.id !== user.id} // Don't let others demote superadmins
                                                 >
                                                     <option value="user">User</option>
-                                                    {currentUserProfile?.role === 'superadmin' && (
-                                                        <option value="admin">Admin</option>
-                                                    )}
+                                                    <option value="admin">Admin</option>
                                                     {user.role === 'superadmin' && (
                                                         <option value="superadmin">Superadmin</option>
                                                     )}

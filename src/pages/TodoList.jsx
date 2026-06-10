@@ -11,7 +11,9 @@ import {
     Filter,
     ChevronRight,
     MoreVertical,
-    Check
+    Check,
+    ArrowUpDown,
+    ChevronDown
 } from 'lucide-react';
 import { getTodos, createTodo, updateTodo, deleteTodo } from '../lib/todoService';
 
@@ -27,6 +29,8 @@ export default function TodoList() {
         due_date: new Date().toISOString().split('T')[0],
         priority: 'medium'
     });
+    const [sortKey, setSortKey] = useState('due_date');
+    const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
 
     const loadTodos = async () => {
         setLoading(true);
@@ -88,6 +92,25 @@ export default function TodoList() {
         return matchesSearch && matchesStatus;
     });
 
+    const sortedTodos = [...filteredTodos].sort((a, b) => {
+        let valA, valB;
+        if (sortKey === 'due_date') {
+            valA = a.due_date ? new Date(a.due_date) : 0;
+            valB = b.due_date ? new Date(b.due_date) : 0;
+            return sortDirection === 'desc' ? valB - valA : valA - valB;
+        } else if (sortKey === 'priority') {
+            const priorityVal = (p) => p === 'high' ? 3 : p === 'medium' ? 2 : 1;
+            valA = priorityVal(a.priority);
+            valB = priorityVal(b.priority);
+            return sortDirection === 'desc' ? valB - valA : valA - valB;
+        } else if (sortKey === 'title') {
+            valA = a.title || '';
+            valB = b.title || '';
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        }
+        return 0;
+    });
+
     const getPriorityColor = (priority) => {
         switch (priority) {
             case 'high': return '#ef4444';
@@ -124,7 +147,7 @@ export default function TodoList() {
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
                 </div>
-                <div style={{ display: 'flex', background: 'var(--bg-secondary)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                <div style={{ display: 'flex', background: 'var(--bg-secondary)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-color)', marginRight: '10px' }}>
                     {['all', 'today', 'active', 'completed'].map(filter => (
                         <button
                             key={filter}
@@ -146,6 +169,25 @@ export default function TodoList() {
                         </button>
                     ))}
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-secondary)', padding: '4px 12px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                    <ArrowUpDown size={16} color="var(--text-secondary)" style={{ marginRight: '8px' }} />
+                    <select
+                        style={{ border: 'none', background: 'transparent', outline: 'none', color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 500, cursor: 'pointer', height: '38px', minWidth: '150px' }}
+                        value={`${sortKey}-${sortDirection}`}
+                        onChange={(e) => {
+                            const [key, dir] = e.target.value.split('-');
+                            setSortKey(key);
+                            setSortDirection(dir);
+                        }}
+                    >
+                        <option value="due_date-desc">Due Date (Latest First)</option>
+                        <option value="due_date-asc">Due Date (Earliest First)</option>
+                        <option value="priority-desc">Priority (High to Low)</option>
+                        <option value="priority-asc">Priority (Low to High)</option>
+                        <option value="title-desc">Title (Z-A)</option>
+                        <option value="title-asc">Title (A-Z)</option>
+                    </select>
+                </div>
             </div>
 
             {loading ? (
@@ -153,7 +195,7 @@ export default function TodoList() {
                     <Clock className="animate-pulse" style={{ marginBottom: '12px' }} />
                     <p>Loading your tasks...</p>
                 </div>
-            ) : filteredTodos.length === 0 ? (
+            ) : sortedTodos.length === 0 ? (
                 <div className="glass-panel" style={{ textAlign: 'center', padding: '60px', borderStyle: 'dashed' }}>
                     <CheckCircle2 size={48} color="var(--border-color)" style={{ marginBottom: '16px' }} />
                     <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem' }}>No tasks found in this category.</p>
@@ -167,7 +209,7 @@ export default function TodoList() {
                 </div>
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {filteredTodos.map(todo => (
+                    {sortedTodos.map(todo => (
                         <div
                             key={todo.id}
                             className="glass-panel"

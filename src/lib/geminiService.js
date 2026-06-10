@@ -463,3 +463,95 @@ export async function extractDualPartnerContact(text) {
         return null;
     }
 }
+
+/**
+ * Bulk Email Signature / List Parser: Converts raw text dumps of To/Cc fields or signatures into structured contacts and domains.
+ */
+export async function parseBulkEmails(text) {
+    const prompt = `
+        Analyze this text containing a list of email addresses, names, or general contact blocks (e.g., from an email's To/Cc field, email signatures, or directory lists).
+        Text: "${text}"
+        
+        Extract a list of contacts. For each contact, determine:
+        1. Person's full name (if they only have a squashed handle or first name like "HussianShah", guess/convert to formatted name like "Hussian Shah". Capitalize correctly).
+        2. Email address.
+        3. Company name: Extract the domain from the email (excluding generic domains like gmail, yahoo, hotmail, outlook, live, icloud, ymail, etc.) and turn it into a readable, capitalized company name (e.g., "ttsalvage.com" -> "TT Salvage", "prakritimarine.com" -> "Prakriti Marine"). If it is a generic email domain (like gmail, yahoo, outlook), set company name as "Individual".
+        4. Email domain (e.g. "ttsalvage.com").
+        
+        Return ONLY a JSON object with this exact structure:
+        {
+          "contacts": [
+            {
+              "name": "string",
+              "email": "string",
+              "companyName": "string",
+              "domain": "string"
+            }
+          ]
+        }
+        
+        Rules:
+        - Do NOT include duplicate emails.
+        - Ensure names are capitalized correctly.
+        - If a name is missing, try to generate a readable name from the email handle (e.g., "Mansari" -> "M Ansari" or "Mansari").
+    `;
+
+    try {
+        const response = await runAI('autofill', { prompt });
+        return response?.contacts || [];
+    } catch (err) {
+        console.error('Bulk Email Parsing Error:', err);
+        return [];
+    }
+}
+
+/**
+ * Intelligent Enquiry Document Parser: Extracts both header metadata and line items from an enquiry/RFQ document's OCR text.
+ */
+export async function extractEnquiryDocument(text) {
+    const prompt = `
+        Analyze this raw OCR text extracted from a purchase enquiry, RFQ, or quotation document.
+        Extract the complete structured information including the header metadata and the line items.
+        
+        Text: "${text}"
+        
+        Return ONLY a JSON object with this exact schema:
+        {
+          "header": {
+            "customer_name": "string (The customer/client who sent the enquiry, e.g. Colombo Dockyard PLC)",
+            "contact_person": "string (The contact person name at the customer side, e.g. K.H.S.SUJEEWA)",
+            "contact_email": "string (Contact email if found)",
+            "contact_phone": "string (Contact phone or mobile if found)",
+            "customer_ref": "string (The Enquiry Ref No or RFQ number, e.g. SR-4457-L26-1832)",
+            "project_number": "string (Project number or job number if found, e.g. SR/4457)",
+            "enquiry_date": "string (YYYY-MM-DD formatted date of enquiry, e.g. 2026-05-20)",
+            "due_date": "string (YYYY-MM-DD formatted due date/quotation required date, e.g. 2026-05-20)",
+            "subject": "string (A brief summary/subject of the enquiry, e.g. Purchasing Enquiry (Import))"
+          },
+          "items": [
+            {
+              "name": "string (main item description/specification title, e.g. 1 Core 6 Sqmm Flexible Cable)",
+              "specification": "string (full item technical specs, color, remarks, length, e.g. Purpose: internal panel board wiring, Color: Black/Gray, Length: 100m)",
+              "quantity": number (e.g. 100.00),
+              "uom": "string (unit of measure, e.g. MTS, PCS, SET, KG)"
+            }
+          ]
+        }
+        
+        Rules:
+        1. Customer: Colombo Dockyard PLC is the customer (CEL-RON ENTERPRISES PTE LTD is the supplier, so CEL-RON is NOT the customer).
+        2. Clean up any OCR artifacts.
+        3. If quantity is missing, default to 1.
+        4. If a field is not found, return empty string "". Do NOT use placeholder values like "N/A" or "Unknown".
+    `;
+    
+    try {
+        const response = await runAI('autofill', { prompt });
+        return response;
+    } catch (err) {
+        console.error('Enquiry Document Extraction Error:', err);
+        return null;
+    }
+}
+
+

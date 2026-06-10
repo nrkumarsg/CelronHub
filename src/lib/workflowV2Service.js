@@ -1076,25 +1076,10 @@ export const convertInvoiceToJob = async (invoiceId, poData = {}) => {
 
 /**
  * GDrive Folder Mapping Logic (v3)
+ * Under Option B, all documents go to the root project folder, so this returns null.
  */
 export const getGDriveFolderIdForStage = (stage) => {
-    // This mapping aligns with driveService.provisionFullProjectStructure
-    switch (stage) {
-        case 'Enquiry': return '1. Enquiries & Quotations';
-        case 'Quotation': return '1. Enquiries & Quotations';
-        case 'Order Acknowledgment': return '1. Enquiries & Quotations';
-        case 'Purchase Order': return '2. Supplier Bids & POs';
-        case 'Delivery Order': return '3. Operations & Logistics';
-        case 'Packing List': return '3. Operations & Logistics';
-        case 'Service Report': return '3. Operations & Logistics';
-        case 'Certificate': return '3. Operations & Logistics';
-        case 'Proforma Invoice': return '4. Finance & Invoices';
-        case 'Tax Invoice': return '4. Finance & Invoices';
-        case 'Statement of Account': return '4. Finance & Invoices';
-        case 'Payment Received': return '5. Expenses & Payments';
-        case 'Signed Proof': return '6. Completed Proof of Delivery / Signed Reports';
-        default: return '7. Correspondence & Admin';
-    }
+    return null;
 };
 
 /**

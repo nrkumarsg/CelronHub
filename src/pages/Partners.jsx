@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, MapPin, Globe, Building2, Mail, Phone, Star, Filter, ChevronDown, CheckCircle2, Circle, X, UploadCloud, Upload, Download, Printer, MoreVertical, Edit, Trash2, Loader2, ExternalLink, Settings, Paperclip, FileX, HardDrive, User, Users, ArrowRight } from 'lucide-react';
+import { Plus, Search, MapPin, Globe, Building2, Mail, Phone, Star, Filter, ChevronDown, CheckCircle2, Circle, X, UploadCloud, Upload, Download, Printer, MoreVertical, Edit, Trash2, Loader2, ExternalLink, Settings, Paperclip, FileX, HardDrive, User, Users, ArrowRight, Sparkles, ArrowUpDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Papa from 'papaparse';
 import ReactQuill from 'react-quill-new';
@@ -26,6 +26,8 @@ export default function Partners() {
     const [selectedCategory, setSelectedCategory] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
     const [dbCategories, setDbCategories] = useState([]);
+    const [sortKey, setSortKey] = useState('name');
+    const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
     const itemsPerPage = 8;
     const navigate = useNavigate();
     const fileInputRef = useRef(null);
@@ -324,7 +326,21 @@ export default function Partners() {
         return matchesSearch && matchesCountry && matchesCountryNot && matchesCategory;
     });
 
-    const paginatedPartners = filteredPartners.slice(
+    const sortedPartners = [...filteredPartners].sort((a, b) => {
+        let valA, valB;
+        if (sortKey === 'name') {
+            valA = a.name || '';
+            valB = b.name || '';
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        } else if (sortKey === 'created_at') {
+            valA = a.created_at ? new Date(a.created_at) : 0;
+            valB = b.created_at ? new Date(b.created_at) : 0;
+            return sortDirection === 'desc' ? valB - valA : valA - valB;
+        }
+        return 0;
+    });
+
+    const paginatedPartners = sortedPartners.slice(
         (currentPage - 1) * itemsPerPage,
         currentPage * itemsPerPage
     );
@@ -367,6 +383,12 @@ export default function Partners() {
                     </button>
                     <button onClick={() => window.print()} style={{ background: '#fff', color: '#64748b', border: '1px solid #e2e8f0', padding: '10px 20px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500, cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                         <Printer size={18} /> Print
+                    </button>
+                    <button onClick={() => navigate('/partners/ai-parser')} style={{ background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500, cursor: 'pointer', boxShadow: '0 4px 6px -1px rgba(124, 58, 237, 0.2)' }}>
+                        <Sparkles size={18} /> AI Email &amp; Contact Parser
+                    </button>
+                    <button onClick={() => navigate('/partners/ai-drive-parser')} style={{ background: 'linear-gradient(135deg, #ec4899 0%, #a855f7 100%)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500, cursor: 'pointer', boxShadow: '0 4px 6px -1px rgba(236, 72, 153, 0.2)' }}>
+                        <HardDrive size={18} /> AI Drive Card Scanner
                     </button>
                     <button onClick={() => setShowModal(true)} style={{ background: '#6366f1', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500, cursor: 'pointer', boxShadow: '0 4px 6px -1px rgba(99, 102, 241, 0.2)' }}>
                         <Plus size={18} /> Add Partner
@@ -416,6 +438,25 @@ export default function Partners() {
                             {availableCategories.map(cat => (
                                 <option key={cat} value={cat}>{cat}</option>
                             ))}
+                        </select>
+                        <ChevronDown size={14} color="#94a3b8" style={{ position: 'absolute', right: '16px', pointerEvents: 'none' }} />
+                    </div>
+
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 16px', gap: '8px' }}>
+                        <ArrowUpDown size={16} color="#94a3b8" style={{ flexShrink: 0 }} />
+                        <select
+                            value={`${sortKey}-${sortDirection}`}
+                            onChange={(e) => {
+                                const [key, dir] = e.target.value.split('-');
+                                setSortKey(key);
+                                setSortDirection(dir);
+                            }}
+                            style={{ appearance: 'none', background: 'transparent', border: 'none', outline: 'none', color: '#475569', fontSize: '0.9rem', fontWeight: 500, padding: '10px 24px 10px 0', cursor: 'pointer', width: '100%', minWidth: '180px' }}
+                        >
+                            <option value="name-desc">Name (Z-A)</option>
+                            <option value="name-asc">Name (A-Z)</option>
+                            <option value="created_at-desc">Date Added (Newest)</option>
+                            <option value="created_at-asc">Date Added (Oldest)</option>
                         </select>
                         <ChevronDown size={14} color="#94a3b8" style={{ position: 'absolute', right: '16px', pointerEvents: 'none' }} />
                     </div>

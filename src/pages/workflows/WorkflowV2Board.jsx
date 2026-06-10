@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
+import { isTokenValid, connectGoogleAPI } from '../../lib/googleAuthService';
 import { 
     getWorkflowDocuments, 
     deleteWorkflowDocument, 
@@ -16,7 +17,7 @@ import {
 import {
     FileCheck, Play, Briefcase, X, Loader2, PlayCircle, Folder, Upload,
     ArrowRightLeft, Filter, Eye, Printer, Search, Trash2, Plus, FileText, Copy, Clock,
-    ArrowUp, ArrowDown, RefreshCw, Download, CreditCard, Calendar
+    ArrowUp, ArrowDown, RefreshCw, Download, CreditCard, Calendar, ArrowUpDown, LayoutDashboard
 } from 'lucide-react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import CustomerEnquiryForm from '../../components/CustomerEnquiryForm';
@@ -31,6 +32,16 @@ const DOC_TYPES = [
     'Packing List', 'Tax Invoice', 'Certificate',
     'Payment Received', 'Statement of Account'
 ];
+
+const buildProjectFolderName = (jobNo, doc) => {
+    if (!doc) return jobNo;
+    const partnerName = doc.partners?.name || 'Walk-in';
+    const vesselName = doc.vessels?.vessel_name || '';
+    const locationName = doc.work_locations?.location_name || '';
+    const suffix = vesselName || locationName || '';
+    const folderTitle = suffix ? `${jobNo} - ${partnerName} - ${suffix}` : `${jobNo} - ${partnerName}`;
+    return folderTitle.replace(/[/\\?%*:|"<>]/g, '-');
+};
 
 const SUB_TABS_CONFIG = {
     'Job': [
@@ -98,7 +109,8 @@ export default function WorkflowV2Board() {
     
     // SOA Aging View State
     const [soaGroups, setSoaGroups] = useState([]);
-    const [sortDirection, setSortDirection] = useState('asc'); // 'asc' | 'desc'
+    const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
+    const [sortKey, setSortKey] = useState('created_at'); // 'created_at' | 'document_no' | 'customer' | 'total_amount'
     const [selectedCustomerForSOA, setSelectedCustomerForSOA] = useState(null);
     const [customerDocs, setCustomerDocs] = useState([]);
     const [loadingCustomerDocs, setLoadingCustomerDocs] = useState(false);
@@ -181,12 +193,7 @@ export default function WorkflowV2Board() {
     useEffect(() => {
         if (profile?.company_id) {
             const fetchPartners = async () => {
-                const { supabase } = await import('../../lib/supabase');
-                const { data } = await supabase
-                    .from('partners')
-                    .select('id, name')
-                    .eq('company_id', profile.company_id)
-                    .order('name');
+                const data = await getPartners(profile);
                 if (data) setPartners(data);
             };
             fetchPartners();
@@ -472,6 +479,14 @@ export default function WorkflowV2Board() {
             
             // Handle PO File Upload if present
             if (poFile) {
+                if (!isTokenValid()) {
+                    if (window.confirm('Your Google connection has expired or is not connected. Connect now to upload PO?')) {
+                        sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
+                        connectGoogleAPI();
+                        setConversionLoading(false);
+                        return;
+                    }
+                }
                 try {
                     const accessToken = localStorage.getItem('google_access_token');
                     if (accessToken) {
@@ -486,8 +501,10 @@ export default function WorkflowV2Board() {
                         }
 
                         const currentYear = new Date().getFullYear().toString();
-                        const projectFolderId = await provisionFullProjectStructure(accessToken, celronRootId, currentYear, jobNo);
-                        const targetFolderId = await getOrCreateFolder(accessToken, '1. Enquiries & Quotations', projectFolderId);
+                        const projName = buildProjectFolderName(jobNo, conversionTarget);
+                        const projectFolderId = await provisionFullProjectStructure(accessToken, celronRootId, currentYear, projName);
+                        // Option B: upload PO directly to the root project folder
+                        const targetFolderId = projectFolderId;
                         
                         const uploadResult = await uploadFileToDrive(accessToken, poFile, { folderId: targetFolderId });
                         const poUrl = `https://drive.google.com/file/d/${uploadResult.id}/view`;
@@ -593,6 +610,12 @@ export default function WorkflowV2Board() {
         });
     };
 
+    const extractFirstImageSrc = (htmlString) => {
+        if (!htmlString) return null;
+        const match = htmlString.match(/<img[^>]+src="([^">]+)"/);
+        return match ? match[1] : null;
+    };
+
     const getTypeColor = (type) => {
         switch (type) {
             case 'Enquiry': return '#6366f1';
@@ -616,6 +639,16 @@ export default function WorkflowV2Board() {
         
         try {
             setLoading(true);
+
+            if (!isTokenValid()) {
+                if (window.confirm('Your Google connection has expired or is not connected. Would you like to connect now?')) {
+                    sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
+                    connectGoogleAPI();
+                }
+                setLoading(false);
+                return;
+            }
+
             const accessToken = localStorage.getItem('google_access_token');
             if (!accessToken) throw new Error('Google account not connected');
 
@@ -632,9 +665,11 @@ export default function WorkflowV2Board() {
 
             const currentYear = new Date().getFullYear().toString();
             const jobNo = doc.assigned_job_no;
-            const projectFolderId = await provisionFullProjectStructure(accessToken, celronRootId, currentYear, jobNo);
+            const projName = buildProjectFolderName(jobNo, doc);
+            const projectFolderId = await provisionFullProjectStructure(accessToken, celronRootId, currentYear, projName);
             
-            const signedFolderId = await getOrCreateFolder(accessToken, '6. Completed Proof of Delivery / Signed Reports', projectFolderId);
+            // Option B: upload signed proof directly to the root project folder
+            const signedFolderId = projectFolderId;
             
             const result = await uploadFileToDrive(accessToken, file, { folderId: signedFolderId });
             const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
@@ -648,7 +683,7 @@ export default function WorkflowV2Board() {
                 status: 'Confirmed' 
             }).eq('id', doc.id);
 
-            toast.success('Signed proof uploaded successfully to Folder 6!');
+            toast.success('Signed proof uploaded successfully!');
             fetchDocs();
         } catch (error) {
             console.error('Upload failed:', error);
@@ -659,6 +694,9 @@ export default function WorkflowV2Board() {
     };
 
     const filteredDocs = documents.filter(doc => {
+        if (jobId && doc.assigned_job_no !== jobId && doc.job_id !== jobId) {
+            return false;
+        }
         let matchesType = activeType === 'All' || doc.document_type === activeType;
         
         // Special logic for sub-tabbed pages
@@ -687,9 +725,35 @@ export default function WorkflowV2Board() {
             (doc.subject || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
             (doc.customer_ref || '').toLowerCase().includes(searchQuery.toLowerCase());
         
-        const matchesPartner = !selectedPartnerId || doc.partner_id === selectedPartnerId;
+        const selectedPartner = partners.find(p => p.id === selectedPartnerId);
+        const selectedPartnerName = selectedPartner?.name;
+        const matchesPartner = !selectedPartnerId || 
+            doc.partner_id === selectedPartnerId ||
+            (doc.partners?.name && selectedPartnerName && doc.partners.name.trim().toLowerCase() === selectedPartnerName.trim().toLowerCase());
 
         return matchesType && matchesSearch && matchesPartner;
+    });
+
+    const sortedDocs = [...filteredDocs].sort((a, b) => {
+        let valA, valB;
+        if (sortKey === 'created_at') {
+            valA = a.created_at ? new Date(a.created_at) : 0;
+            valB = b.created_at ? new Date(b.created_at) : 0;
+            return sortDirection === 'desc' ? valB - valA : valA - valB;
+        } else if (sortKey === 'document_no') {
+            valA = a.assigned_job_no || a.document_no || '';
+            valB = b.assigned_job_no || b.document_no || '';
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        } else if (sortKey === 'total_amount') {
+            valA = parseFloat(activeType === 'Job' ? a.delivery_verification?.po_value : a.total_amount) || 0;
+            valB = parseFloat(activeType === 'Job' ? b.delivery_verification?.po_value : b.total_amount) || 0;
+            return sortDirection === 'desc' ? valB - valA : valA - valB;
+        } else if (sortKey === 'customer') {
+            valA = a.delivery_verification?.po_description || a.partners?.name || '';
+            valB = b.delivery_verification?.po_description || b.partners?.name || '';
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        }
+        return 0;
     });
 
     const handleOpenDocument = (type, id) => {
@@ -723,6 +787,16 @@ export default function WorkflowV2Board() {
 
         try {
             setLoading(true);
+
+            if (!isTokenValid()) {
+                if (window.confirm('Your Google connection has expired or is not connected. Would you like to connect now?')) {
+                    sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
+                    connectGoogleAPI();
+                }
+                setLoading(false);
+                return;
+            }
+
             const accessToken = localStorage.getItem('google_access_token');
             if (!accessToken) throw new Error('Google account not connected');
 
@@ -742,11 +816,12 @@ export default function WorkflowV2Board() {
             }
 
             const currentYear = new Date().getFullYear().toString();
-            const projectFolderId = await provisionFullProjectStructure(accessToken, celronRootId, currentYear, jobNo);
+            const projName = buildProjectFolderName(jobNo, doc);
+            const projectFolderId = await provisionFullProjectStructure(accessToken, celronRootId, currentYear, projName);
             
-            // Find specific subfolder for this document type
+            // Find specific subfolder for this document type (Option B: all documents go to root, so subfolderName is null)
             const subfolderName = getGDriveFolderIdForStage(doc.document_type);
-            const targetFolderId = await getOrCreateFolder(accessToken, subfolderName, projectFolderId);
+            const targetFolderId = subfolderName ? await getOrCreateFolder(accessToken, subfolderName, projectFolderId) : projectFolderId;
 
             // Update DB if possible (Optional, but helps for next time)
             const { supabase } = await import('../../lib/supabase');
@@ -860,15 +935,24 @@ export default function WorkflowV2Board() {
                     </button>
                     )}
                     {activeType === 'Job' && (
-                        <button
-                            className="btn btn-primary"
-                            style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-                            onClick={() => {
-                                window.open('/workflows/editor/quotation/new', '_blank');
-                            }}
-                        >
-                            <Plus size={18} /> New Job
-                        </button>
+                        <>
+                            <button
+                                className="btn btn-secondary"
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '8px' }}
+                                onClick={() => navigate('/workflows/jobs-dashboard')}
+                            >
+                                <LayoutDashboard size={18} /> Go to Dashboard
+                            </button>
+                            <button
+                                className="btn btn-primary"
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '8px' }}
+                                onClick={() => {
+                                    window.open('/workflows/editor/quotation/new', '_blank');
+                                }}
+                            >
+                                <Plus size={18} /> New Job
+                            </button>
+                        </>
                     )}
                     <div className="dropdown" ref={dropdownRef}>
                         <button
@@ -1021,6 +1105,44 @@ export default function WorkflowV2Board() {
                 </div>
 
             <div className="glass-panel">
+                {jobId && (
+                    <div style={{ 
+                        background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(99, 102, 241, 0.08) 100%)', 
+                        border: '1.5px solid #bfdbfe', 
+                        color: '#1e40af', 
+                        padding: '14px 20px', 
+                        borderRadius: '12px', 
+                        marginBottom: '20px', 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center',
+                        fontWeight: 600,
+                        fontSize: '0.95rem',
+                        boxShadow: '0 2px 4px rgba(59, 130, 246, 0.03)'
+                    }}>
+                        <span>Showing documents for Job Suite: <strong style={{ color: '#1d4ed8', fontSize: '1.05rem', marginLeft: '4px' }}>{jobId}</strong></span>
+                        <button 
+                            onClick={() => {
+                                navigate(location.pathname + (activeType !== 'All' ? `?type=${activeType}` : ''));
+                            }}
+                            style={{ 
+                                background: '#3b82f6', 
+                                border: 'none', 
+                                color: 'white', 
+                                padding: '6px 14px', 
+                                borderRadius: '8px', 
+                                cursor: 'pointer',
+                                fontSize: '0.8rem',
+                                fontWeight: 700,
+                                transition: 'all 0.2s'
+                            }}
+                            onMouseOver={e => e.currentTarget.style.background = '#2563eb'}
+                            onMouseOut={e => e.currentTarget.style.background = '#3b82f6'}
+                        >
+                            Clear Filter
+                        </button>
+                    </div>
+                )}
                 {SUB_TABS_CONFIG[activeType] && (
                     <div style={{ 
                         display: 'flex', 
@@ -1129,12 +1251,48 @@ export default function WorkflowV2Board() {
                         <div style={{ minWidth: '300px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <Filter size={18} color="var(--text-secondary)" style={{ marginLeft: '8px' }} />
                             <SearchableSelect
-                                options={partners}
+                                options={(() => {
+                                    const unique = [];
+                                    const seen = new Set();
+                                    (partners || []).forEach(p => {
+                                        const key = (p.name || '').trim().toLowerCase();
+                                        if (key && !seen.has(key)) {
+                                            seen.add(key);
+                                            unique.push(p);
+                                        }
+                                    });
+                                    return unique;
+                                })()}
                                 value={selectedPartnerId}
                                 onChange={(e) => setSelectedPartnerId(e.target.value)}
                                 placeholder="All Customers"
                             />
                         </div>
+
+                        {/* Sorting Dropdown */}
+                        {activeType !== 'Statement of Account' && (
+                            <div style={{ minWidth: '220px', display: 'flex', alignItems: 'center', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '0 12px' }}>
+                                <ArrowUpDown size={16} color="var(--text-secondary)" style={{ marginRight: '8px' }} />
+                                <select
+                                    style={{ border: 'none', background: 'transparent', outline: 'none', flex: 1, color: 'var(--text-primary)', fontSize: '0.9rem', cursor: 'pointer', height: '38px' }}
+                                    value={`${sortKey}-${sortDirection}`}
+                                    onChange={(e) => {
+                                        const [key, dir] = e.target.value.split('-');
+                                        setSortKey(key);
+                                        setSortDirection(dir);
+                                    }}
+                                >
+                                    <option value="created_at-desc">Date Created (Newest First)</option>
+                                    <option value="created_at-asc">Date Created (Oldest First)</option>
+                                    <option value="document_no-desc">Document No (Z-A)</option>
+                                    <option value="document_no-asc">Document No (A-Z)</option>
+                                    <option value="customer-desc">Customer Name (Z-A)</option>
+                                    <option value="customer-asc">Customer Name (A-Z)</option>
+                                    <option value="total_amount-desc">Total Amount (Highest First)</option>
+                                    <option value="total_amount-asc">Total Amount (Lowest First)</option>
+                                </select>
+                            </div>
+                        )}
                     </div>
 
                 </div>
@@ -1182,18 +1340,22 @@ export default function WorkflowV2Board() {
                         <tbody>
                             {loading ? (
                                 <tr><td colSpan="11" className="text-center py-12">Loading documents...</td></tr>
-                            ) : (activeType === 'Statement of Account' ? soaGroups : filteredDocs).length === 0 ? (
+                            ) : (activeType === 'Statement of Account' ? soaGroups : sortedDocs).length === 0 ? (
                                 <tr>
-                                    <td colSpan="11" className="text-center py-12">
-                                        <div style={{ color: 'var(--text-secondary)' }}>
-                                            <FileText size={48} style={{ opacity: 0.2, marginBottom: '16px' }} />
+                                    <td colSpan={activeType === 'Job' ? "8" : "10"}>
+                                        <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-secondary)' }}>
+                                            <FileText size={48} style={{ margin: '0 auto 16px', opacity: 0.5 }} />
                                             <p>No documents found matching your criteria.</p>
                                         </div>
                                     </td>
                                 </tr>
                             ) : activeType === 'Statement of Account' ? (
                                 soaGroups
-                                    .filter(g => !selectedPartnerId || g.partner_id === selectedPartnerId)
+                                    .filter(g => {
+                                        if (!selectedPartnerId) return true;
+                                        const selectedPartner = partners.find(p => p.id === selectedPartnerId);
+                                        return selectedPartner && g.name && selectedPartner.name && g.name.trim().toLowerCase() === selectedPartner.name.trim().toLowerCase();
+                                    })
                                     .sort((a, b) => sortDirection === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name))
                                     .map((group) => (
                                         <tr key={group.name} className="table-row">
@@ -1202,7 +1364,7 @@ export default function WorkflowV2Board() {
                                                 style={{ cursor: 'pointer', color: 'var(--accent)' }}
                                                 onClick={() => {
                                                     setSelectedCustomerForSOA(group);
-                                                    const docs = documents.filter(d => d.partner_id === group.partner_id);
+                                                    const docs = documents.filter(d => (d.partners?.name || 'Walk-in').trim().toLowerCase() === group.name.trim().toLowerCase());
                                                     setCustomerDocs(docs);
                                                 }}
                                             >
@@ -1226,7 +1388,7 @@ export default function WorkflowV2Board() {
                                         </tr>
                                     ))
                             ) : (
-                                filteredDocs.map((doc) => (
+                                sortedDocs.map((doc) => (
                                     activeType === 'Job' ? (
                                         <tr key={doc.id} className="table-row">
                                             <td className="font-bold" style={{ color: '#1e3a8a' }}>{doc.assigned_job_no || 'TBD'}</td>
@@ -1241,6 +1403,41 @@ export default function WorkflowV2Board() {
                                                         {doc.subject || '-'}
                                                     </div>
                                                     {doc.customer_ref && <div style={{ opacity: 0.6, fontSize: '0.7rem' }}>Ref: {doc.customer_ref}</div>}
+
+                                                    {(() => {
+                                                        const imgSrc = extractFirstImageSrc(doc.notes);
+                                                        if (!imgSrc) return null;
+                                                        return (
+                                                            <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                <img 
+                                                                    src={imgSrc} 
+                                                                    alt="Proof thumbnail" 
+                                                                    style={{ 
+                                                                        width: '38px', 
+                                                                        height: '38px', 
+                                                                        objectFit: 'cover', 
+                                                                        borderRadius: '4px', 
+                                                                        border: '1px solid var(--border-color)', 
+                                                                        cursor: 'pointer',
+                                                                        transition: 'transform 0.2s',
+                                                                        boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                                                                    }} 
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        const win = window.open();
+                                                                        win.document.write(`<iframe src="${imgSrc}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+                                                                    }}
+                                                                    onMouseOver={(e) => { e.currentTarget.style.transform = 'scale(1.1)'; }}
+                                                                    onMouseOut={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                                                    title="Click to view full payment proof"
+                                                                />
+                                                                <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
+                                                                    Paid Proof Attached
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </div>
                                             </td>
                                             <td>
@@ -1423,6 +1620,41 @@ export default function WorkflowV2Board() {
                                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px', opacity: 0.8 }}>
                                                         {doc.subject || '-'}
                                                     </div>
+
+                                                    {(() => {
+                                                        const imgSrc = extractFirstImageSrc(doc.notes);
+                                                        if (!imgSrc) return null;
+                                                        return (
+                                                            <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                <img 
+                                                                    src={imgSrc} 
+                                                                    alt="Proof thumbnail" 
+                                                                    style={{ 
+                                                                        width: '38px', 
+                                                                        height: '38px', 
+                                                                        objectFit: 'cover', 
+                                                                        borderRadius: '4px', 
+                                                                        border: '1px solid var(--border-color)', 
+                                                                        cursor: 'pointer',
+                                                                        transition: 'transform 0.2s',
+                                                                        boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                                                                    }} 
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        const win = window.open();
+                                                                        win.document.write(`<iframe src="${imgSrc}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+                                                                    }}
+                                                                    onMouseOver={(e) => { e.currentTarget.style.transform = 'scale(1.1)'; }}
+                                                                    onMouseOut={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                                                    title="Click to view full payment proof"
+                                                                />
+                                                                <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
+                                                                    Paid Proof Attached
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </div>
                                             </td>
                                             <td>

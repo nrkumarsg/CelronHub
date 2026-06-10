@@ -18,10 +18,10 @@ const LabelPreview = React.forwardRef(({ items, labelType = 'qr' }, ref) => {
                     width: '100%', // Flexible width within the grid column
                     height: '25.4mm', // Still 1 inch height
                     border: '1px solid #ddd', // Slightly darker for better visibility on sheet
-                    padding: '2mm',
+                    padding: '1.2mm 2mm 1.5mm 2mm', // Optimized padding to avoid clipping
                     display: 'flex',
                     flexDirection: 'column',
-                    justifyContent: 'center',
+                    justifyContent: 'space-between', // Space between header and QR/supplier row
                     alignItems: 'center',
                     textAlign: 'center',
                     fontSize: '8pt',
@@ -31,24 +31,51 @@ const LabelPreview = React.forwardRef(({ items, labelType = 'qr' }, ref) => {
                     boxSizing: 'border-box',
                     backgroundColor: '#fff'
                 }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '1mm', fontSize: '9pt', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{ 
+                        fontWeight: '700', 
+                        marginBottom: '0.8mm', 
+                        fontSize: '8.5pt', 
+                        width: '100%', 
+                        overflow: 'hidden', 
+                        textOverflow: 'ellipsis', 
+                        whiteSpace: 'nowrap',
+                        color: '#1e293b',
+                        letterSpacing: '0.2px'
+                    }}>
                         {item.name}
                     </div>
 
                     {labelType === 'qr' ? (
-                        <div style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'center', gap: '4mm' }}>
-                            <div style={{ background: '#fff', padding: '1mm' }}>
-                                <QRCodeSVG
-                                    value={item.barcode || item.id}
-                                    size={50}
-                                    level="M"
-                                    includeMargin={false}
-                                />
+                        <div style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', gap: '3mm', flex: 1 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minWidth: '42px' }}>
+                                <div style={{ background: '#fff', padding: '0.3mm', border: '1px solid #e2e8f0', borderRadius: '3px' }}>
+                                    <QRCodeSVG
+                                        value={item.barcode || item.id}
+                                        size={38}
+                                        level="M"
+                                        includeMargin={false}
+                                    />
+                                </div>
+                                <div style={{ fontSize: '6.5pt', fontWeight: '800', marginTop: '0.5mm', color: '#000', letterSpacing: '0.2px' }}>
+                                    {item.barcode || 'N/A'}
+                                </div>
                             </div>
-                            <div style={{ textAlign: 'left', flex: 1 }}>
-                                <div style={{ color: '#666', fontSize: '7pt' }}>{item.type}</div>
-                                <div style={{ fontWeight: '600', color: 'var(--accent)' }}>{item.barcode || 'N/A'}</div>
-                                <div style={{ fontSize: '7pt', color: '#999' }}>CEL-RON HUB</div>
+                            <div style={{ textAlign: 'left', flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                <div style={{ fontSize: '4.8pt', fontWeight: 'bold', color: '#000', textTransform: 'uppercase', letterSpacing: '0.1px', marginBottom: '0.2mm' }}>
+                                    SUPPLIED BY:
+                                </div>
+                                <div style={{ fontSize: '5.2pt', fontWeight: '800', color: '#000', marginBottom: '0.4mm', lineHeight: '1.1' }}>
+                                    CEL-RON ENTERPRISES PTE LTD
+                                </div>
+                                <div style={{ fontSize: '4.8pt', color: '#000', fontWeight: '600', lineHeight: '1.2' }}>
+                                    PHONE : 81962270
+                                </div>
+                                <div style={{ fontSize: '4.8pt', color: '#000', fontWeight: '600', lineHeight: '1.2' }}>
+                                    EMAIL: sales@celron.net
+                                </div>
+                                <div style={{ fontSize: '4.8pt', color: '#000', fontWeight: '600', lineHeight: '1.2' }}>
+                                    WEB: www.celron.shop
+                                </div>
                             </div>
                         </div>
                     ) : (

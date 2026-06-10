@@ -1,0 +1,6 @@
+{
+  "name": "GlobalPartsHub",
+  "description": "An AI-powered global spare parts and systems locator. Fully supports Google Search-style 'AI Mode' overviews, online grounding citations, visual photo matches with pricing, and exact component analysis.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

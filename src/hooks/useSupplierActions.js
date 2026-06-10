@@ -175,7 +175,7 @@ export function useSupplierActions(companyId, enquiryId, initialEnquiry) {
                 ? `Dear ${recipientOverrides[selectedSuppliers[0].id]?.attn_name || 'Supplier'},\n\n`
                 : `Dear Supplier,\n\n`;
 
-            const body = encodeURIComponent(`${greeting}We are pleased to invite you to quote for the following items:\n\n${itemRows}\n\n${enquiryData.gdrive_file_link ? `You can view photos and additional attachments here: ${enquiryData.gdrive_file_link}\n\n` : ''}Please revert with your best price and lead time at your earliest convenience.\n\nThank you,\nCELRON ENTERPRISES PTE LTD`);
+            const body = encodeURIComponent(`${greeting}We are pleased to invite you to quote for the following items:\n\n${itemRows}\n\n${enquiryData.gdrive_file_link ? `You can view photos and additional attachments here: ${enquiryData.gdrive_file_link}\n\n` : ''}Please revert with your best price and lead time at your earliest convenience.\n\nThank you,\nN.R.KUMAR HP:+65 97685891\nCELRON ENTERPRISES PTE LTD\n10, Jln, Besar,"Sim Lim Tower", #03-05, Singapore 208787\nEmail: sales@celron.net | Tel: +6597685891/81962270 Web : https://www.celron.net    / https://celron.shop`);
 
             const defaultBcc = 'celron.simlim0305@gmail.com,accounts@celron.net';
             window.open(`mailto:?bcc=${emails}${emails ? ',' : ''}${defaultBcc}&subject=${subject}&body=${body}`, '_blank');

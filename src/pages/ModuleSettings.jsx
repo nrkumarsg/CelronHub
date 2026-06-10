@@ -663,6 +663,15 @@ export default function ModuleSettings() {
                                     <input type="password" name="accounts_password" value={settings.accounts_password || ''} onChange={handleChange} placeholder="Enter secure App Password" style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', color: '#475569', fontSize: '0.95rem' }} />
                                 </div>
 
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                                    <label style={{ fontSize: '0.85rem', fontWeight: 500, color: '#1e293b' }}>SMTP Host</label>
+                                    <input type="text" name="smtp_host" value={settings.smtp_host || ''} onChange={handleChange} placeholder="e.g. smtp.gmail.com" style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', color: '#475569', fontSize: '0.95rem' }} />
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                                    <label style={{ fontSize: '0.85rem', fontWeight: 500, color: '#1e293b' }}>SMTP Port</label>
+                                    <input type="text" name="smtp_port" value={settings.smtp_port || ''} onChange={handleChange} placeholder="e.g. 465" style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', color: '#475569', fontSize: '0.95rem' }} />
+                                </div>
+
                                 <div style={{ gridColumn: '1 / -1', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.8rem', color: '#64748b' }}>
                                     <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: '4px' }}>Database Synchronization Note</div>
                                     If the passwords fail to save, ensure you have executed the <code>smtp_update.sql</code> script in the Supabase SQL Editor to add the necessary columns.

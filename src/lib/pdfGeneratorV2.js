@@ -39,6 +39,8 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
 
     const isAnithaType = ['Tax Invoice', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(document_type);
     
+    const isKumar = salesperson_name?.toUpperCase() === 'N.R.KUMAR' || salesperson_name?.toUpperCase() === 'KUMAR';
+    
     const effectiveSalesperson = isKumar ? 'N.R.KUMAR' : ((isAnithaType && (!salesperson_name)) ? 'ANITHA (Ms)' : (salesperson_name || 'ANITHA (Ms)'));
     const effectiveEmail = isKumar ? 'kumar@celron.net' : ((isAnithaType && (!documentData.salesperson_email)) ? 'accounts@celron.net' : (documentData.salesperson_email || 'sales@celron.net'));
     const effectivePhone = isKumar ? '+65 97685891' : ((isAnithaType && (!documentData.salesperson_phone)) ? '+6581962270' : (documentData.salesperson_phone || '+6581962270'));
@@ -98,7 +100,7 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
     }));
 
     const htmlContent = `
-        <div style="padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b !important; width: 800px; min-height: 1130px; background: #ffffff !important; position: relative; padding-bottom: 100px; box-sizing: border-box; margin: 0 auto; color-scheme: light !important;">
+        <div style="padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b !important; width: 800px; min-height: 1060px; background: #ffffff !important; position: relative; padding-bottom: 60px; box-sizing: border-box; margin: 0 auto; color-scheme: light !important;">
             <style>
                 * { color-scheme: light !important; -webkit-print-color-adjust: exact !important; }
                 p { margin: 0 0 4px 0; color: #1e293b !important; }
@@ -287,7 +289,7 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
             </div>
 
             <!-- Footer -->
-            <div style="position: absolute; bottom: 30px; left: 0; width: 100%; padding: 0 50px; box-sizing: border-box;">
+            <div style="position: absolute; bottom: 15px; left: 0; width: 100%; padding: 0 50px; box-sizing: border-box;">
                 <div style="border-top: 1px solid #1e293b; display: flex; justify-content: center; padding-top: 10px; font-size: 12px; color: #1e293b; font-weight: 700; letter-spacing: 3px;">
                     WWW.CELRON.NET
                 </div>
@@ -297,10 +299,11 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
     `;
 
     const container = document.createElement('div');
+    container.id = 'pdf-render-container';
     container.innerHTML = htmlContent;
     Object.assign(container.style, {
         position: 'absolute',
-        left: '-9999px', // Position far off-screen
+        left: '-9999px',
         top: '0',
         width: '800px',
         backgroundColor: 'white',
@@ -320,12 +323,23 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
         html2canvas: {
             scale: 2,
             useCORS: true,
-            allowTaint: true,
+            allowTaint: false,
+            scrollX: 0,
+            scrollY: 0,
             letterRendering: true,
             backgroundColor: '#ffffff',
-            width: 800
+            width: 800,
+            onclone: (clonedDoc) => {
+                const el = clonedDoc.getElementById('pdf-render-container');
+                if (el) {
+                    el.style.position = 'absolute';
+                    el.style.left = '0';
+                    el.style.top = '0';
+                }
+            }
         },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
     };
 
     try {

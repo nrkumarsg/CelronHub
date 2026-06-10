@@ -3,7 +3,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { 
     getGlobalExpenses, 
     updateExpenseStatus, 
-    deleteJobExpense 
+    deleteJobExpense,
+    saveJobExpense
 } from '../../lib/jobExpenseService';
 import { getPartners, uploadFile } from '../../lib/store';
 import { supabase } from '../../lib/supabase';
@@ -23,22 +24,146 @@ import {
     LayoutDashboard,
     ArrowRight,
     TrendingUp,
-    Briefcase
+    Briefcase,
+    FolderOpen,
+    Sparkles,
+    Database,
+    RefreshCw,
+    Play,
+    Check,
+    X,
+    ChevronRight,
+    Building2,
+    Users,
+    CheckSquare,
+    Globe,
+    Calendar,
+    ArrowLeft,
+    CircleDot
 } from 'lucide-react';
 import { Modal, QuickExpenseAdd } from '../../components/workflow/QuickAddForms';
 import { useNavigate } from 'react-router-dom';
+import { extractBillWithOpenAI } from '../../lib/openAiVisionService';
+import { connectGoogleAPI, isTokenValid, performOCR } from '../../lib/googleAuthService';
+import toast from 'react-hot-toast';
+
+// Secure Custom Drive Document Preview (Bypassing CORS)
+const DriveDocPreview = ({ fileId, accessToken, fileName, style, className }) => {
+    const [src, setSrc] = useState('');
+    const [loading, setLoading] = useState(true);
+    const isPdf = fileName?.toLowerCase().endsWith('.pdf');
+
+    useEffect(() => {
+        if (!fileId || !accessToken) return;
+        
+        let isMounted = true;
+        setLoading(true);
+
+        fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        })
+        .then(res => {
+            if (!res.ok) throw new Error('Failed to load document');
+            return res.blob();
+        })
+        .then(blob => {
+            if (isMounted) {
+                const targetBlob = isPdf ? new Blob([blob], { type: 'application/pdf' }) : blob;
+                const url = URL.createObjectURL(targetBlob);
+                setSrc(url);
+                setLoading(false);
+            }
+        })
+        .catch(err => {
+            console.error('Error loading Drive file:', err);
+            if (isMounted) setLoading(false);
+        });
+
+        return () => {
+            isMounted = false;
+            if (src) URL.revokeObjectURL(src);
+        };
+    }, [fileId, accessToken, isPdf]);
+
+    if (loading) {
+        return (
+            <div style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', color: '#94a3b8' }} className={className}>
+                <Loader2 size={24} className="animate-spin" />
+            </div>
+        );
+    }
+
+    if (!src) {
+        return (
+            <div style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', color: '#64748b' }} className={className}>
+                <AlertCircle size={24} style={{ marginRight: '8px' }} />
+                <span>Failed to load preview</span>
+            </div>
+        );
+    }
+
+    if (isPdf) {
+        return <iframe src={src} style={{ ...style, border: 'none' }} className={className} title="Invoice PDF Preview" />;
+    }
+
+    return <img src={src} style={{ ...style, objectFit: 'contain' }} className={className} alt="Scanned Invoice Preview" />;
+};
 
 export default function BillsPortal() {
     const { profile } = useAuth();
     const navigate = useNavigate();
     
+    // Auth & Drive Configuration
+    const [googleAccessToken, setGoogleAccessToken] = useState('');
+    const [isDriveConnected, setIsDriveConnected] = useState(false);
+    const [folderLink, setFolderLink] = useState('https://drive.google.com/drive/folders/1ym6f-6HUFOgF10F-Tazu0KkTNj0xYi7z?usp=sharing');
+    const [folderId, setFolderId] = useState('1ym6f-6HUFOgF10F-Tazu0KkTNj0xYi7z');
+
+    // Portal State
     const [loading, setLoading] = useState(true);
     const [bills, setBills] = useState([]);
     const [partners, setPartners] = useState([]);
     const [jobs, setJobs] = useState([]);
-    const [activeTab, setActiveTab] = useState('all'); // 'all', 'unpaid', 'paid'
+    const [activeTab, setActiveTab] = useState('all'); // 'all', 'unpaid', 'paid', 'scanned'
     const [searchQuery, setSearchQuery] = useState('');
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
+    // Sync Pipeline State
+    const [isSyncing, setIsSyncing] = useState(false);
+    const [syncLogs, setSyncLogs] = useState([]);
+    const [currentProgress, setCurrentProgress] = useState({ current: 0, total: 0, file: '' });
+
+    // Review Modal State
+    const [selectedDraft, setSelectedDraft] = useState(null);
+    const [editedBill, setEditedBill] = useState({
+        id: '',
+        supplier_id: '',
+        supplier_name: '',
+        invoice_no: '',
+        invoice_date: '',
+        description: '',
+        amount: 0,
+        gst_rate: 9,
+        gst_amount: 0,
+        grand_total: 0,
+        job_id: '',
+        bill_url: '',
+        gdrive_file_id: '',
+        attachment_note: ''
+    });
+    const [isSavingApproval, setIsSavingApproval] = useState(false);
+
+    useEffect(() => {
+        const token = localStorage.getItem('google_access_token');
+        const valid = isTokenValid();
+        
+        if (token && valid) {
+            setGoogleAccessToken(token);
+            setIsDriveConnected(true);
+        } else {
+            setIsDriveConnected(false);
+        }
+    }, [activeTab]);
 
     useEffect(() => {
         if (profile?.company_id) {
@@ -69,11 +194,342 @@ export default function BillsPortal() {
         }
     };
 
+    const addLog = (message, type = 'info') => {
+        setSyncLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), message, type }]);
+    };
+
+    const extractFolderId = (urlOrId) => {
+        if (!urlOrId) return '';
+        if (urlOrId.includes('drive.google.com')) {
+            const match = urlOrId.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+            return match ? match[1] : '';
+        }
+        return urlOrId.trim();
+    };
+
+    const handleConnectGoogle = () => {
+        connectGoogleAPI('drive_bill_sync');
+    };
+
+    const getDriveFileId = (bill) => {
+        if (bill.gdrive_file_id) return bill.gdrive_file_id;
+        if (!bill.attachment_note) return '';
+        const match = bill.attachment_note.match(/File ID: ([a-zA-Z0-9_-]+)/);
+        return match ? match[1] : '';
+    };
+
+    // Google Drive Sync Pipeline
+    const triggerFolderSync = async () => {
+        const resolvedId = extractFolderId(folderLink);
+        if (!resolvedId) {
+            toast.error('Invalid Google Drive folder link or ID.');
+            return;
+        }
+        setFolderId(resolvedId);
+
+        const token = googleAccessToken || localStorage.getItem('google_access_token');
+        if (!token) {
+            toast.error('Google account not connected. Please login first.');
+            return;
+        }
+
+        setIsSyncing(true);
+        setSyncLogs([]);
+        addLog('Starting Folder Discovery & OCR Pre-processing...', 'start');
+
+        try {
+            addLog(`Connecting to Drive Folder ID: ${resolvedId}...`);
+            
+            const foldersToScan = [resolvedId];
+            const scannedFolders = new Set();
+            const allFiles = [];
+            
+            while (foldersToScan.length > 0 && scannedFolders.size < 50) {
+                const currentFolderId = foldersToScan.shift();
+                if (scannedFolders.has(currentFolderId)) continue;
+                scannedFolders.add(currentFolderId);
+                
+                addLog(`Scanning directory level... Discovered ${allFiles.length} file(s) so far.`);
+                
+                let pageToken = null;
+                do {
+                    const query = `'${currentFolderId}' in parents and trashed = false and (` +
+                        `mimeType = 'application/vnd.google-apps.folder' or ` +
+                        `mimeType contains 'image/' or ` +
+                        `mimeType = 'application/pdf' or ` +
+                        `name contains '.jpg' or ` +
+                        `name contains '.jpeg' or ` +
+                        `name contains '.png' or ` +
+                        `name contains '.webp' or ` +
+                        `name contains '.pdf'` +
+                        `)`;
+                    
+                    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100${pageToken ? `&pageToken=${pageToken}` : ''}`;
+                    
+                    const res = await fetch(url, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    
+                    if (!res.ok) {
+                        console.error(`Error listing folder ${currentFolderId}: ${res.status}`);
+                        break;
+                    }
+                    
+                    const data = await res.json();
+                    const filesInFolder = data.files || [];
+                    
+                    for (const f of filesInFolder) {
+                        if (f.mimeType === 'application/vnd.google-apps.folder') {
+                            if (!scannedFolders.has(f.id) && !foldersToScan.includes(f.id)) {
+                                foldersToScan.push(f.id);
+                            }
+                        } else {
+                            allFiles.push(f);
+                        }
+                    }
+                    
+                    pageToken = data.nextPageToken || null;
+                } while (pageToken);
+            }
+            
+            addLog(`Discovered ${allFiles.length} total document(s) in Drive directory.`, 'success');
+
+            if (allFiles.length === 0) {
+                addLog('No invoices or bills found. Sync complete.', 'success');
+                setIsSyncing(false);
+                return;
+            }
+
+            addLog('Cross-referencing files against Supabase database...', 'info');
+
+            const unprocessedFiles = allFiles.filter(file => {
+                const alreadyIndexed = bills.some(b => 
+                    b.gdrive_file_id === file.id || 
+                    (b.attachment_note && b.attachment_note.includes(file.id))
+                );
+                return !alreadyIndexed;
+            });
+
+            addLog(`Queue Analysis: ${allFiles.length - unprocessedFiles.length} file(s) already cached. ${unprocessedFiles.length} new bill(s) require processing.`, 'info');
+
+            if (unprocessedFiles.length === 0) {
+                addLog('All files in the directory are fully synced. Ready for review!', 'success');
+                setIsSyncing(false);
+                toast.success('Drive Directory is fully up-to-date!');
+                return;
+            }
+
+            setCurrentProgress({ current: 0, total: unprocessedFiles.length, file: '' });
+            const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+            for (let i = 0; i < unprocessedFiles.length; i++) {
+                const file = unprocessedFiles[i];
+                setCurrentProgress({ current: i + 1, total: unprocessedFiles.length, file: file.name });
+                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Pre-downloading: ${file.name}...`, 'info');
+
+                try {
+                    const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+
+                    if (!fileRes.ok) throw new Error(`Failed to download ${file.name}`);
+
+                    const blob = await fileRes.blob();
+                    const isPdf = file.name.toLowerCase().endsWith('.pdf');
+
+                    // 1. Upload file directly to Supabase Storage bucket 'company_assets' / 'vouchers'
+                    addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Uploading to Supabase Storage...`, 'db');
+                    const fileObj = new File([blob], file.name, { type: blob.type });
+                    const publicUrl = await uploadFile('company_assets', 'vouchers', fileObj);
+
+                    let result = null;
+
+                    // 2. Perform OCR & Parse details
+                    if (isPdf) {
+                        addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Extracting text from PDF client-side...`, 'info');
+                        const extractedText = await performOCR(fileObj);
+                        if (!extractedText) throw new Error('No text content resolved from PDF file.');
+                        
+                        addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Sending PDF content to OpenAI OCR parser...`, 'ai');
+                        result = await extractBillWithOpenAI(extractedText, true);
+                    } else {
+                        addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Converting image to Base64...`, 'info');
+                        const base64 = await new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        });
+
+                        addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Submitting image to OpenAI Vision API...`, 'ai');
+                        result = await extractBillWithOpenAI(base64, false);
+                    }
+
+                    if (!result) throw new Error('OpenAI Vision OCR failed to return structured data.');
+
+                    addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Extracted Details: Vendor: "${result.supplier_name}", Invoice No: "${result.invoice_no}", Total: ${result.grand_total} ${result.currency || 'SGD'}`, 'ai');
+                    addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Writing Draft record into Supabase...`, 'db');
+
+                    // Match partner supplier if possible
+                    let supplierId = null;
+                    if (result.supplier_name) {
+                        const matched = partners.find(p => 
+                            p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
+                            (result.uen && p.registration_no === result.uen)
+                        );
+                        if (matched) {
+                            supplierId = matched.id;
+                            addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Linked to existing partner: ${matched.name}`, 'success');
+                        }
+                    }
+
+                    // Save draft expense
+                    const draftExpense = {
+                        company_id: profile?.company_id,
+                        supplier_name: result.supplier_name || file.name.split('.')[0],
+                        supplier_id: supplierId,
+                        description: result.description || `Scanned Invoice - ${file.name.split('.')[0]}`,
+                        amount: result.subtotal || result.grand_total || 0,
+                        gst_rate: 9,
+                        gst_amount: result.gst_amount || 0,
+                        grand_total: result.grand_total || result.subtotal || 0,
+                        invoice_no: result.invoice_no || '',
+                        invoice_date: result.invoice_date || new Date().toISOString().split('T')[0],
+                        status: 'Pending Approval',
+                        bill_url: publicUrl,
+                        attachment_url: publicUrl,
+                        gdrive_file_id: file.id,
+                        attachment_note: `GoogleDrive File ID: ${file.id}. Extracted via OpenAI Vision OCR.`
+                    };
+
+                    const { data: savedData, error: dbErr } = await supabase
+                        .from('job_expenses')
+                        .insert([draftExpense])
+                        .select();
+
+                    if (dbErr) throw dbErr;
+
+                    addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Saved Draft successfully.`, 'success');
+                    
+                    // Pace to stay within API rate limits
+                    await delay(600);
+
+                } catch (err) {
+                    console.error(`Failed to process ${file.name}:`, err);
+                    addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Error: ${err.message || err}`, 'error');
+                    await delay(800);
+                }
+            }
+
+            addLog('All files processed! Pre-indexing phase finished.', 'success');
+            toast.success('Sync complete! All invoices pre-filled as database drafts.');
+            fetchData();
+
+        } catch (syncError) {
+            console.error('Batch Sync Failed:', syncError);
+            addLog(`Critical Sync Failure: ${syncError.message}`, 'error');
+            toast.error('Sync failed: ' + syncError.message);
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
+    // Review Modal Calculations
+    const calculateTotals = (updated) => {
+        const sub = parseFloat(updated.amount) || 0;
+        const rate = parseFloat(updated.gst_rate) || 0;
+        const gst = sub * (rate / 100);
+        return {
+            ...updated,
+            gst_amount: gst,
+            grand_total: sub + gst
+        };
+    };
+
+    const handleReviewFieldChange = (field, value) => {
+        setEditedBill(prev => {
+            let updated = { ...prev, [field]: value };
+            if (field === 'supplier_id' && value) {
+                const s = partners.find(p => p.id === value);
+                if (s) updated.supplier_name = s.name;
+            }
+            if (['amount', 'gst_rate'].includes(field)) {
+                updated = calculateTotals(updated);
+            }
+            return updated;
+        });
+    };
+
+    const handleOpenReview = (bill) => {
+        setSelectedDraft(bill);
+        setEditedBill({
+            id: bill.id,
+            supplier_id: bill.supplier_id || '',
+            supplier_name: bill.supplier_name || '',
+            invoice_no: bill.invoice_no || '',
+            invoice_date: bill.invoice_date || new Date().toISOString().split('T')[0],
+            description: bill.description || '',
+            amount: bill.amount || 0,
+            gst_rate: bill.gst_rate || 9,
+            gst_amount: bill.gst_amount || 0,
+            grand_total: bill.grand_total || 0,
+            job_id: bill.job_id || '',
+            bill_url: bill.bill_url || bill.attachment_url || '',
+            gdrive_file_id: getDriveFileId(bill),
+            attachment_note: bill.attachment_note || ''
+        });
+    };
+
+    const handleApproveDraft = async (approvalStatus) => {
+        if (!editedBill.supplier_id && !editedBill.supplier_name) {
+            alert('Please select or specify a Supplier Name.');
+            return;
+        }
+
+        setIsSavingApproval(true);
+        try {
+            toast.loading('Saving and approving expense...', { id: 'approve' });
+            
+            const payload = {
+                ...editedBill,
+                status: approvalStatus // 'Paid' or 'Unpaid'
+            };
+
+            const { data, error } = await saveJobExpense(payload);
+            if (error) throw error;
+
+            toast.success(`Bill approved as ${approvalStatus.toUpperCase()}!`, { id: 'approve' });
+            setSelectedDraft(null);
+            fetchData();
+        } catch (err) {
+            console.error('Approval Failed:', err);
+            toast.error('Approval failed: ' + err.message, { id: 'approve' });
+        } finally {
+            setIsSavingApproval(false);
+        }
+    };
+
+    const handleDeleteDraft = async (id) => {
+        if (!window.confirm('Are you sure you want to delete this parsed draft?')) return;
+        try {
+            toast.loading('Deleting draft...', { id: 'delete' });
+            const { error } = await deleteJobExpense(id);
+            if (error) throw error;
+            toast.success('Draft removed.', { id: 'delete' });
+            setSelectedDraft(null);
+            fetchData();
+        } catch (err) {
+            console.error('Delete failed:', err);
+            toast.error('Delete failed: ' + err.message, { id: 'delete' });
+        }
+    };
+
     const handleStatusToggle = async (bill) => {
         const newStatus = bill.status === 'Paid' ? 'Unpaid' : 'Paid';
         const { data, error } = await updateExpenseStatus(bill.id, newStatus);
         if (data) {
             setBills(prev => prev.map(b => b.id === bill.id ? { ...b, status: newStatus } : b));
+            toast.success(`Status updated to ${newStatus}`);
         }
     };
 
@@ -82,6 +538,7 @@ export default function BillsPortal() {
         const { error } = await deleteJobExpense(id);
         if (!error) {
             setBills(prev => prev.filter(b => b.id !== id));
+            toast.success('Bill deleted.');
         }
     };
 
@@ -89,10 +546,14 @@ export default function BillsPortal() {
         return await uploadFile('company_assets', 'vouchers', file);
     };
 
+    // Filter normal lists (excluding drafts pending approval)
     const filteredBills = bills.filter(b => {
+        if (b.status === 'Pending Approval') return false;
+
         const matchesSearch = 
             (b.invoice_no?.toLowerCase().includes(searchQuery.toLowerCase())) ||
             (b.partner?.name?.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (b.supplier_name?.toLowerCase().includes(searchQuery.toLowerCase())) ||
             (b.description?.toLowerCase().includes(searchQuery.toLowerCase()));
         
         if (activeTab === 'unpaid') return matchesSearch && b.status !== 'Paid';
@@ -100,17 +561,20 @@ export default function BillsPortal() {
         return matchesSearch;
     });
 
+    const pendingDrafts = bills.filter(b => b.status === 'Pending Approval');
+
     const unpaidTotal = bills
-        .filter(b => b.status !== 'Paid')
-        .reduce((sum, b) => sum + (b.grand_total || 0), 0);
+        .filter(b => b.status !== 'Paid' && b.status !== 'Pending Approval')
+        .reduce((sum, b) => sum + (b.grand_total || b.amount || 0), 0);
 
     const monthlyTotal = bills
         .filter(b => {
+            if (b.status === 'Pending Approval') return false;
             const date = new Date(b.invoice_date);
             const now = new Date();
             return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
         })
-        .reduce((sum, b) => sum + (b.grand_total || 0), 0);
+        .reduce((sum, b) => sum + (b.grand_total || b.amount || 0), 0);
 
     return (
         <div className="animate-fade-in" style={{ padding: '24px' }}>
@@ -136,7 +600,7 @@ export default function BillsPortal() {
                         <div>
                             <p style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Total Unpaid</p>
                             <h2 style={{ fontSize: '2rem', fontWeight: 800, color: '#ef4444', margin: 0 }}>SGD {unpaidTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
-                            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px' }}>{bills.filter(b => b.status !== 'Paid').length} pending bills</p>
+                            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px' }}>{bills.filter(b => b.status !== 'Paid' && b.status !== 'Pending Approval').length} pending bills</p>
                         </div>
                         <div style={{ background: '#fef2f2', padding: '12px', borderRadius: '14px' }}>
                             <Clock size={28} color="#ef4444" />
@@ -158,11 +622,11 @@ export default function BillsPortal() {
                 </div>
             </div>
 
-            {/* Main Content Area */}
+            {/* Main Tabs Header */}
             <div className="glass-panel" style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '0', overflow: 'hidden' }}>
                 <div style={{ padding: '20px 24px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fcfdfe' }}>
                     <div style={{ display: 'flex', gap: '24px' }}>
-                        {['all', 'unpaid', 'paid'].map(tab => (
+                        {['all', 'unpaid', 'paid', 'scanned'].map(tab => (
                             <button 
                                 key={tab}
                                 onClick={() => setActiveTab(tab)}
@@ -177,110 +641,314 @@ export default function BillsPortal() {
                                     position: 'relative'
                                 }}
                             >
-                                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                                {tab === 'scanned' ? 'Invoice Images' : tab.charAt(0).toUpperCase() + tab.slice(1)}
                                 {activeTab === tab && <div style={{ position: 'absolute', bottom: -1, left: 0, right: 0, height: '2px', background: '#6366f1' }} />}
                             </button>
                         ))}
                     </div>
-                    <div style={{ position: 'relative', width: '300px' }}>
-                        <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-                        <input 
-                            type="text" 
-                            placeholder="Search by vendor or invoice..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            style={{ 
-                                width: '100%', 
-                                padding: '10px 12px 10px 40px', 
-                                borderRadius: '10px', 
-                                border: '1px solid #e2e8f0', 
-                                fontSize: '0.85rem',
-                                outline: 'none'
-                            }} 
-                        />
-                    </div>
+                    {activeTab !== 'scanned' && (
+                        <div style={{ position: 'relative', width: '300px' }}>
+                            <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                            <input 
+                                type="text" 
+                                placeholder="Search by vendor or invoice..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                style={{ 
+                                    width: '100%', 
+                                    padding: '10px 12px 10px 40px', 
+                                    borderRadius: '10px', 
+                                    border: '1px solid #e2e8f0', 
+                                    fontSize: '0.85rem',
+                                    outline: 'none'
+                                }} 
+                            />
+                        </div>
+                    )}
                 </div>
 
-                <div className="table-responsive">
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead style={{ background: '#f8fafc' }}>
-                            <tr>
-                                <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Supplier</th>
-                                <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Invoice No</th>
-                                <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Date</th>
-                                <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Linked Job</th>
-                                <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>GST</th>
-                                <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Total</th>
-                                <th style={{ textAlign: 'center', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Status</th>
-                                <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {loading ? (
-                                <tr><td colSpan="8" style={{ textAlign: 'center', padding: '60px' }}><Loader2 className="animate-spin" style={{ margin: '0 auto' }} /></td></tr>
-                            ) : filteredBills.length === 0 ? (
-                                <tr><td colSpan="8" style={{ textAlign: 'center', padding: '80px', color: '#94a3b8' }}>No bills found matching your criteria.</td></tr>
-                            ) : filteredBills.map(bill => (
-                                <tr key={bill.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                    <td style={{ padding: '16px 24px' }}>
-                                        <div style={{ fontWeight: 700, color: '#1e293b' }}>{bill.partner?.name || 'Unknown Vendor'}</div>
-                                        {bill.partner?.registration_no && <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>GST: {bill.partner.registration_no}</div>}
-                                    </td>
-                                    <td style={{ padding: '16px 24px', fontSize: '0.85rem', color: '#475569', fontWeight: 600 }}>{bill.invoice_no || 'N/A'}</td>
-                                    <td style={{ padding: '16px 24px', fontSize: '0.85rem', color: '#475569' }}>{bill.invoice_date ? new Date(bill.invoice_date).toLocaleDateString() : '-'}</td>
-                                    <td style={{ padding: '16px 24px' }}>
-                                        {bill.job?.job_no ? (
+                {activeTab !== 'scanned' ? (
+                    <div className="table-responsive">
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead style={{ background: '#f8fafc' }}>
+                                <tr>
+                                    <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Supplier</th>
+                                    <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Invoice No</th>
+                                    <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Date</th>
+                                    <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Linked Job</th>
+                                    <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>GST</th>
+                                    <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Total</th>
+                                    <th style={{ textAlign: 'center', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Status</th>
+                                    <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {loading ? (
+                                    <tr><td colSpan="8" style={{ textAlign: 'center', padding: '60px' }}><Loader2 className="animate-spin" style={{ margin: '0 auto' }} /></td></tr>
+                                ) : filteredBills.length === 0 ? (
+                                    <tr><td colSpan="8" style={{ textAlign: 'center', padding: '80px', color: '#94a3b8' }}>No bills found matching your criteria.</td></tr>
+                                ) : filteredBills.map(bill => (
+                                    <tr key={bill.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                        <td style={{ padding: '16px 24px' }}>
+                                            <div style={{ fontWeight: 700, color: '#1e293b' }}>{bill.partner?.name || bill.supplier_name || 'Unknown Vendor'}</div>
+                                            {bill.partner?.registration_no && <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>GST: {bill.partner.registration_no}</div>}
+                                        </td>
+                                        <td style={{ padding: '16px 24px', fontSize: '0.85rem', color: '#475569', fontWeight: 600 }}>{bill.invoice_no || 'N/A'}</td>
+                                        <td style={{ padding: '16px 24px', fontSize: '0.85rem', color: '#475569' }}>{bill.invoice_date ? new Date(bill.invoice_date).toLocaleDateString() : '-'}</td>
+                                        <td style={{ padding: '16px 24px' }}>
+                                            {bill.job?.job_no ? (
+                                                <button 
+                                                    onClick={() => navigate(`/workflows/editor/Job/${bill.job_id}`)}
+                                                    style={{ border: 'none', background: '#f1f5f9', color: '#475569', padding: '4px 8px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
+                                                >
+                                                    <Briefcase size={12} /> {bill.job.job_no}
+                                                </button>
+                                            ) : <span style={{ color: '#cbd5e1' }}>-</span>}
+                                        </td>
+                                        <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: 600, color: '#f97316' }}>SGD {bill.gst_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                        <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: 800, color: '#1e293b' }}>SGD {bill.grand_total?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                        <td style={{ padding: '16px 24px', textAlign: 'center' }}>
                                             <button 
-                                                onClick={() => navigate(`/workflows/editor/Job/${bill.job_id}`)}
-                                                style={{ border: 'none', background: '#f1f5f9', color: '#475569', padding: '4px 8px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
+                                                onClick={() => handleStatusToggle(bill)}
+                                                style={{ 
+                                                    border: 'none', 
+                                                    background: bill.status === 'Paid' ? '#dcfce7' : '#fef2f2', 
+                                                    color: bill.status === 'Paid' ? '#15803d' : '#ef4444', 
+                                                    padding: '6px 12px', 
+                                                    borderRadius: '20px', 
+                                                    fontSize: '0.7rem', 
+                                                    fontWeight: 800, 
+                                                    cursor: 'pointer',
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '6px'
+                                                }}
                                             >
-                                                <Briefcase size={12} /> {bill.job.job_no}
+                                                {bill.status === 'Paid' ? <CheckCircle2 size={12} /> : <Clock size={12} />}
+                                                {bill.status === 'Paid' ? 'PAID' : 'UNPAID'}
                                             </button>
-                                        ) : <span style={{ color: '#cbd5e1' }}>-</span>}
-                                    </td>
-                                    <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: 600, color: '#f97316' }}>{bill.gst_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                    <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: 800, color: '#1e293b' }}>SGD {bill.grand_total?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                    <td style={{ padding: '16px 24px', textAlign: 'center' }}>
+                                        </td>
+                                        <td style={{ padding: '16px 24px', textAlign: 'right' }}>
+                                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                                {(bill.bill_url || bill.attachment_url) && (
+                                                    <a href={bill.bill_url || bill.attachment_url} target="_blank" rel="noreferrer" className="btn-icon-sm" title="View PDF">
+                                                        <FileText size={16} color="#6366f1" />
+                                                    </a>
+                                                )}
+                                                <button className="btn-icon-sm" onClick={() => handleDelete(bill.id)} style={{ color: '#ef4444' }}>
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    // Google Drive Scanner View
+                    <div style={{ padding: '32px', background: '#f8fafc' }}>
+                        {/* Configuration & Logs Console */}
+                        <div style={{ display: 'grid', gridTemplateColumns: isSyncing ? '1fr 1.2fr' : '1.2fr 0.8fr', gap: '24px', marginBottom: '32px' }}>
+                            <div className="glass-panel" style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '24px', borderRadius: '16px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+                                    <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1e293b', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <Globe size={18} color="#6366f1" /> Google Drive Configurations
+                                    </h2>
+                                    <span style={{ 
+                                        background: isDriveConnected ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', 
+                                        color: isDriveConnected ? '#16a34a' : '#dc2626', 
+                                        padding: '4px 10px', 
+                                        borderRadius: '20px', 
+                                        fontSize: '0.8rem', 
+                                        fontWeight: 600,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px'
+                                    }}>
+                                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isDriveConnected ? '#16a34a' : '#dc2626' }}></span>
+                                        {isDriveConnected ? 'Connected' : 'Disconnected'}
+                                    </span>
+                                </div>
+
+                                {!isDriveConnected ? (
+                                    <div style={{ background: 'rgba(99, 102, 241, 0.04)', border: '1px dashed rgba(99, 102, 241, 0.2)', padding: '20px', borderRadius: '12px', textAlign: 'center' }}>
+                                        <p style={{ margin: '0 0 16px 0', fontSize: '0.9rem', color: '#64748b' }}>Authenticate your Google Account to authorize direct document indexing from Drive folder repositories.</p>
                                         <button 
-                                            onClick={() => handleStatusToggle(bill)}
-                                            style={{ 
-                                                border: 'none', 
-                                                background: bill.status === 'Paid' ? '#dcfce7' : '#fef2f2', 
-                                                color: bill.status === 'Paid' ? '#15803d' : '#ef4444', 
-                                                padding: '6px 12px', 
-                                                borderRadius: '20px', 
-                                                fontSize: '0.7rem', 
-                                                fontWeight: 800, 
-                                                cursor: 'pointer',
-                                                display: 'inline-flex',
-                                                alignItems: 'center',
-                                                gap: '6px'
-                                            }}
+                                            onClick={handleConnectGoogle}
+                                            style={{ background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', margin: '0 auto' }}
                                         >
-                                            {bill.status === 'Paid' ? <CheckCircle2 size={12} /> : <Clock size={12} />}
-                                            {bill.status === 'Paid' ? 'PAID' : 'UNPAID'}
+                                            Connect Google Account
                                         </button>
-                                    </td>
-                                    <td style={{ padding: '16px 24px', textAlign: 'right' }}>
-                                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                                            {bill.bill_url && (
-                                                <a href={bill.bill_url} target="_blank" rel="noreferrer" className="btn-icon-sm" title="View PDF">
-                                                    <FileText size={16} color="#6366f1" />
-                                                </a>
-                                            )}
-                                            <button className="btn-icon-sm" onClick={() => handleDelete(bill.id)} style={{ color: '#ef4444' }}>
-                                                <Trash2 size={16} />
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '6px' }}>Folder Directory Shared Link / ID</label>
+                                            <input 
+                                                type="text" 
+                                                style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
+                                                value={folderLink}
+                                                onChange={(e) => setFolderLink(e.target.value)}
+                                                placeholder="https://drive.google.com/drive/folders/..."
+                                            />
+                                        </div>
+
+                                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                                            <button 
+                                                onClick={handleConnectGoogle}
+                                                style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#475569', padding: '10px 16px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                            >
+                                                <RefreshCw size={16} /> Reconnect
+                                            </button>
+                                            <button 
+                                                onClick={triggerFolderSync}
+                                                disabled={isSyncing || !folderLink}
+                                                style={{ 
+                                                    background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)', 
+                                                    color: '#fff', 
+                                                    border: 'none', 
+                                                    padding: '10px 24px', 
+                                                    borderRadius: '8px', 
+                                                    fontWeight: 700, 
+                                                    cursor: isSyncing ? 'not-allowed' : 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '8px',
+                                                    opacity: isSyncing ? 0.6 : 1
+                                                }}
+                                            >
+                                                {isSyncing ? (
+                                                    <>
+                                                        <Loader2 size={16} className="animate-spin" /> Indexing folder...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Play size={16} /> Sync &amp; Pre-Index Folder
+                                                    </>
+                                                )}
                                             </button>
                                         </div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Pre-indexing Pipeline Console */}
+                            <div className="glass-panel" style={{ background: '#1e293b', padding: '24px', borderRadius: '16px', color: '#cbd5e1', display: 'flex', flexDirection: 'column', height: '240px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                    <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#f8fafc', textTransform: 'uppercase', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <CircleDot size={14} className={isSyncing ? "animate-pulse" : ""} style={{ color: isSyncing ? '#a855f7' : '#64748b' }} /> Background Pre-indexing Pipeline
+                                    </span>
+                                    {isSyncing && (
+                                        <span style={{ fontSize: '0.8rem', background: '#3b82f6', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
+                                            Processing {currentProgress.current}/{currentProgress.total}
+                                        </span>
+                                    )}
+                                </div>
+                                
+                                <div style={{ flex: 1, overflowY: 'auto', background: '#0f172a', padding: '12px', borderRadius: '8px', fontFamily: 'monospace', fontSize: '0.8rem', lineHeight: '1.5' }}>
+                                    {syncLogs.length === 0 ? (
+                                        <span style={{ color: '#64748b' }}>Console idle. Click "Sync & Pre-Index Folder" to discover new scanned invoices or bills.</span>
+                                    ) : (
+                                        syncLogs.map((log, idx) => (
+                                            <div key={idx} style={{ 
+                                                marginBottom: '4px',
+                                                color: log.type === 'error' ? '#ef4444' : 
+                                                       log.type === 'success' ? '#22c55e' : 
+                                                       log.type === 'ai' ? '#c084fc' : 
+                                                       log.type === 'db' ? '#38bdf8' : '#94a3b8' 
+                                            }}>
+                                                [{log.time}] {log.message}
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Scanned Bills Grid */}
+                        <div style={{ marginTop: '32px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '20px' }}>
+                                <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>Drafts Pending Review ({pendingDrafts.length})</h3>
+                            </div>
+
+                            {loading ? (
+                                <div style={{ textAlign: 'center', padding: '48px 0', color: '#64748b' }}>
+                                    <Loader2 size={36} className="animate-spin" style={{ margin: '0 auto 12px auto', color: '#6366f1' }} />
+                                    <p>Loading database drafts queue...</p>
+                                </div>
+                            ) : pendingDrafts.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '64px 32px', background: '#fafafb', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
+                                    <CheckSquare size={48} color="#94a3b8" style={{ margin: '0 auto 16px auto' }} />
+                                    <h4 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#475569', margin: '0 0 4px 0' }}>Perfect Sync! Review Queue Empty</h4>
+                                    <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>All invoices in Google Drive have been pre-indexed and approved. Click "Sync Folder" to scan for new uploads!</p>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
+                                    {pendingDrafts.map((draft) => {
+                                        const driveId = getDriveFileId(draft);
+                                        
+                                        return (
+                                            <div 
+                                                key={draft.id}
+                                                onClick={() => handleOpenReview(draft)}
+                                                style={{ 
+                                                    background: '#fff', border: '1px solid #e2e8f0', borderRadius: '14px', overflow: 'hidden', cursor: 'pointer',
+                                                    transition: 'all 0.2s', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                                                }}
+                                                onMouseOver={e => {
+                                                    e.currentTarget.style.borderColor = '#6366f1';
+                                                    e.currentTarget.style.transform = 'translateY(-2px)';
+                                                }}
+                                                onMouseOut={e => {
+                                                    e.currentTarget.style.borderColor = '#e2e8f0';
+                                                    e.currentTarget.style.transform = 'none';
+                                                }}
+                                            >
+                                                {/* Visual File Preview */}
+                                                <div style={{ position: 'relative', height: '160px', background: '#0f172a', display: 'flex', borderBottom: '1px solid #e2e8f0' }}>
+                                                    {driveId && googleAccessToken ? (
+                                                        <DriveDocPreview fileId={driveId} accessToken={googleAccessToken} fileName={draft.supplier_name} style={{ width: '100%', height: '100%' }} />
+                                                    ) : (
+                                                        <div style={{ margin: 'auto', textAlign: 'center', color: '#475569', fontSize: '0.85rem' }}>
+                                                            <FileText size={32} style={{ margin: '0 auto 8px auto', display: 'block', color: '#64748b' }} />
+                                                            Preview Restricted
+                                                        </div>
+                                                    )}
+                                                    <span style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(234, 179, 8, 0.9)', color: '#fff', padding: '3px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 700 }}>
+                                                        PENDING REVIEW
+                                                    </span>
+                                                </div>
+
+                                                <div style={{ padding: '16px' }}>
+                                                    <h4 style={{ fontSize: '1rem', fontWeight: 700, color: '#1e293b', margin: '0 0 4px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                        <Building2 size={16} color="#64748b" /> {draft.supplier_name || 'Unknown supplier'}
+                                                    </h4>
+                                                    <p style={{ margin: '0 0 12px 0', color: '#64748b', fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                        Invoice: {draft.invoice_no || 'N/A'}
+                                                    </p>
+                                                    
+                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
+                                                        <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                                                            {draft.invoice_date ? new Date(draft.invoice_date).toLocaleDateString() : '-'}
+                                                        </span>
+                                                        <span style={{ fontSize: '0.9rem', fontWeight: 800, color: '#1e293b' }}>
+                                                            SGD {draft.grand_total?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
 
-            <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Upload Supplier Bill" icon={Upload}>
+            {/* Standard Upload Modal */}
+            <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Upload Supplier Bill" icon={Plus} size="xl">
                 <QuickExpenseAdd 
                     company_id={profile?.company_id}
                     partners={partners}
@@ -293,6 +961,251 @@ export default function BillsPortal() {
                     onUploadBill={handleUploadBill}
                 />
             </Modal>
+
+            {/* Detailed Double-Panel Review Modal */}
+            {selectedDraft && (
+                <div style={{ 
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.65)', 
+                    display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '24px', backdropFilter: 'blur(4px)'
+                }}>
+                    <div style={{ 
+                        background: '#fff', borderRadius: '24px', width: '100%', maxWidth: '1200px', height: '90vh', 
+                        display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' 
+                    }}>
+                        {/* Modal Header */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 32px', borderBottom: '1px solid #e2e8f0', background: '#fff' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <span style={{ background: 'rgba(99, 102, 241, 0.08)', padding: '10px', borderRadius: '12px', color: '#6366f1', display: 'flex' }}>
+                                    <Receipt size={20} />
+                                </span>
+                                <div>
+                                    <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>Review Scanned Invoice Details</h3>
+                                    <p style={{ margin: '2px 0 0 0', color: '#64748b', fontSize: '0.85rem' }}>Verify calculations, select supplier and job, then approve to accounts payable directory.</p>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => setSelectedDraft(null)}
+                                style={{ background: '#f1f5f9', border: 'none', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', cursor: 'pointer' }}
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Modal Body: Double-panel */}
+                        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                            {/* Left Panel: Document Preview */}
+                            <div style={{ flex: 1.1, background: '#0f172a', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+                                {editedBill.gdrive_file_id && googleAccessToken ? (
+                                    <DriveDocPreview 
+                                        fileId={editedBill.gdrive_file_id} 
+                                        accessToken={googleAccessToken} 
+                                        fileName={selectedDraft.supplier_name} 
+                                        style={{ width: '100%', height: '100%' }} 
+                                    />
+                                ) : (
+                                    <div style={{ margin: 'auto', textAlign: 'center', color: '#94a3b8' }}>
+                                        <FileText size={64} style={{ margin: '0 auto 16px auto', display: 'block' }} />
+                                        <span>Document Preview Unavailable</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Right Panel: Edit Form */}
+                            <div style={{ flex: 0.9, padding: '32px', overflowY: 'auto', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', background: '#fafafa' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
+                                    {/* Supplier Selector */}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                        <label style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: '#64748b' }}>Supplier *</label>
+                                        <select
+                                            value={editedBill.supplier_id || ''}
+                                            onChange={e => handleReviewFieldChange('supplier_id', e.target.value)}
+                                            style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1.5px solid #e2e8f0', outline: 'none', background: '#fff' }}
+                                        >
+                                            <option value="">-- Create new or select matching Supplier --</option>
+                                            {partners.map(p => (
+                                                <option key={p.id} value={p.id}>{p.name}</option>
+                                            ))}
+                                        </select>
+                                        {!editedBill.supplier_id && (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
+                                                <span style={{ fontSize: '0.75rem', color: '#f97316' }}>No matching partner selected. Entering raw name:</span>
+                                                <input 
+                                                    type="text"
+                                                    value={editedBill.supplier_name || ''}
+                                                    onChange={e => handleReviewFieldChange('supplier_name', e.target.value)}
+                                                    placeholder="Supplier Name"
+                                                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Invoice Number & Date */}
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            <label style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: '#64748b' }}>Invoice No</label>
+                                            <input 
+                                                type="text"
+                                                value={editedBill.invoice_no || ''}
+                                                onChange={e => handleReviewFieldChange('invoice_no', e.target.value)}
+                                                style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
+                                            />
+                                        </div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            <label style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: '#64748b' }}>Invoice Date</label>
+                                            <input 
+                                                type="date"
+                                                value={editedBill.invoice_date || ''}
+                                                onChange={e => handleReviewFieldChange('invoice_date', e.target.value)}
+                                                style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* Linked Job Selection */}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                        <label style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: '#64748b' }}>Linked Job / Project</label>
+                                        <select
+                                            value={editedBill.job_id || ''}
+                                            onChange={e => handleReviewFieldChange('job_id', e.target.value)}
+                                            style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1.5px solid #e2e8f0', outline: 'none', background: '#fff' }}
+                                        >
+                                            <option value="">Unlinked (General Expense)</option>
+                                            {jobs.map(j => (
+                                                <option key={j.id} value={j.id}>{j.document_no}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    {/* Description */}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                        <label style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: '#64748b' }}>Description / Line Summary</label>
+                                        <textarea 
+                                            value={editedBill.description || ''}
+                                            onChange={e => handleReviewFieldChange('description', e.target.value)}
+                                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', height: '60px', resize: 'none' }}
+                                        />
+                                    </div>
+
+                                    {/* Financial Split: Subtotal, GST Rate, GST Amount, Grand Total */}
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', background: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            <label style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: '#64748b' }}>Subtotal (Before Tax)</label>
+                                            <input 
+                                                type="number"
+                                                step="0.01"
+                                                value={editedBill.amount || 0}
+                                                onChange={e => handleReviewFieldChange('amount', parseFloat(e.target.value) || 0)}
+                                                style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontWeight: 'bold' }}
+                                            />
+                                        </div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            <label style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: '#64748b' }}>GST Rate (%)</label>
+                                            <input 
+                                                type="number"
+                                                value={editedBill.gst_rate || 9}
+                                                onChange={e => handleReviewFieldChange('gst_rate', parseFloat(e.target.value) || 0)}
+                                                style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
+                                            />
+                                        </div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', opacity: 0.8 }}>
+                                            <label style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: '#64748b' }}>GST Tax Amount</label>
+                                            <div style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#f8fafc', fontWeight: 'bold', color: '#475569' }}>
+                                                SGD {editedBill.gst_amount?.toFixed(2)}
+                                            </div>
+                                        </div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            <label style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: '#6366f1' }}>Grand Total (SGD)</label>
+                                            <div style={{ padding: '10px 12px', borderRadius: '8px', border: '1.5px solid #6366f1', background: '#f5f3ff', fontWeight: 900, color: '#4338ca', fontSize: '1.1rem' }}>
+                                                SGD {editedBill.grand_total?.toFixed(2)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Actions */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '24px' }}>
+                                    <div style={{ display: 'flex', gap: '10px' }}>
+                                        <button 
+                                            disabled={isSavingApproval}
+                                            onClick={() => handleApproveDraft('Unpaid')}
+                                            style={{ 
+                                                flex: 1, 
+                                                background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)', 
+                                                color: '#fff', 
+                                                border: 'none', 
+                                                padding: '12px', 
+                                                borderRadius: '10px', 
+                                                fontWeight: 700, 
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                gap: '6px'
+                                            }}
+                                        >
+                                            <Check size={16} /> Approve (Unpaid)
+                                        </button>
+                                        <button 
+                                            disabled={isSavingApproval}
+                                            onClick={() => handleApproveDraft('Paid')}
+                                            style={{ 
+                                                flex: 1, 
+                                                background: '#10b981', 
+                                                color: '#fff', 
+                                                border: 'none', 
+                                                padding: '12px', 
+                                                borderRadius: '10px', 
+                                                fontWeight: 700, 
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                gap: '6px'
+                                            }}
+                                        >
+                                            <CheckCircle2 size={16} /> Approve (Paid)
+                                        </button>
+                                    </div>
+                                    
+                                    <div style={{ display: 'flex', gap: '10px' }}>
+                                        <button 
+                                            onClick={() => handleDeleteDraft(editedBill.id)}
+                                            style={{ 
+                                                flex: 1, 
+                                                background: '#fee2e2', 
+                                                color: '#dc2626', 
+                                                border: '1px solid #fecaca', 
+                                                padding: '10px', 
+                                                borderRadius: '10px', 
+                                                fontWeight: 600, 
+                                                cursor: 'pointer' 
+                                            }}
+                                        >
+                                            Dismiss / Delete Draft
+                                        </button>
+                                        <button 
+                                            onClick={() => setSelectedDraft(null)}
+                                            style={{ 
+                                                flex: 1, 
+                                                background: '#fff', 
+                                                color: '#475569', 
+                                                border: '1px solid #cbd5e1', 
+                                                padding: '10px', 
+                                                borderRadius: '10px', 
+                                                fontWeight: 600, 
+                                                cursor: 'pointer' 
+                                            }}
+                                        >
+                                            Close
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

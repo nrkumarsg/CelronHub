@@ -11,7 +11,8 @@ import {
     ChevronRight,
     Package,
     Wrench,
-    QrCode
+    QrCode,
+    ArrowUpDown
 } from 'lucide-react';
 import ScannerModal from '../components/ScannerModal';
 import { getCatalogItems, getAllCatalogItemsForExport, createCatalogItem } from '../lib/catalogService';
@@ -27,6 +28,8 @@ const CatalogDirectory = () => {
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [typeFilter, setTypeFilter] = useState('');
+    const [sortBy, setSortBy] = useState('name');
+    const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
 
     // Pagination
     const [currentPage, setCurrentPage] = useState(1);
@@ -41,7 +44,9 @@ const CatalogDirectory = () => {
             currentPage,
             itemsPerPage,
             { type: typeFilter },
-            searchQuery
+            searchQuery,
+            sortBy,
+            sortDirection
         );
 
         if (error) {
@@ -60,7 +65,7 @@ const CatalogDirectory = () => {
 
     useEffect(() => {
         fetchItems();
-    }, [currentPage, searchQuery, typeFilter]);
+    }, [currentPage, searchQuery, typeFilter, sortBy, sortDirection]);
 
 
     const handleSearch = (e) => {
@@ -224,6 +229,32 @@ const CatalogDirectory = () => {
                             <option value="">All Types</option>
                             <option value="Supply Part">Supply Parts</option>
                             <option value="Service">Services</option>
+                        </select>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 500 }}>
+                            <ArrowUpDown size={16} /> Sort:
+                        </div>
+                        <select
+                            className="form-select"
+                            style={{ width: '220px', padding: '8px 12px' }}
+                            value={`${sortBy}-${sortDirection}`}
+                            onChange={(e) => {
+                                const [key, dir] = e.target.value.split('-');
+                                setSortBy(key);
+                                setSortDirection(dir);
+                                setCurrentPage(1);
+                            }}
+                        >
+                            <option value="name-desc">Item Name (Z-A)</option>
+                            <option value="name-asc">Item Name (A-Z)</option>
+                            <option value="quantity-desc">Quantity (High-Low)</option>
+                            <option value="quantity-asc">Quantity (Low-High)</option>
+                            <option value="selling_price-desc">Price (High-Low)</option>
+                            <option value="selling_price-asc">Price (Low-High)</option>
+                            <option value="created_at-desc">Date Added (Newest)</option>
+                            <option value="created_at-asc">Date Added (Oldest)</option>
                         </select>
                     </div>
                 </div>

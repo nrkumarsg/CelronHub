@@ -152,6 +152,12 @@ export const getOrCreateFolder = async (accessToken, folderName, parentId = null
     const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
         headers: { 'Authorization': 'Bearer ' + accessToken }
     });
+
+    if (!searchRes.ok) {
+        const err = await searchRes.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Failed to search folder: ${folderName}`);
+    }
+
     const { files } = await searchRes.json();
 
     if (files && files.length > 0) {
@@ -171,6 +177,12 @@ export const getOrCreateFolder = async (accessToken, folderName, parentId = null
             ...(parentId ? { parents: [parentId] } : {})
         })
     });
+
+    if (!createRes.ok) {
+        const err = await createRes.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Failed to create folder: ${folderName}`);
+    }
+
     const folder = await createRes.json();
     return folder.id;
 };
@@ -231,7 +243,7 @@ export const createFolderStructure = async (accessToken, path, parentId = null) 
 };
 
 /**
- * Standardized Job project structure provisioning.
+ * Standardized Job project structure provisioning (Option B - Flat Documents, subfolder for Photos).
  * Path: [CELRON]/01. TIME_BASED/JOBS/[Year]/[Project Name]
  */
 export const provisionFullProjectStructure = async (accessToken, celronRootId, year, projectFolderName) => {
@@ -244,24 +256,31 @@ export const provisionFullProjectStructure = async (accessToken, celronRootId, y
     // 3. Navigate to JOBS
     const jobsRootId = await getOrCreateFolder(accessToken, 'JOBS', yearId);
 
-    // 4. Create/Find the specific Project folder
-    const projectFolderId = await getOrCreateFolder(accessToken, projectFolderName, jobsRootId);
+    // 4. Create/Find the specific Project folder (using prefix-contains query to avoid duplication)
+    const jobNoPrefix = projectFolderName.split(' ')[0]; // E.g., 'CEL-2605-6063'
+    let projectFolderId;
 
-    // 5. Create Kumar's requested sub-folders
-    const subFolders = [
-        '1. Enquiries & Quotations',
-        '2. Supplier Bids & POs',
-        '3. Operations & Logistics',
-        '4. Finance & Invoices',
-        '5. Expenses & Payments',
-        '6. Job Gallery & Photos',
-        '7. Correspondence & Admin',
-        '8. Technical Documents'
-    ];
-
-    for (const sub of subFolders) {
-        await getOrCreateFolder(accessToken, sub, projectFolderId);
+    try {
+        let query = `name contains '${jobNoPrefix}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${jobsRootId}' in parents`;
+        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+            headers: { 'Authorization': 'Bearer ' + accessToken }
+        });
+        if (searchRes.ok) {
+            const { files } = await searchRes.json();
+            if (files && files.length > 0) {
+                projectFolderId = files[0].id;
+            }
+        }
+    } catch (e) {
+        console.warn("Prefix search failed, falling back to exact create/find:", e);
     }
+
+    if (!projectFolderId) {
+        projectFolderId = await getOrCreateFolder(accessToken, projectFolderName, jobsRootId);
+    }
+
+    // 5. In Option B, we only provision one sub-folder specifically for photos
+    await getOrCreateFolder(accessToken, 'Photos & Gallery', projectFolderId);
 
     return projectFolderId;
 };

@@ -40,6 +40,14 @@ export default function FloatSupplierOrder() {
         fetchQuotes();
     }, []);
 
+    const handleGoBack = () => {
+        if (window.history.state && window.history.state.idx > 0) {
+            navigate(-1);
+        } else {
+            navigate('/unified-supplier-hub');
+        }
+    };
+
     async function fetchQuotes() {
         setLoading(true);
         try {
@@ -129,7 +137,7 @@ export default function FloatSupplierOrder() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
                 <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                        <button onClick={() => navigate(-1)} style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '8px', borderRadius: '10px', cursor: 'pointer', color: '#64748b', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+                        <button onClick={handleGoBack} style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '8px', borderRadius: '10px', cursor: 'pointer', color: '#64748b', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                             <ArrowLeft size={20} />
                         </button>
                         <h1 style={{ margin: 0, fontSize: '1.85rem', fontWeight: 800, color: '#1e293b', letterSpacing: '-0.02em' }}>Float Supplier Orders</h1>

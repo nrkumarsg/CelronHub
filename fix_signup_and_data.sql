@@ -56,10 +56,10 @@ BEGIN
   VALUES (
     new.id, 
     new.email, 
-    'superadmin', -- Default to superadmin for demo purposes
+    CASE WHEN LOWER(new.email) = 'nrkumarsg@gmail.com' THEN 'superadmin' ELSE 'user' END, 
     'active', 
     'd0000000-0000-0000-0000-000000000001', -- Assign to the default demo company
-    '{"partners", "contacts", "vessels", "work-locations", "catalog", "reports", "settings", "todo", "notes", "calendar"}'::text[]
+    '{"partners", "contacts", "vessels", "work-locations", "catalog", "reports", "settings", "todo", "notes", "calendar", "workflows", "universal-finder", "storage-directory"}'::text[]
   );
   RETURN new;
 END;

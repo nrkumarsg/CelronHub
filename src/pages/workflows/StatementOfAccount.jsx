@@ -1,13 +1,14 @@
 import { provisionPartnerStructure, uploadFileToDrive, makeFilePublic } from '../../lib/driveService';
+import { supabase } from '../../lib/supabase';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { 
     Search, Printer, Send, Filter, Calendar, 
     ChevronRight, ArrowLeft, Download, Loader2,
     Building2, FileText, CreditCard, AlertCircle, Save, CornerDownRight, Edit2, Trash2,
-    Mail, MessageSquare, X, ChevronDown, Plus, ExternalLink
+    Mail, MessageSquare, X, ChevronDown, Plus, ExternalLink, CheckCircle, Clock
 } from 'lucide-react';
 import RichTextEditor from '../../components/common/RichTextEditor';
 import { WhatsAppShareModal } from '../../components/workflow/WhatsAppShareModal';
@@ -15,7 +16,7 @@ import { getStoredToken } from '../../lib/googleAuthService';
 import { useAuth } from '../../contexts/AuthContext';
 import { getStatementData, saveWorkflowDocument, deleteWorkflowDocument } from '../../lib/workflowV2Service';
 import { getPartners, getDocumentSettings } from '../../lib/store';
-import * as XLSX from 'xlsx-js-style';
+import XLSX from 'xlsx-js-style';
 
 const generateExcelBlob = (statementData, dateRange, activeCompany) => {
     const wb = XLSX.utils.book_new();
@@ -239,6 +240,139 @@ const generateExcelBlob = (statementData, dateRange, activeCompany) => {
     return new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 };
 
+const processStatementData = (rawData, partnerId, start, end, partnersList, fallbackPartner) => {
+    // Deduplication logic: If Tax Invoice exists for a job/enquiry, hide Proforma
+    const taxInvoicedKeys = new Set();
+    rawData.forEach(d => {
+        if (d.document_type === 'Tax Invoice') {
+            if (d.assigned_job_no) taxInvoicedKeys.add(`job:${d.assigned_job_no}`);
+            if (d.enquiry_id) taxInvoicedKeys.add(`enq:${d.enquiry_id}`);
+        }
+    });
+
+    const filteredData = rawData.filter(doc => {
+        if (doc.document_type === 'Proforma Invoice') {
+            if (doc.assigned_job_no && taxInvoicedKeys.has(`job:${doc.assigned_job_no}`)) return false;
+            if (doc.enquiry_id && taxInvoicedKeys.has(`enq:${doc.enquiry_id}`)) return false;
+        }
+        return true;
+    });
+
+    let openingBalance = 0;
+    const openingBalanceItems = [];
+    const relatedPayments = new Map(); // invoice_id -> [payments]
+    const unallocatedLedger = [];
+
+    filteredData.forEach(doc => {
+        const docType = doc.document_type || '';
+        const isInvoice = docType.includes('Invoice');
+        const isPayment = docType === 'Payment Received';
+        const amount = parseFloat(doc.total_amount) || 0;
+
+        let relId = null;
+        if (isPayment && doc.internal_notes) {
+            try {
+                const notes = JSON.parse(doc.internal_notes);
+                relId = notes.related_document_id;
+            } catch {}
+        }
+
+        const docWithAmounts = {
+            ...doc,
+            debit: isInvoice ? amount : 0,
+            credit: isPayment ? amount : 0
+        };
+        
+        if (new Date(doc.issue_date) < new Date(start)) {
+            if (isInvoice) openingBalance += amount;
+            if (isPayment) openingBalance -= amount;
+            openingBalanceItems.push(docWithAmounts);
+        } else {
+            if (isPayment && relId) {
+                if (!relatedPayments.has(relId)) relatedPayments.set(relId, []);
+                relatedPayments.get(relId).push(docWithAmounts);
+            } else {
+                unallocatedLedger.push(docWithAmounts);
+            }
+        }
+    });
+
+    // Reconstruct ledger: insert related payments after their invoices
+    const ledger = [];
+    unallocatedLedger.forEach(doc => {
+        const docPayments = relatedPayments.get(doc.id) || [];
+        const paymentsSum = docPayments.reduce((sum, p) => sum + p.credit, 0);
+        const isInvoice = (doc.document_type || '').includes('Invoice');
+        const isSettled = isInvoice && Math.abs(doc.debit - paymentsSum) < 0.01;
+        
+        const mainDoc = { ...doc, isSettled, groupId: doc.id, outstanding: (doc.debit || 0) - paymentsSum };
+        ledger.push(mainDoc);
+        
+        docPayments.forEach(p => {
+            ledger.push({ ...p, isSettled, groupId: doc.id });
+        });
+        relatedPayments.delete(doc.id);
+    });
+
+    // Add remaining payments (e.g. those related to opening balance invoices)
+    const remaining = Array.from(relatedPayments.values()).flat().sort((a, b) => new Date(a.issue_date) - new Date(b.issue_date));
+    ledger.push(...remaining.map(p => {
+        return { ...p, isSettled: false };
+    }));
+
+    // Final pass to ensure that if a payment is linked to an invoice, they share the SAME isSettled status
+    const groupSettledStatus = new Map();
+    ledger.forEach(l => {
+        if (l.groupId && l.isSettled) groupSettledStatus.set(l.groupId, true);
+    });
+    
+    const finalLedger = ledger.map(l => ({
+        ...l,
+        isSettled: l.groupId ? (groupSettledStatus.get(l.groupId) || l.isSettled) : l.isSettled
+    }));
+
+    // Calculate Aging with FIFO Reconciliation
+    const aging = { current: 0, thirty: 0, sixty: 0, ninety: 0 };
+    const today = new Date();
+    
+    const allInvoices = filteredData.filter(d => (d.document_type || '').includes('Invoice'))
+        .sort((a, b) => new Date(a.issue_date) - new Date(b.issue_date));
+    
+    let unallocatedCredit = filteredData.filter(d => d.document_type === 'Payment Received')
+        .reduce((sum, p) => sum + (parseFloat(p.total_amount) || 0), 0);
+    
+    allInvoices.forEach(inv => {
+        const amount = parseFloat(inv.total_amount) || 0;
+        let outstanding = amount;
+        
+        if (unallocatedCredit >= outstanding) {
+            unallocatedCredit -= outstanding;
+            outstanding = 0;
+        } else {
+            outstanding -= unallocatedCredit;
+            unallocatedCredit = 0;
+        }
+        
+        if (outstanding > 0.01) {
+            const daysSinceIssue = Math.floor((today - new Date(inv.issue_date)) / (1000 * 60 * 60 * 24));
+            
+            if (daysSinceIssue <= 30) aging.current += outstanding;
+            else if (daysSinceIssue <= 60) aging.thirty += outstanding;
+            else if (daysSinceIssue <= 90) aging.sixty += outstanding;
+            else aging.ninety += outstanding;
+        }
+    });
+
+    return {
+        ledger: finalLedger,
+        openingBalance,
+        openingBalanceItems,
+        closingBalance: openingBalance + finalLedger.reduce((acc, d) => acc + (d.debit - d.credit), 0),
+        partner: (partnersList || []).find(p => p.id === partnerId) || fallbackPartner,
+        aging
+    };
+};
+
 export default function StatementOfAccount() {
     const navigate = useNavigate();
     const { profile } = useAuth();
@@ -265,6 +399,31 @@ export default function StatementOfAccount() {
     const [logoBase64, setLogoBase64] = useState('');
     const printRef = useRef();
     const printSummaryRef = useRef();
+    const hiddenPrintRef = useRef();
+
+    const [searchParams] = useSearchParams();
+    const initialTab = searchParams.get('tab') || 'summary';
+    const [soaView, setSoaView] = useState(initialTab); // 'summary' or 'automated'
+    const [dispatchLogs, setDispatchLogs] = useState([]);
+    const [selectedDispatchPartners, setSelectedDispatchPartners] = useState({});
+    const [dispatchingStates, setDispatchingStates] = useState({});
+    const [dispatchProgress, setDispatchProgress] = useState(null);
+    const [customEmailBody, setCustomEmailBody] = useState('<p>Dear Customer,<br><br>Please find attached our outstanding Statement of Account (SOA) for your review.<br><br>Please kindly acknowledge receipt and expedite payment for any overdue balances.<br><br>Thank you for your support.<br><br>Best regards,<br>Finance & Accounts Team</p>');
+    const [hiddenStatementData, setHiddenStatementData] = useState(null);
+
+    const fetchDispatchLogs = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('soa_dispatch_logs')
+                .select('*')
+                .order('sent_at', { ascending: false });
+            if (error) throw error;
+            if (data) setDispatchLogs(data);
+        } catch (err) {
+            console.warn("Table public.soa_dispatch_logs does not exist or fetch failed. Caught gracefully:", err.message);
+            setDispatchLogs([]);
+        }
+    };
 
     const statementCurrency = statementData?.ledger?.find(d => d.currency)?.currency || 'SGD';
     const summaryCurrency = companyAging.length > 0 ? (companyAging.find(it => it.currency)?.currency || 'SGD') : 'SGD';
@@ -280,6 +439,67 @@ export default function StatementOfAccount() {
         const month = String(d.getMonth() + 1).padStart(2, '0');
         const year = d.getFullYear();
         return `${day}/${month}/${year}`;
+    };
+
+    const getActiveCycleInfo = () => {
+        const today = new Date();
+        const d = today.getDate();
+        const year = today.getFullYear();
+        const month = today.toLocaleString('default', { month: 'long' });
+        
+        let cycleNum = 5;
+        let cycleLabel = '5th Billing Cycle';
+        let periodStr = `1st ${month} ${year} to 5th ${month} ${year}`;
+        
+        if (d >= 5 && d < 15) {
+            cycleNum = 15;
+            cycleLabel = '15th Billing Cycle';
+            periodStr = `6th ${month} ${year} to 15th ${month} ${year}`;
+        } else if (d >= 15 && d < 25) {
+            cycleNum = 25;
+            cycleLabel = '25th Billing Cycle';
+            periodStr = `16th ${month} ${year} to 25th ${month} ${year}`;
+        } else if (d >= 25) {
+            cycleNum = 30; // End of Month
+            cycleLabel = 'End of Month Billing Cycle';
+            periodStr = `26th ${month} ${year} to ${new Date(year, today.getMonth() + 1, 0).getDate()}th ${month} ${year}`;
+        }
+        
+        return { cycleNum, cycleLabel, periodStr };
+    };
+
+    const isCycleDispatched = (cycleDay) => {
+        if (!dispatchLogs || dispatchLogs.length === 0) return false;
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth();
+        return dispatchLogs.some(log => {
+            const logDate = new Date(log.sent_at);
+            if (logDate.getFullYear() !== year || logDate.getMonth() !== month) return false;
+            const d = logDate.getDate();
+            if (cycleDay === 5) return d >= 5 && d < 15;
+            if (cycleDay === 15) return d >= 15 && d < 25;
+            if (cycleDay === 25) return d >= 25 && d < 30;
+            if (cycleDay === 30) return d >= 30 || d < 5;
+            return false;
+        });
+    };
+
+    const getLastSentDate = (partnerId) => {
+        const logs = dispatchLogs.filter(l => l.partner_id === partnerId && l.status === 'Success');
+        if (logs.length === 0) return 'Never Sent';
+        const latest = new Date(logs[0].sent_at);
+        return latest.toLocaleDateString() + ' ' + latest.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+
+    const getRecipientsList = (item) => {
+        const partnerContacts = contacts.filter(c => c.partnerId === item.id);
+        const recipientList = [
+            item.email,
+            item.email1,
+            ...partnerContacts.map(c => c.email)
+        ].filter(Boolean);
+        return recipientList.join(', ') || 'N/A';
     };
 
     const toBase64 = url => fetch(url, { mode: 'cors' })
@@ -347,6 +567,7 @@ export default function StatementOfAccount() {
         }
         if (cRes) setContacts(cRes);
         fetchOverallSummary();
+        fetchDispatchLogs();
     };
 
     const fetchOverallSummary = async () => {
@@ -457,6 +678,15 @@ export default function StatementOfAccount() {
                 
                 setCompanyAging(summary);
 
+                // Pre-select partners with outstanding balance for automated dispatch
+                const preSelected = {};
+                summary.forEach(item => {
+                    if (item.outstanding > 0.01) {
+                        preSelected[item.id] = true;
+                    }
+                });
+                setSelectedDispatchPartners(preSelected);
+
                 // Dynamically update default start date range to absolute oldest invoice date
                 if (absoluteOldestInvoiceDate) {
                     setDateRange(prev => ({
@@ -496,150 +726,12 @@ export default function StatementOfAccount() {
                 return;
             }
 
-            // Deduplication logic: If Tax Invoice exists for a job/enquiry, hide Proforma
-            const taxInvoicedKeys = new Set();
-            data.forEach(d => {
-                if (d.document_type === 'Tax Invoice') {
-                    if (d.assigned_job_no) taxInvoicedKeys.add(`job:${d.assigned_job_no}`);
-                    if (d.enquiry_id) taxInvoicedKeys.add(`enq:${d.enquiry_id}`);
-                }
-            });
-
-            const filteredData = data.filter(doc => {
-                if (doc.document_type === 'Proforma Invoice') {
-                    if (doc.assigned_job_no && taxInvoicedKeys.has(`job:${doc.assigned_job_no}`)) return false;
-                    if (doc.enquiry_id && taxInvoicedKeys.has(`enq:${doc.enquiry_id}`)) return false;
-                }
-                return true;
-            });
-
-            let openingBalance = 0;
-            const openingBalanceItems = [];
-            const relatedPayments = new Map(); // invoice_id -> [payments]
-            const unallocatedLedger = [];
-
-            filteredData.forEach(doc => {
-                const docType = doc.document_type || '';
-                const isInvoice = docType.includes('Invoice');
-                const isPayment = docType === 'Payment Received';
-                const amount = parseFloat(doc.total_amount) || 0;
-
-                let relId = null;
-                if (isPayment && doc.internal_notes) {
-                    try {
-                        const notes = JSON.parse(doc.internal_notes);
-                        relId = notes.related_document_id;
-                    } catch {}
-                }
-
-                const docWithAmounts = {
-                    ...doc,
-                    debit: isInvoice ? amount : 0,
-                    credit: isPayment ? amount : 0
-                };
-                
-                if (new Date(doc.issue_date) < new Date(dateRange.start)) {
-                    if (isInvoice) openingBalance += amount;
-                    if (isPayment) openingBalance -= amount;
-                    openingBalanceItems.push(docWithAmounts);
-                } else {
-                    if (isPayment && relId) {
-                        if (!relatedPayments.has(relId)) relatedPayments.set(relId, []);
-                        relatedPayments.get(relId).push(docWithAmounts);
-                    } else {
-                        unallocatedLedger.push(docWithAmounts);
-                    }
-                }
-            });
-
-            // Reconstruct ledger: insert related payments after their invoices
-            const ledger = [];
-            unallocatedLedger.forEach(doc => {
-                const docPayments = relatedPayments.get(doc.id) || [];
-                const paymentsSum = docPayments.reduce((sum, p) => sum + p.credit, 0);
-                const isInvoice = (doc.document_type || '').includes('Invoice');
-                const isSettled = isInvoice && Math.abs(doc.debit - paymentsSum) < 0.01;
-                
-                const mainDoc = { ...doc, isSettled, groupId: doc.id, outstanding: (doc.debit || 0) - paymentsSum };
-                ledger.push(mainDoc);
-                
-                docPayments.forEach(p => {
-                    ledger.push({ ...p, isSettled, groupId: doc.id });
-                });
-                relatedPayments.delete(doc.id);
-            });
-
-            // Add remaining payments (e.g. those related to opening balance invoices)
-            const remaining = Array.from(relatedPayments.values()).flat().sort((a, b) => new Date(a.issue_date) - new Date(b.issue_date));
-            ledger.push(...remaining.map(p => {
-                // If it's a payment, we should check if it's "settled" against opening balance
-                // For simplicity, we mark it settled if its credit is matched by SOME opening balance invoice
-                // But generally, remaining payments should be visible if they are within the period.
-                return { ...p, isSettled: false };
-            }));
-
-            // Final pass to ensure that if a payment is linked to an invoice, they share the SAME isSettled status
-            // This fixes the issue where a payment might still be visible when hideSettled is ON
-            const groupSettledStatus = new Map();
-            ledger.forEach(l => {
-                if (l.groupId && l.isSettled) groupSettledStatus.set(l.groupId, true);
-            });
-            
-            const finalLedger = ledger.map(l => ({
-                ...l,
-                isSettled: l.groupId ? (groupSettledStatus.get(l.groupId) || l.isSettled) : l.isSettled
-            }));
-
-            // Calculate Aging with FIFO Reconciliation (applying total payments to oldest invoices)
-            const aging = { current: 0, thirty: 0, sixty: 0, ninety: 0 };
-            const today = new Date();
-            
-            // Get all invoices for THIS partner (sorted by date ascending for FIFO)
-            const allInvoices = filteredData.filter(d => (d.document_type || '').includes('Invoice'))
-                .sort((a, b) => new Date(a.issue_date) - new Date(b.issue_date));
-            
-            // Total payments received (Credit)
-            let unallocatedCredit = filteredData.filter(d => d.document_type === 'Payment Received')
-                .reduce((sum, p) => sum + (parseFloat(p.total_amount) || 0), 0);
-            
-            allInvoices.forEach(inv => {
-                const amount = parseFloat(inv.total_amount) || 0;
-                let outstanding = amount;
-                
-                // Apply credit to the oldest invoices first
-                if (unallocatedCredit >= outstanding) {
-                    unallocatedCredit -= outstanding;
-                    outstanding = 0;
-                } else {
-                    outstanding -= unallocatedCredit;
-                    unallocatedCredit = 0;
-                }
-                
-                // Only count outstanding amounts in aging buckets
-                // Option B: Age from invoice issue date
-                // Current = 0-30 days old, 31-60 DAYS, 61-90 DAYS, 90+ DAYS
-                if (outstanding > 0.01) {
-                    const daysSinceIssue = Math.floor((today - new Date(inv.issue_date)) / (1000 * 60 * 60 * 24));
-                    
-                    if (daysSinceIssue <= 30) aging.current += outstanding;
-                    else if (daysSinceIssue <= 60) aging.thirty += outstanding;
-                    else if (daysSinceIssue <= 90) aging.sixty += outstanding;
-                    else aging.ninety += outstanding;
-                }
-            });
-
-            setStatementData({
-                ledger: finalLedger,
-                openingBalance,
-                openingBalanceItems,
-                closingBalance: openingBalance + finalLedger.reduce((acc, d) => acc + (d.debit - d.credit), 0),
-                partner: partners.find(p => p.id === partnerId) || partner,
-                aging
-            });
+            const processed = processStatementData(data, partnerId, start, end, partners, partner);
+            setStatementData(processed);
         } catch (err) {
             console.error('Failed to generate statement:', err);
             alert('Failed to generate statement.');
-} finally {
+        } finally {
             setLoading(false);
         }
     };
@@ -674,7 +766,7 @@ export default function StatementOfAccount() {
             margin: isSummary ? [10, 10, 10, 10] : 1,
             filename: isSummary ? `Aging_Summary_Report_${new Date().toISOString().split('T')[0]}.pdf` : `Statement_${statementData?.partner?.name || 'Customer'}.pdf`,
             image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+            html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, letterRendering: true },
             jsPDF: { unit: 'mm', format: 'a4', orientation: isSummary ? 'landscape' : 'portrait' }
         };
         
@@ -694,7 +786,7 @@ export default function StatementOfAccount() {
                 margin: [10, 10, 10, 10],
                 filename: `Aging_Summary_Report_${new Date().toISOString().split('T')[0]}.pdf`,
                 image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: { scale: 2, useCORS: true, logging: false, letterRendering: true },
+                html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, logging: false, letterRendering: true },
                 jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
             };
             
@@ -740,7 +832,7 @@ export default function StatementOfAccount() {
                 margin: 1,
                 filename: `Statement_${statementData.partner?.name}_${new Date().toISOString().split('T')[0]}.pdf`,
                 image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: { scale: 1.5, useCORS: true },
+                html2canvas: { scale: 1.5, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0 },
                 jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
             };
             
@@ -832,6 +924,198 @@ export default function StatementOfAccount() {
         }
     };
 
+    const handleBulkDispatch = async () => {
+        const selectedIds = Object.keys(selectedDispatchPartners).filter(id => selectedDispatchPartners[id]);
+        if (selectedIds.length === 0) {
+            toast.error("Please tick/select at least one customer to dispatch.");
+            return;
+        }
+
+        if (!window.confirm(`Are you sure you want to dispatch Statement of Accounts to ${selectedIds.length} customer(s)?`)) {
+            return;
+        }
+
+        const token = await getStoredToken();
+        if (!token) {
+            toast.error("Google Drive connection required. Please connect via Corporate Vault > Connect Google.");
+            return;
+        }
+
+        setSaving(true);
+        setDispatchProgress({
+            total: selectedIds.length,
+            current: 0,
+            status: 'Processing...'
+        });
+
+        // Initialize state indicators
+        const initialStates = {};
+        selectedIds.forEach(id => {
+            initialStates[id] = 'loading';
+        });
+        setDispatchingStates(prev => ({ ...prev, ...initialStates }));
+
+        const { default: html2pdf } = await import('html2pdf.js');
+
+        for (let i = 0; i < selectedIds.length; i++) {
+            const partnerId = selectedIds[i];
+            const partnerSummary = companyAging.find(item => item.id === partnerId);
+            if (!partnerSummary) continue;
+
+            setDispatchProgress(prev => ({
+                ...prev,
+                current: i + 1,
+                status: `Generating Statement for ${partnerSummary.name}...`
+            }));
+
+            try {
+                // 1. Fetch complete statement data for this partner
+                const { data: rawData, partner: dbPartner } = await getStatementData(profile.company_id, partnerId, dateRange.start, dateRange.end);
+                if (!rawData) throw new Error("Could not load statement data from database.");
+
+                // Process statement data to match hiddenPrintRef's structure
+                const processed = processStatementData(rawData, partnerId, dateRange.start, dateRange.end, partners, dbPartner);
+
+                // 2. Temporarily set hidden statement state so print layout renders the correct partner
+                setHiddenStatementData(processed);
+
+                // 3. Wait for DOM render update so printRef compiles the new data
+                await new Promise(r => setTimeout(r, 1500));
+
+                const element = hiddenPrintRef.current;
+                if (!element) throw new Error("Offscreen printing container not ready.");
+
+                const opt = {
+                    margin: 0,
+                    filename: `Statement_${processed.partner?.name?.replace(/\s+/g, '_') || 'Customer'}_${new Date().toISOString().split('T')[0]}.pdf`,
+                    image: { type: 'jpeg', quality: 0.98 },
+                    html2canvas: { 
+                        scale: 1.5, 
+                        useCORS: true, 
+                        allowTaint: false, 
+                        scrollX: 0, 
+                        scrollY: 0,
+                        onclone: (clonedDoc) => {
+                            const el = clonedDoc.getElementById('soa-offscreen-wrapper');
+                            if (el) {
+                                el.style.position = 'absolute';
+                                el.style.left = '0';
+                                el.style.top = '0';
+                            }
+                        }
+                    },
+                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                };
+
+                // 4. Compile the PDF blob on-the-fly
+                const pdfBlob = await html2pdf().from(element).set(opt).output('blob');
+
+                // 5. Upload to Google Drive for hosting
+                setDispatchProgress(prev => ({ ...prev, status: `Archiving Statement for ${partnerSummary.name} to Drive...` }));
+                const uploadRes = await uploadFileToDrive(token, pdfBlob, {
+                    title: opt.filename,
+                    mimeType: 'application/pdf'
+                });
+
+                let link = '';
+                if (uploadRes?.id) {
+                    await makeFilePublic(token, uploadRes.id);
+                    link = uploadRes.webViewLink || `https://drive.google.com/file/d/${uploadRes.id}/view`;
+                }
+
+                // 6. Convert PDF to base64 for attachment
+                const reader = new FileReader();
+                const b64Pdf = await new Promise((resolve) => {
+                    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                    reader.readAsDataURL(pdfBlob);
+                });
+
+                const attachments = [{
+                    name: opt.filename,
+                    content: `base64,${b64Pdf}`,
+                    type: 'application/pdf'
+                }];
+
+                // 7. Extract recipient emails
+                const partnerContacts = contacts.filter(c => c.partnerId === partnerId);
+                const recipientList = [
+                    processed.partner?.email,
+                    processed.partner?.email1,
+                    ...partnerContacts.map(c => c.email)
+                ].filter(Boolean);
+
+                const recipient = recipientList.join(', ') || 'accounts@celron.net'; // fallback
+
+                // 8. Build subject and customizable body
+                const cleanBodyText = customEmailBody
+                    .replace(/\[Customer Name\]/g, processed.partner?.name || 'Customer')
+                    .replace(/\[Outstanding Balance\]/g, `${partnerSummary.currency || 'SGD'} ${partnerSummary.outstanding.toLocaleString(undefined, { minimumFractionDigits: 2 })}`)
+                    .replace(/\[Start Date\]/g, formatDate(dateRange.start))
+                    .replace(/\[End Date\]/g, formatDate(dateRange.end));
+
+                const emailBodyText = `${cleanBodyText}<br><br>View/Download Statement: <a href="${link}">${link}</a>`;
+                const subject = `Statement of Account - ${processed.partner?.name || 'Customer'} (Period: ${formatDate(dateRange.start)} to ${formatDate(dateRange.end)})`;
+
+                const fromEmail = settings?.accounts_email || 'accounts@celron.net';
+
+                // 9. Call send-email API
+                setDispatchProgress(prev => ({ ...prev, status: `Sending Email to ${recipient}...` }));
+                const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/send-email`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        company_id: profile?.company_id,
+                        from_email: fromEmail,
+                        to: recipient,
+                        cc: settings?.accounts_email || 'accounts@celron.net',
+                        bcc: 'celron.simlim0305@gmail.com',
+                        subject: subject,
+                        body: emailBodyText,
+                        attachments: attachments
+                    })
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.error || 'Failed to dispatch email.');
+                }
+
+                // 10. Record Sent Date in Database
+                const logPayload = {
+                    company_id: profile.company_id,
+                    partner_id: partnerId,
+                    sent_by: profile.email || 'System Admin',
+                    recipient: recipient,
+                    closing_balance: partnerSummary.outstanding,
+                    currency: partnerSummary.currency || 'SGD',
+                    status: 'Success'
+                };
+
+                try {
+                    await supabase.from('soa_dispatch_logs').insert([logPayload]);
+                } catch (logErr) {
+                    console.error("Failed to log dispatch:", logErr);
+                }
+
+                setDispatchingStates(prev => ({ ...prev, [partnerId]: 'success' }));
+                toast.success(`SOA for ${partnerSummary.name} dispatched successfully!`);
+
+            } catch (err) {
+                console.error(`Dispatch failed for ${partnerSummary.name}:`, err);
+                setDispatchingStates(prev => ({ ...prev, [partnerId]: 'failed' }));
+                toast.error(`Failed to dispatch for ${partnerSummary.name}: ${err.message}`);
+            }
+        }
+
+        setSaving(false);
+        setDispatchProgress(null);
+        setHiddenStatementData(null);
+        
+        // Refresh logs and overall checklist view
+        fetchDispatchLogs();
+        fetchOverallSummary();
+    };
+
     const handleArchive = async () => {
         if (!statementData) return toast.error('Please generate a statement first.');
         setLoading(true);
@@ -851,7 +1135,7 @@ export default function StatementOfAccount() {
                 margin: 1,
                 filename: `SOA_${statementData.partner?.name?.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}_${statementCurrency}_${statementData.closingBalance.toFixed(0)}.pdf`,
                 image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+                html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, letterRendering: true },
                 jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
             };
 
@@ -919,7 +1203,14 @@ export default function StatementOfAccount() {
         <div className="workflow-editor-theme" style={{ minHeight: '100vh', background: '#f8fafc' }}>
             <header className="editor-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    <button className="icon-btn" onClick={() => navigate('/workflows')}>
+                    <button className="icon-btn" onClick={() => {
+                        if (selectedPartner || statementData) {
+                            setSelectedPartner('');
+                            setStatementData(null);
+                        } else {
+                            navigate('/workflows');
+                        }
+                    }}>
                         <ArrowLeft size={20} />
                     </button>
                     <div>
@@ -996,7 +1287,44 @@ export default function StatementOfAccount() {
             </header>
 
             <div className="main-content" style={{ padding: '24px', maxWidth: '1600px', margin: '0 auto' }}>
-                <div className="glass-panel" style={{ marginBottom: '32px' }}>
+                {/* Visual Tab Selector for SOA Summary vs. Automated Scheduler */}
+                <div className="glass-panel" style={{ 
+                    display: 'flex', 
+                    gap: '12px', 
+                    padding: '12px 20px', 
+                    borderRadius: '16px', 
+                    marginBottom: '24px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--glass)',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                }}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button 
+                            className={`btn-vibrant${soaView === 'summary' ? '' : '-secondary'}`}
+                            onClick={() => setSoaView('summary')}
+                            style={{ padding: '8px 20px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, borderRadius: '10px' }}
+                        >
+                            <Building2 size={16} /> Summary & Aging Reports
+                        </button>
+                        <button 
+                            className={`btn-vibrant${soaView === 'automated' ? '' : '-secondary'}`}
+                            onClick={() => setSoaView('automated')}
+                            style={{ padding: '8px 20px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, borderRadius: '10px' }}
+                        >
+                            <Calendar size={16} /> Automated SOA Dispatch & Reminders
+                        </button>
+                    </div>
+                    {soaView === 'automated' && (
+                        <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px', padding: '6px 14px', fontSize: '0.85rem', color: '#1e40af', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <AlertCircle size={16} /> 10-Day Billing Cycles: Active (10th, 20th, 30th)
+                        </div>
+                    )}
+                </div>
+
+                {soaView === 'summary' ? (
+                    <>
+                        <div className="glass-panel" style={{ marginBottom: '32px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                         <div style={{ background: 'var(--accent)', color: 'white', padding: '8px', borderRadius: '10px' }}>
                             <Filter size={20} />
@@ -1516,11 +1844,275 @@ export default function StatementOfAccount() {
                         <p style={{ color: '#64748b', fontSize: '1.1rem', maxWidth: '600px', margin: '0 auto 24px' }}>Select a customer from the top filters to generate a detailed Statement of Account, view aging history, and record payments.</p>
                     </div>
                 )}
+            </>
+        ) : (
+            <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                {/* 10-Day Cycle Status Tracker Panel */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+                    {[
+                        { 
+                            day: 5, 
+                            title: '5th Billing Cycle', 
+                            dueStr: 'Due on 5th of Month',
+                            range: '1st - 5th invoices', 
+                            bgColor: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', 
+                            borderColor: '#bfdbfe', 
+                            iconColor: '#3b82f6',
+                            textColor: '#1e40af'
+                        },
+                        { 
+                            day: 15, 
+                            title: '15th Billing Cycle', 
+                            dueStr: 'Due on 15th of Month',
+                            range: '6th - 15th invoices', 
+                            bgColor: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%)', 
+                            borderColor: '#e9d5ff', 
+                            iconColor: '#a855f7',
+                            textColor: '#6b21a8'
+                        },
+                        { 
+                            day: 25, 
+                            title: '25th Billing Cycle', 
+                            dueStr: 'Due on 25th of Month',
+                            range: '16th - 25th invoices', 
+                            bgColor: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)', 
+                            borderColor: '#a7f3d0', 
+                            iconColor: '#10b981',
+                            textColor: '#065f46'
+                        },
+                        { 
+                            day: 30, 
+                            title: 'End of Month Cycle', 
+                            dueStr: 'Due on Last Day of Month',
+                            range: '26th - EOM invoices', 
+                            bgColor: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)', 
+                            borderColor: '#fde68a', 
+                            iconColor: '#f59e0b',
+                            textColor: '#854d0e'
+                        }
+                    ].map(cycle => {
+                        const today = new Date();
+                        const isDone = isCycleDispatched(cycle.day);
+                        const isCurrent = (cycle.day === 5 && today.getDate() >= 5 && today.getDate() < 15) ||
+                                          (cycle.day === 15 && today.getDate() >= 15 && today.getDate() < 25) ||
+                                          (cycle.day === 25 && today.getDate() >= 25 && today.getDate() < 30) ||
+                                          (cycle.day === 30 && (today.getDate() >= 30 || today.getDate() < 5));
+                        
+                        return (
+                            <div key={cycle.day} className="glass-panel" style={{ 
+                                padding: '24px', 
+                                background: cycle.bgColor, 
+                                border: `1px solid ${cycle.borderColor}`,
+                                borderRadius: '20px',
+                                position: 'relative',
+                                overflow: 'hidden',
+                                boxShadow: isCurrent ? '0 10px 15px -3px rgba(0, 0, 0, 0.05)' : 'none'
+                            }}>
+                                {isCurrent && (
+                                    <div style={{ 
+                                        position: 'absolute', 
+                                        top: '12px', 
+                                        right: '12px', 
+                                        background: '#2563eb', 
+                                        color: 'white', 
+                                        padding: '2px 10px', 
+                                        borderRadius: '20px', 
+                                        fontSize: '0.7rem', 
+                                        fontWeight: 800,
+                                        letterSpacing: '0.05em',
+                                        textTransform: 'uppercase'
+                                    }}>
+                                        Active Cycle
+                                    </div>
+                                )}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                                    <div style={{ background: '#fff', color: cycle.iconColor, padding: '10px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <Calendar size={20} />
+                                    </div>
+                                    <div>
+                                        <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, color: cycle.textColor }}>{cycle.title}</h3>
+                                        <span style={{ fontSize: '0.75rem', opacity: 0.8, color: cycle.textColor }}>{cycle.dueStr}</span>
+                                    </div>
+                                </div>
+                                <div style={{ fontSize: '0.8rem', color: cycle.textColor, marginBottom: '20px' }}>
+                                    Scope: <strong>{cycle.range}</strong>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    {isDone ? (
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: '#10b981', fontWeight: 800 }}>
+                                            <CheckCircle size={16} /> Dispatched Successfully
+                                        </span>
+                                    ) : isCurrent ? (
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: '#d97706', fontWeight: 800 }} className="animate-pulse">
+                                            <AlertCircle size={16} /> Action Required (Pending)
+                                        </span>
+                                    ) : (
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: '#64748b', fontWeight: 700 }}>
+                                            <Clock size={16} /> Upcoming
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+
+                {/* Editable Email Template Panel */}
+                <div className="glass-panel" style={{ padding: '24px', borderRadius: '20px', background: '#fff' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                        <div style={{ background: '#eff6ff', color: '#2563eb', padding: '8px', borderRadius: '10px' }}>
+                            <Mail size={20} />
+                        </div>
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: '#1e293b' }}>Customizable Email Body Template</h3>
+                            <p style={{ margin: '2px 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>
+                                Customize the statement email message. Use placeholders: 
+                                <strong style={{ color: '#2563eb' }}> [Customer Name]</strong>, 
+                                <strong style={{ color: '#2563eb' }}> [Outstanding Balance]</strong>, 
+                                <strong style={{ color: '#2563eb' }}> [Start Date]</strong>, 
+                                <strong style={{ color: '#2563eb' }}> [End Date]</strong>.
+                            </p>
+                        </div>
+                    </div>
+                    <RichTextEditor 
+                        value={customEmailBody} 
+                        onChange={setCustomEmailBody} 
+                        placeholder="Write the email content..."
+                        height="220px"
+                    />
+                </div>
+
+                {/* Bulk Dispatch Progress HUD */}
+                {dispatchProgress && (
+                    <div className="glass-panel" style={{ padding: '24px', borderRadius: '20px', borderLeft: '4px solid #10b981', background: '#f0fdf4' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <Loader2 className="animate-spin" size={18} color="#10b981" />
+                                <span style={{ fontWeight: 800, color: '#1e3a8a', fontSize: '0.95rem' }}>{dispatchProgress.status}</span>
+                            </div>
+                            <span style={{ fontSize: '0.9rem', color: '#047857', fontWeight: 800 }}>
+                                {dispatchProgress.current} / {dispatchProgress.total} (
+                                {Math.round((dispatchProgress.current / dispatchProgress.total) * 100)}%)
+                            </span>
+                        </div>
+                        <div style={{ background: '#d1fae5', height: '10px', borderRadius: '5px', overflow: 'hidden' }}>
+                            <div style={{ 
+                                background: 'linear-gradient(90deg, #10b981 0%, #3b82f6 100%)', 
+                                height: '100%', 
+                                width: `${(dispatchProgress.current / dispatchProgress.total) * 100}%`, 
+                                transition: 'width 0.4s ease' 
+                            }}></div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Accounts Checklist Table */}
+                <div className="glass-panel" style={{ padding: '24px', borderRadius: '20px', background: '#fff' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: '#1e293b' }}>Automated Dispatch Checklist</h3>
+                            <p style={{ margin: '2px 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>Select outstanding customer accounts to receive Statement of Accounts dynamically.</p>
+                        </div>
+                        <button 
+                            className="btn-vibrant" 
+                            onClick={handleBulkDispatch}
+                            disabled={saving || Object.keys(selectedDispatchPartners).filter(id => selectedDispatchPartners[id]).length === 0}
+                            style={{ padding: '10px 24px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, borderRadius: '10px' }}
+                        >
+                            <Send size={16} /> 
+                            {saving ? 'Dispatching...' : `Dispatch Selected SOAs (${Object.keys(selectedDispatchPartners).filter(id => selectedDispatchPartners[id]).length})`}
+                        </button>
+                    </div>
+
+                    <div style={{ overflowX: 'auto' }}>
+                        <table className="workflow-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                                    <th style={{ width: '40px', padding: '16px 12px', textAlign: 'left' }}>
+                                        <input 
+                                            type="checkbox" 
+                                            checked={companyAging.filter(it => it.outstanding > 0.01).length > 0 && companyAging.filter(it => it.outstanding > 0.01).every(it => selectedDispatchPartners[it.id])} 
+                                            onChange={(e) => {
+                                                const checked = e.target.checked;
+                                                const updated = {};
+                                                companyAging.filter(it => it.outstanding > 0.01).forEach(it => {
+                                                    updated[it.id] = checked;
+                                                });
+                                                setSelectedDispatchPartners(updated);
+                                            }}
+                                            style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                                        />
+                                    </th>
+                                    <th style={{ padding: '16px 12px', textAlign: 'left', fontWeight: 800, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Customer Name</th>
+                                    <th style={{ padding: '16px 12px', textAlign: 'right', fontWeight: 800, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Outstanding Balance</th>
+                                    <th style={{ padding: '16px 12px', textAlign: 'left', fontWeight: 800, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Last SOA Sent Date</th>
+                                    <th style={{ padding: '16px 12px', textAlign: 'left', fontWeight: 800, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Email Recipients</th>
+                                    <th style={{ padding: '16px 12px', textAlign: 'right', fontWeight: 800, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {companyAging.filter(it => it.outstanding > 0.01).map((item, idx) => {
+                                    const status = dispatchingStates[item.id];
+                                    const lastSent = getLastSentDate(item.id);
+                                    const recips = getRecipientsList(item);
+                                    
+                                    return (
+                                        <tr key={item.id} className="table-row" style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                            <td style={{ padding: '16px 12px' }}>
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={!!selectedDispatchPartners[item.id]} 
+                                                    onChange={(e) => setSelectedDispatchPartners(prev => ({ ...prev, [item.id]: e.target.checked }))}
+                                                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                                                />
+                                            </td>
+                                            <td style={{ padding: '16px 12px', fontWeight: 700, color: '#0f172a' }}>{item.name}</td>
+                                            <td style={{ padding: '16px 12px', textAlign: 'right', fontWeight: 800, color: '#1e3a8a' }}>
+                                                {item.currency || 'SGD'} {item.outstanding.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </td>
+                                            <td style={{ padding: '16px 12px', color: lastSent === 'Never Sent' ? '#94a3b8' : '#334155', fontSize: '0.85rem' }}>
+                                                {lastSent}
+                                            </td>
+                                            <td style={{ padding: '16px 12px', color: '#64748b', fontSize: '0.8rem', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={recips}>
+                                                {recips}
+                                            </td>
+                                            <td style={{ padding: '16px 12px', textAlign: 'right' }}>
+                                                {status === 'loading' && (
+                                                    <span style={{ color: '#2563eb', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'flex-end' }}>
+                                                        <Loader2 size={14} className="animate-spin" /> Sending...
+                                                    </span>
+                                                )}
+                                                {status === 'success' && (
+                                                    <span style={{ color: '#10b981', fontWeight: 800 }}>✅ Sent!</span>
+                                                )}
+                                                {status === 'failed' && (
+                                                    <span style={{ color: '#ef4444', fontWeight: 800 }}>❌ Failed</span>
+                                                )}
+                                                {!status && (
+                                                    <span style={{ color: '#64748b', fontWeight: 600 }}>Ready</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                                {companyAging.filter(it => it.outstanding > 0.01).length === 0 && (
+                                    <tr>
+                                        <td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#64748b', fontWeight: 600 }}>
+                                            🎉 All accounts are fully settled! No outstanding Statements of Account to dispatch.
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
+        )}
+    </div>
 
 
             {/* Hidden Print Content - Off-screen for PDF capture */}
-            <div style={{ position: 'absolute', top: 0, left: '-10000px', pointerEvents: 'none', width: '850px', zIndex: -100 }}>
+            <div style={{ position: 'fixed', left: 0, top: 0, zIndex: -9999, pointerEvents: 'none', width: '850px', background: '#fff' }}>
                 <div ref={printRef} style={{ background: 'white', padding: '5mm' }}>
                     <style>{`
                         @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@300;400;700&display=swap');
@@ -1768,7 +2360,7 @@ export default function StatementOfAccount() {
             )}
 
             {/* Hidden Print Content for Summary Report */}
-            <div style={{ position: 'absolute', top: 0, left: '-10000px', pointerEvents: 'none', width: '1100px', zIndex: -100 }}>
+            <div style={{ position: 'fixed', left: 0, top: 0, zIndex: -9999, pointerEvents: 'none', width: '1100px', background: '#fff' }}>
                 <div ref={printSummaryRef} style={{ background: 'white', padding: '10mm' }}>
                     <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                         <h1 style={{ margin: 0, color: '#1e3a8a', fontSize: '1.6rem', fontWeight: 900 }}>A/R Ageing Summary Report</h1>
@@ -2039,9 +2631,9 @@ function ContactCard({ contact, emailPreview, toggleEmailInField, onEdit }) {
 
 function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, contacts = [], dateRange }) {
     const [emailPreview, setEmailPreview] = useState({
-        to: partner?.email || 'accounts@celron.net',
-        cc: '',
-        bcc: '',
+        to: '',
+        cc: 'accounts@celron.net; acct.celron.sg@gmail.com',
+        bcc: 'celron.simlim0305@gmail.com',
         subject: `${documentData?.document_type || 'Statement'} - ${partner?.name || 'Customer'}`,
         body: '',
         attachments: []
@@ -2123,13 +2715,30 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
         const defaults = [
             { name: 'Our Office', email: 'accounts@celron.net' }
         ];
-        const staff = localContacts.filter(c => {
+
+        // Find the Celron partner ID dynamically, or use the standard fallback
+        const celronContact = localContacts.find(c => {
+            const emailLower = (c.email || '').toLowerCase();
+            return emailLower.endsWith('@celron.net') || emailLower.endsWith('@celron.com');
+        });
+        const celronPartnerId = celronContact?.partnerId || 'ae0c632b-d56b-425b-9773-79aa3fa33bd0';
+
+        const isCelronContact = (c) => {
             if (!c.email) return false;
             const emailLower = c.email.toLowerCase();
-            const isCelronEmail = emailLower.endsWith('@celron.net') || emailLower.endsWith('@celron.com');
-            const isNoPartner = !c.partnerId;
-            return isCelronEmail || isNoPartner;
-        });
+            const nameLower = (c.name || '').toLowerCase();
+            
+            const isCelronEmail = emailLower.endsWith('@celron.net') || 
+                                  emailLower.endsWith('@celron.com') ||
+                                  emailLower.includes('celron');
+                                  
+            const isCelronPartner = c.partnerId === celronPartnerId;
+            const isCelronName = nameLower.includes('celron') || nameLower.includes('cel-ron');
+            
+            return isCelronEmail || isCelronPartner || isCelronName;
+        };
+
+        const staff = localContacts.filter(c => isCelronContact(c));
 
         const combined = [...defaults];
         staff.forEach(c => {
@@ -2162,13 +2771,35 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
     const getOfficeDropdownOptions = () => {
         const query = officeSearch.trim().toLowerCase();
         const currentEmails = getOfficeContacts().map(c => (c.email || '').toLowerCase()).filter(Boolean);
+
+        const celronContact = localContacts.find(c => {
+            const emailLower = (c.email || '').toLowerCase();
+            return emailLower.endsWith('@celron.net') || emailLower.endsWith('@celron.com');
+        });
+        const celronPartnerId = celronContact?.partnerId || 'ae0c632b-d56b-425b-9773-79aa3fa33bd0';
+
+        const isCelronContact = (c) => {
+            if (!c.email) return false;
+            const emailLower = c.email.toLowerCase();
+            const nameLower = (c.name || '').toLowerCase();
+            
+            const isCelronEmail = emailLower.endsWith('@celron.net') || 
+                                  emailLower.endsWith('@celron.com') ||
+                                  emailLower.includes('celron');
+                                  
+            const isCelronPartner = c.partnerId === celronPartnerId;
+            const isCelronName = nameLower.includes('celron') || nameLower.includes('cel-ron');
+            
+            return isCelronEmail || isCelronPartner || isCelronName;
+        };
+
+        const celronStaff = localContacts.filter(c => isCelronContact(c) && !currentEmails.includes(c.email.toLowerCase()));
+
         if (!query) {
-            // Show all contacts with no partner that have email and aren't already visible
-            return localContacts.filter(c => !c.partnerId && c.email && !currentEmails.includes(c.email.toLowerCase()));
+            return celronStaff;
         }
-        return localContacts.filter(c => 
-            !c.partnerId && c.email && !currentEmails.includes(c.email.toLowerCase()) &&
-            (c.name?.toLowerCase().includes(query) || c.email?.toLowerCase().includes(query))
+        return celronStaff.filter(c => 
+            c.name?.toLowerCase().includes(query) || c.email?.toLowerCase().includes(query)
         );
     };
 
@@ -2531,6 +3162,134 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
                     </div>
                 </div>
             )}
+
+            {/* Offscreen compilation container for sequential dispatching */}
+            <div id="soa-offscreen-wrapper" style={{ position: 'absolute', left: '-9999px', top: 0, pointerEvents: 'none', width: '850px', background: '#fff' }}>
+                <div ref={hiddenPrintRef} style={{ background: 'white', padding: '5mm' }}>
+                    <style>{`
+                        @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@300;400;700&display=swap');
+                    `}</style>
+                    {hiddenStatementData && (
+                        <div style={{ background: 'white', color: '#000', fontFamily: "'Roboto Condensed', sans-serif" }}>
+                            {/* Letterhead */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+                                <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+                                    {logoBase64 && <img src={logoBase64} alt="Logo" style={{ height: '50px', objectFit: 'contain' }} />}
+                                    <div>
+                                        <h1 style={{ margin: 0, color: '#1e3a8a', fontSize: '1.4rem', fontWeight: 900, letterSpacing: '-0.03em', textTransform: 'uppercase' }}>Statement of Account</h1>
+                                        <p style={{ margin: '2px 0', fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>Period: {formatDate(dateRange.start)} - {formatDate(dateRange.end)}</p>
+                                    </div>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                    <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#1e3a8a' }}>{profile?.company_name || 'CEL-RON ENTERPRISES PTE LTD'}</h2>
+                                    <div style={{ fontSize: '0.6rem', color: '#64748b', marginTop: '4px', lineHeight: 1.3 }}>
+                                        <div>{settings?.address || '10, Jln, Besar, "Sim Lim Tower", #03-05, Singapore 208787'}</div>
+                                        <div>Tel: {settings?.phone || '+6581962270'} | Email: {settings?.email || 'accounts@celron.net'} | www.celron.net</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Customer details */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', fontSize: '0.75rem' }}>
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ fontWeight: 800, color: '#64748b', textTransform: 'uppercase', fontSize: '0.6rem', marginBottom: '2px' }}>TO:</div>
+                                    <div style={{ fontWeight: 900, fontSize: '0.85rem', color: '#1e3a8a' }}>{hiddenStatementData.partner?.name}</div>
+                                    <div style={{ whiteSpace: 'pre-line', color: '#334155', marginTop: '2px', lineHeight: 1.3 }}>{hiddenStatementData.partner?.billing_address || hiddenStatementData.partner?.address}</div>
+                                </div>
+                                <div style={{ width: '220px', textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Date: </span>{formatDate(new Date())}</div>
+                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Customer Code: </span>{hiddenStatementData.partner?.partner_code || 'N/A'}</div>
+                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Currency: </span>{hiddenStatementData.ledger?.find(d => d.currency)?.currency || 'SGD'}</div>
+                                </div>
+                            </div>
+
+                            {/* Ledger Table */}
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '8.5px', marginBottom: '15px' }}>
+                                <thead>
+                                    <tr style={{ background: '#1e3a8a', color: 'white' }}>
+                                        <th style={{ padding: '6px', textAlign: 'center', color: 'white' }}>Date</th>
+                                        <th style={{ padding: '6px', textAlign: 'left', color: 'white' }}>Ref No / Job No</th>
+                                        <th style={{ padding: '6px', textAlign: 'left', color: 'white' }}>Particulars</th>
+                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Debit (+)</th>
+                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Credit (-)</th>
+                                        <th style={{ padding: '6px', textAlign: 'center', color: 'white' }}>Age</th>
+                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Balance</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr style={{ background: '#f8fafc', fontWeight: 700 }}>
+                                        <td style={{ padding: '4px 6px', textAlign: 'center' }}>{formatDate(dateRange.start)}</td>
+                                        <td style={{ padding: '4px 6px' }}>OPENING BALANCE</td>
+                                        <td style={{ padding: '4px 6px' }}>Balance brought forward</td>
+                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>-</td>
+                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>-</td>
+                                        <td style={{ padding: '4px 6px', textAlign: 'center' }}>-</td>
+                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>{(hiddenStatementData.openingBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                    </tr>
+                                    {(() => {
+                                        let runningBalance = hiddenStatementData.openingBalance || 0;
+                                        return hiddenStatementData.ledger?.map((row, idx) => {
+                                            runningBalance += (row.debit || 0) - (row.credit || 0);
+                                            return (
+                                                <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                    <td style={{ padding: '4px 6px', textAlign: 'center' }}>{formatDate(row.issue_date)}</td>
+                                                    <td style={{ padding: '4px 6px', fontWeight: 600 }}>{row.document_no}</td>
+                                                    <td style={{ padding: '4px 6px', color: '#475569' }}>{row.subject || row.particulars || 'Invoice'}</td>
+                                                    <td style={{ padding: '4px 6px', textAlign: 'right' }}>{row.debit > 0 ? row.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
+                                                    <td style={{ padding: '4px 6px', textAlign: 'right' }}>{row.credit > 0 ? row.credit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
+                                                    <td style={{ padding: '4px 6px', textAlign: 'center', color: '#64748b' }}>
+                                                        {Math.floor((new Date() - new Date(row.issue_date)) / (1000 * 60 * 60 * 24))} Days
+                                                    </td>
+                                                    <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 600 }}>{runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                </tr>
+                                            );
+                                        });
+                                    })()}
+                                    <tr style={{ background: '#0f172a', color: 'white' }}>
+                                        <td style={{ padding: '10px', textAlign: 'center', fontWeight: 700, color: 'white' }}>-</td>
+                                        <td style={{ padding: '10px', fontWeight: 900, textTransform: 'uppercase', color: 'white' }} colSpan={5}>TOTAL OUTSTANDING</td>
+                                        <td style={{ padding: '10px', textAlign: 'right', fontWeight: 900, color: 'white' }}>
+                                            {hiddenStatementData.ledger?.find(d => d.currency)?.currency || 'SGD'} {(hiddenStatementData.closingBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                             </table>
+ 
+                             {/* Aging summary & terms */}
+                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginTop: '10px' }}>
+                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', flex: 1 }}>
+                                     {[
+                                         { label: 'Current', value: hiddenStatementData.aging?.current || 0 },
+                                         { label: '31-60 Days', value: hiddenStatementData.aging?.thirty || 0 },
+                                         { label: '61-90 Days', value: hiddenStatementData.aging?.sixty || 0 },
+                                         { label: '90+ Days', value: hiddenStatementData.aging?.ninety || 0 }
+                                     ].map((bucket, i) => (
+                                         <div key={i} style={{ background: bucket.value > 0 ? '#fff1f2' : '#f8fafc', padding: '8px', borderRadius: '6px', border: `1px solid ${bucket.value > 0 ? '#fecdd3' : '#e2e8f0'}`, textAlign: 'center' }}>
+                                            <div style={{ fontSize: '0.5rem', fontWeight: 800, color: bucket.value > 0 ? '#e11d48' : '#64748b', textTransform: 'uppercase', marginBottom: '2px' }}>{bucket.label}</div>
+                                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: bucket.value > 0 ? '#9f1239' : '#0f172a' }}>SGD {bucket.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div style={{ width: '120px', marginLeft: '15px', padding: '8px', border: '1px dashed #cbd5e1', borderRadius: '8px', textAlign: 'center', background: '#f8fafc' }}>
+                                    <div style={{ fontSize: '0.45rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Delivery / Payment Terms</div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: 900, color: '#1e3a8a' }}>
+                                        {(() => {
+                                            const t = hiddenStatementData.partner?.terms || hiddenStatementData.partner?.payment_terms || hiddenStatementData.partner?.customerCreditTime;
+                                            if (!t || t === '0') return 'C.O.D';
+                                            if (/^\d+$/.test(String(t).trim())) return `${t} DAYS`;
+                                            return String(t).toUpperCase();
+                                        })()}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '10px', fontSize: '0.55rem', color: '#94a3b8', textAlign: 'center' }}>
+                                This is a computer generated document. No signature is required.
+                             </div>
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
     );
 }

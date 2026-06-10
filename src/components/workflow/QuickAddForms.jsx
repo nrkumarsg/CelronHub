@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Ship, User, Users, MapPin, X, Save, Globe, Mail, Phone, Map, ExternalLink, Plus, Sparkles, Loader2, RefreshCw, Upload, ChevronDown, Paperclip, FileCheck, Calculator, FileText, Search, Check, RotateCcw } from 'lucide-react';
+import { Ship, User, Users, MapPin, X, Save, Globe, Mail, Phone, Map, ExternalLink, Plus, Sparkles, Loader2, RefreshCw, Upload, ChevronDown, Paperclip, FileCheck, Calculator, FileText, Search, Check, RotateCcw, Pencil, Camera, Archive, Trash2, Receipt } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { savePartner } from '../../lib/store';
 import { saveJobExpense } from '../../lib/jobExpenseService';
@@ -14,6 +14,9 @@ import CompanyAutocomplete from '../common/CompanyAutocomplete';
 import PartnerDocuments from '../partners/PartnerDocuments';
 import SmartOCRModal from '../common/SmartOCRModal';
 import DriveScannerLinker from '../workflows/DriveScannerLinker';
+import GDriveConnectionModal from '../common/GDriveConnectionModal';
+import { listFolderContent, getOrCreateFolder } from '../../lib/driveService';
+import { isTokenValid } from '../../lib/googleAuthService';
 
 
 // Generic Modal Base
@@ -2311,6 +2314,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
     const [uploading, setUploading] = useState(false);
     const [isAiProcessing, setIsAiProcessing] = useState(false);
     const [aiStatus, setAiStatus] = useState('');
+    const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
     // Initial supplier name if editing
     React.useEffect(() => {
@@ -2409,290 +2413,700 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                 setFormData(prev => ({ ...prev, bill_url: url }));
                 
                 // Trigger AI OCR
-                setAiStatus('🤖 Gemini AI is reading your bill...');
+                setAiStatus('🤖 Google Vision is reading document...');
                 
-                // Convert file to base64
-                const reader = new FileReader();
-                reader.onloadend = async () => {
-                    try {
-                        const base64 = reader.result.split(',')[1];
-                        const result = await parseSupplierBillWithAi(base64);
-                        
-                        if (result) {
-                            // Find supplier if possible
-                            let supplierId = formData.supplier_id;
-                            if (!supplierId && result.supplier_name) {
-                                const matched = partners.find(p => 
-                                    p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
-                                    (result.uen && p.registration_no === result.uen)
-                                );
-                                if (matched) {
-                                    supplierId = matched.id;
-                                    setSupplierSearch(matched.name);
-                                }
+                const extractedText = await performOCR(file);
+                if (extractedText) {
+                    setAiStatus('🤖 Gemini AI is parsing bill details...');
+                    const result = await parseSupplierBillWithAi('', extractedText);
+                    
+                    if (result) {
+                        // Find supplier if possible
+                        let supplierId = formData.supplier_id;
+                        if (!supplierId && result.supplier_name) {
+                            const matched = partners.find(p => 
+                                p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
+                                (result.uen && p.registration_no === result.uen)
+                            );
+                            if (matched) {
+                                supplierId = matched.id;
+                                setSupplierSearch(matched.name);
                             }
-
-                            setFormData(prev => calculateTotals({
-                                ...prev,
-                                supplier_id: supplierId,
-                                invoice_no: result.invoice_no || prev.invoice_no,
-                                invoice_date: result.invoice_date || prev.invoice_date,
-                                description: result.supplier_name ? `Bill from ${result.supplier_name}` : prev.description,
-                                unit_price: result.subtotal || prev.unit_price,
-                                quantity: 1,
-                                gst_amount: result.gst_amount || prev.gst_amount,
-                                grand_total: result.total_amount || prev.grand_total,
-                                notes: `AI Extraction Source: ${result.supplier_name || 'Unknown'}. UEN: ${result.uen || 'N/A'}`
-                            }));
-                            setAiStatus('✅ Bill parsed successfully!');
-                            setTimeout(() => setAiStatus(''), 3000);
                         }
-                    } catch (aiErr) {
-                        console.error('AI OCR failed:', aiErr);
-                        setAiStatus('⚠️ AI parsing failed, but file uploaded.');
-                    } finally {
-                        setIsAiProcessing(false);
+
+                        setFormData(prev => calculateTotals({
+                            ...prev,
+                            supplier_id: supplierId,
+                            invoice_no: result.invoice_no || prev.invoice_no,
+                            invoice_date: result.invoice_date || prev.invoice_date,
+                            description: result.supplier_name ? `Bill from ${result.supplier_name}` : prev.description,
+                            unit_price: result.subtotal || prev.unit_price,
+                            quantity: 1,
+                            gst_amount: result.gst_amount || prev.gst_amount,
+                            grand_total: result.total_amount || prev.grand_total,
+                            notes: (prev.notes || '') + `\nAI Extraction: ${result.supplier_name || 'Unknown'}. UEN: ${result.uen || 'N/A'}`
+                        }));
+                        setAiStatus('✅ Bill parsed successfully!');
+                    } else {
+                        setAiStatus('⚠️ AI parsing returned empty data.');
                     }
-                };
-                reader.readAsDataURL(file);
+                } else {
+                    setAiStatus('⚠️ No text detected in the uploaded file.');
+                }
+                setTimeout(() => setAiStatus(''), 4000);
             }
         } catch (err) {
             console.error('Bill upload failed:', err);
             alert('Upload failed: ' + err.message);
-            setIsAiProcessing(false);
             setAiStatus('');
         } finally {
+            setIsAiProcessing(false);
             setUploading(false);
         }
     };
 
+    const handlePickFromDrive = async () => {
+        const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
+        if (!token || !isTokenValid()) {
+            setIsAuthModalOpen(true);
+            return;
+        }
+        setIsAiProcessing(true);
+        setAiStatus('📂 Opening Celron Scanner Folder...');
+        try {
+            const folderId = await getOrCreateFolder(token, 'Celron_Scans');
+            if (folderId) {
+                const files = await listFolderContent(token, folderId);
+                const onlyFiles = files.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
+                
+                if (onlyFiles.length === 0) {
+                    alert("No scanned bills found in Celron_Scans folder.");
+                    setIsAiProcessing(false);
+                    setAiStatus('');
+                    return;
+                }
+                
+                const fileNames = onlyFiles.map((f, i) => `${i + 1}. ${f.name}`).join('\n');
+                const selection = window.prompt(`Enter the NUMBER of the scanned document to attach:\n\n${fileNames}`);
+                
+                if (selection && !isNaN(selection)) {
+                    const idx = parseInt(selection) - 1;
+                    const selectedFile = onlyFiles[idx];
+                    if (selectedFile) {
+                        setFormData(prev => ({ 
+                            ...prev, 
+                            bill_url: selectedFile.webViewLink,
+                            notes: (prev.notes || '') + `\n[Linked from Celron Scanner: ${selectedFile.name}]`
+                        }));
+                        
+                        setAiStatus('🤖 Gemini AI is downloading and reading scanner document...');
+                        try {
+                            // Download from Google Drive
+                            const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${selectedFile.id}?alt=media`, {
+                                headers: { 'Authorization': `Bearer ${token}` }
+                            });
+                            
+                            if (!fileRes.ok) {
+                                throw new Error('Failed to retrieve file contents from Google Drive');
+                            }
+                            
+                            const blob = await fileRes.blob();
+                            // Run Google Vision OCR
+                            const extractedText = await performOCR(blob);
+                            
+                            if (extractedText) {
+                                setAiStatus('🤖 Organizing extracted text with AI...');
+                                const result = await parseSupplierBillWithAi('', extractedText);
+                                
+                                if (result) {
+                                    let supplierId = formData.supplier_id;
+                                    if (!supplierId && result.supplier_name) {
+                                        const matched = partners.find(p => 
+                                            p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
+                                            (result.uen && p.registration_no === result.uen)
+                                        );
+                                        if (matched) {
+                                            supplierId = matched.id;
+                                            setSupplierSearch(matched.name);
+                                        }
+                                    }
+
+                                    setFormData(prev => calculateTotals({
+                                        ...prev,
+                                        supplier_id: supplierId,
+                                        invoice_no: result.invoice_no || prev.invoice_no,
+                                        invoice_date: result.invoice_date || prev.invoice_date,
+                                        description: result.supplier_name ? `Bill from ${result.supplier_name}` : prev.description,
+                                        unit_price: result.subtotal || prev.unit_price,
+                                        quantity: 1,
+                                        gst_amount: result.gst_amount || prev.gst_amount,
+                                        grand_total: result.total_amount || prev.grand_total,
+                                        notes: (prev.notes || '') + `\nAI Extraction: ${result.supplier_name || 'Unknown'}. UEN: ${result.uen || 'N/A'}`
+                                    }));
+                                    setAiStatus('✅ Scanner bill parsed successfully!');
+                                }
+                            } else {
+                                setAiStatus('⚠️ No text detected in scanner document.');
+                            }
+                        } catch (aiErr) {
+                            console.error('Scanner OCR failed:', aiErr);
+                            setAiStatus('⚠️ Scanner document linked, but AI extraction failed.');
+                        }
+                        setTimeout(() => setAiStatus(''), 4000);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("Failed to load scans:", err);
+            alert("Failed to load scans: " + err.message);
+        } finally {
+            setIsAiProcessing(false);
+        }
+    };
+
+    const handleManualExtraction = async () => {
+        if (!formData.bill_url) {
+            alert('Please attach or link a document first.');
+            return;
+        }
+        
+        setIsAiProcessing(true);
+        setAiStatus('🤖 Reading document...');
+        
+        try {
+            let blob = null;
+            
+            if (formData.bill_url.includes('drive.google.com')) {
+                const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
+                if (!token || !isTokenValid()) {
+                    setIsAuthModalOpen(true);
+                    setIsAiProcessing(false);
+                    setAiStatus('');
+                    return;
+                }
+                
+                const fileIdMatch = formData.bill_url.match(/\/file\/d\/([^\/]+)|\/files\/([^\/?]+)|id=([^\/&]+)/);
+                const fileId = fileIdMatch ? (fileIdMatch[1] || fileIdMatch[2] || fileIdMatch[3]) : null;
+                
+                if (!fileId) {
+                    throw new Error('Could not resolve Google Drive File ID.');
+                }
+                
+                setAiStatus('📂 Retrieving Google Drive document...');
+                const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!fileRes.ok) throw new Error('Failed to retrieve file from Google Drive.');
+                blob = await fileRes.blob();
+            } else {
+                setAiStatus('📂 Downloading attachment...');
+                const fileRes = await fetch(formData.bill_url);
+                if (!fileRes.ok) throw new Error('Failed to download document from server.');
+                blob = await fileRes.blob();
+            }
+            
+            if (blob) {
+                setAiStatus('🤖 Running Google Vision OCR...');
+                const extractedText = await performOCR(blob);
+                
+                if (extractedText) {
+                    setAiStatus('🤖 Gemini AI is parsing details...');
+                    const result = await parseSupplierBillWithAi('', extractedText);
+                    
+                    if (result) {
+                        let supplierId = formData.supplier_id;
+                        if (!supplierId && result.supplier_name) {
+                            const matched = partners.find(p => 
+                                p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
+                                (result.uen && p.registration_no === result.uen)
+                            );
+                            if (matched) {
+                                supplierId = matched.id;
+                                setSupplierSearch(matched.name);
+                            }
+                        }
+                        
+                        setFormData(prev => calculateTotals({
+                            ...prev,
+                            supplier_id: supplierId,
+                            invoice_no: result.invoice_no || prev.invoice_no,
+                            invoice_date: result.invoice_date || prev.invoice_date,
+                            description: result.supplier_name ? `Bill from ${result.supplier_name}` : prev.description,
+                            unit_price: result.subtotal || prev.unit_price,
+                            quantity: 1,
+                            gst_amount: result.gst_amount || prev.gst_amount,
+                            grand_total: result.total_amount || prev.grand_total,
+                            notes: (prev.notes || '') + `\nAI Extraction: ${result.supplier_name || 'Unknown'}. UEN: ${result.uen || 'N/A'}`
+                        }));
+                        setAiStatus('✅ Manual extraction successful!');
+                    } else {
+                        setAiStatus('⚠️ AI parsing returned empty data.');
+                    }
+                } else {
+                    setAiStatus('⚠️ No text detected in document.');
+                }
+            }
+        } catch (err) {
+            console.error('Manual OCR/AI failed:', err);
+            alert('Manual AI Extraction failed: ' + err.message);
+            setAiStatus('');
+        } finally {
+            setIsAiProcessing(false);
+            setTimeout(() => setAiStatus(''), 4000);
+        }
+    };
+
+    // Helper to transform Google Drive Share URLs to Embeddable URLs
+    const getEmbeddableUrl = (url) => {
+        if (!url) return '';
+        if (url.includes('drive.google.com')) {
+            return url.replace(/\/view\?usp=drivesdk|\/view|\/edit/g, '/preview');
+        }
+        return url;
+    };
+
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div className="grid-2">
-                <div className="form-item full-width" style={{ position: 'relative' }}>
-                    <label style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span>Supplier *</span>
-                        {formData.supplier_id && (
-                            <button 
-                                onClick={handleEditSupplier}
-                                style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem', fontWeight: 600 }}
-                            >
-                                <Pencil size={12} /> Edit Supplier
-                            </button>
-                        )}
-                    </label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <div style={{ flex: 1, position: 'relative' }}>
-                            <input
-                                className="form-input"
-                                placeholder="Search supplier from database..."
-                                value={supplierSearch}
-                                onChange={(e) => {
-                                    setSupplierSearch(e.target.value);
-                                    setShowSupplierDropdown(true);
-                                }}
-                                onFocus={() => setShowSupplierDropdown(true)}
-                                style={{ paddingRight: '32px' }}
-                            />
-                            {showSupplierDropdown && (
-                                <div className="dropdown-content" style={{ 
-                                    display: 'block', 
-                                    width: '100%', 
-                                    top: '100%', 
-                                    position: 'absolute',
-                                    zIndex: 100,
-                                    background: '#fff',
-                                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                                    borderRadius: '8px',
-                                    maxHeight: '200px',
-                                    overflowY: 'auto'
-                                }}>
-                                    {filteredSuppliers.length > 0 ? filteredSuppliers.map(s => (
-                                        <button 
-                                            key={s.id} 
-                                            type="button"
-                                            onClick={() => handleSelectSupplier(s)}
-                                            style={{
-                                                width: '100%',
-                                                padding: '10px 16px',
-                                                textAlign: 'left',
-                                                background: 'none',
-                                                border: 'none',
-                                                borderBottom: '1px solid #f1f5f9',
-                                                cursor: 'pointer',
-                                                fontSize: '0.9rem'
-                                            }}
-                                            onMouseOver={(e) => e.target.style.background = '#f8fafc'}
-                                            onMouseOut={(e) => e.target.style.background = 'none'}
-                                        >
-                                            {s.name}
-                                        </button>
-                                    )) : (
-                                        <div style={{ padding: '12px', fontSize: '0.85rem', color: '#94a3b8', textAlign: 'center' }}>
-                                            No suppliers matching "{supplierSearch}"
-                                        </div>
-                                    )}
-                                </div>
+        <div style={{ display: 'flex', gap: '28px', flexDirection: 'row', alignItems: 'stretch', width: '100%' }}>
+            
+            {/* LEFT COLUMN: Extracted Info Form (Width 45%) */}
+            <div style={{ flex: '1', minWidth: '45%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ background: '#f8fafc', padding: '12px 16px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '4px' }}>
+                    <h5 style={{ margin: 0, fontWeight: 700, color: '#475569', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Sparkles size={14} color="#6366f1" />
+                        <span>AI Extracted Supplier Details</span>
+                    </h5>
+                </div>
+
+                <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div className="form-item full-width" style={{ gridColumn: 'span 2', position: 'relative' }}>
+                        <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                            <span>Supplier *</span>
+                            {formData.supplier_id && (
+                                <button 
+                                    type="button"
+                                    onClick={handleEditSupplier}
+                                    style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem', fontWeight: 600 }}
+                                >
+                                    <Pencil size={12} /> Edit Supplier
+                                </button>
                             )}
+                        </label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <div style={{ flex: 1, position: 'relative' }}>
+                                <input
+                                    className="form-input"
+                                    placeholder="Search supplier from database..."
+                                    value={supplierSearch}
+                                    onChange={(e) => {
+                                        setSupplierSearch(e.target.value);
+                                        setShowSupplierDropdown(true);
+                                    }}
+                                    onFocus={() => setShowSupplierDropdown(true)}
+                                    style={{ paddingRight: '32px' }}
+                                />
+                                {showSupplierDropdown && (
+                                    <div className="dropdown-content" style={{ 
+                                        display: 'block', 
+                                        width: '100%', 
+                                        top: '100%', 
+                                        position: 'absolute',
+                                        zIndex: 100,
+                                        background: '#fff',
+                                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                                        borderRadius: '8px',
+                                        maxHeight: '200px',
+                                        overflowY: 'auto'
+                                    }}>
+                                        {filteredSuppliers.length > 0 ? filteredSuppliers.map(s => (
+                                            <button 
+                                                key={s.id} 
+                                                type="button"
+                                                onClick={() => handleSelectSupplier(s)}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '10px 16px',
+                                                    textAlign: 'left',
+                                                    background: 'none',
+                                                    border: 'none',
+                                                    borderBottom: '1px solid #f1f5f9',
+                                                    cursor: 'pointer',
+                                                    fontSize: '0.9rem'
+                                                }}
+                                                onMouseOver={(e) => e.target.style.background = '#f8fafc'}
+                                                onMouseOut={(e) => e.target.style.background = 'none'}
+                                            >
+                                                {s.name}
+                                            </button>
+                                        )) : (
+                                            <div style={{ padding: '12px', fontSize: '0.85rem', color: '#94a3b8', textAlign: 'center' }}>
+                                                No suppliers matching "{supplierSearch}"
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <div className="form-item">
-                    <label>Job No (Optional)</label>
-                    <select 
-                        className="form-select"
-                        value={formData.job_id}
-                        onChange={(e) => {
-                            const selected = jobs?.find(j => j.id === e.target.value);
-                            handleSelectJob(selected || { id: '', document_no: '' });
-                        }}
-                    >
-                        <option value="">No Job Linked</option>
-                        {jobs?.map(j => <option key={j.id} value={j.id}>{j.document_no}</option>)}
-                    </select>
-                </div>
+                    <div className="form-item" style={{ gridColumn: 'span 2' }}>
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Job No (Optional)</label>
+                        <select 
+                            className="form-select"
+                            value={formData.job_id}
+                            onChange={(e) => {
+                                const selected = jobs?.find(j => j.id === e.target.value);
+                                handleSelectJob(selected || { id: '', document_no: '' });
+                            }}
+                        >
+                            <option value="">No Job Linked</option>
+                            {jobs?.map(j => <option key={j.id} value={j.id}>{j.document_no}</option>)}
+                        </select>
+                    </div>
 
-                <div className="form-item">
-                    <label>Invoice / Reference No</label>
-                    <input 
-                        className="form-input" 
-                        value={formData.invoice_no} 
-                        onChange={(e) => handleChange('invoice_no', e.target.value)} 
-                        placeholder="e.g. INV-2024-001" 
-                    />
-                </div>
-                <div className="form-item">
-                    <label>Invoice Date</label>
-                    <input 
-                        className="form-input" 
-                        type="date" 
-                        value={formData.invoice_date} 
-                        onChange={(e) => handleChange('invoice_date', e.target.value)} 
-                    />
-                </div>
+                    <div className="form-item">
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Invoice / Reference No</label>
+                        <input 
+                            className="form-input" 
+                            value={formData.invoice_no} 
+                            onChange={(e) => handleChange('invoice_no', e.target.value)} 
+                            placeholder="e.g. INV-2024-001" 
+                        />
+                    </div>
+                    <div className="form-item">
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Invoice Date</label>
+                        <input 
+                            className="form-input" 
+                            type="date" 
+                            value={formData.invoice_date} 
+                            onChange={(e) => handleChange('invoice_date', e.target.value)} 
+                        />
+                    </div>
 
-                <div className="form-item full-width">
-                    <label>Expense Description *</label>
-                    <textarea 
-                        className="form-textarea" 
-                        value={formData.description} 
-                        onChange={(e) => handleChange('description', e.target.value)} 
-                        placeholder="Describe the material, service, or cost item..." 
-                        rows={2} 
-                        style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                    />
-                </div>
+                    <div className="form-item full-width" style={{ gridColumn: 'span 2' }}>
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Expense Description *</label>
+                        <textarea 
+                            className="form-textarea" 
+                            value={formData.description} 
+                            onChange={(e) => handleChange('description', e.target.value)} 
+                            placeholder="Describe the material, service, or cost item..." 
+                            rows={2} 
+                            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                        />
+                    </div>
 
-                <div className="form-item">
-                    <label>Unit Price</label>
-                    <input 
-                        className="form-input" 
-                        type="number" 
-                        value={formData.unit_price} 
-                        onChange={(e) => handleChange('unit_price', e.target.value)} 
-                    />
-                </div>
-                <div className="form-item">
-                    <label>Quantity / Units</label>
-                    <input 
-                        className="form-input" 
-                        type="number" 
-                        value={formData.quantity} 
-                        onChange={(e) => handleChange('quantity', e.target.value)} 
-                    />
-                </div>
+                    <div className="form-item">
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Unit Price</label>
+                        <input 
+                            className="form-input" 
+                            type="number" 
+                            value={formData.unit_price} 
+                            onChange={(e) => handleChange('unit_price', e.target.value)} 
+                        />
+                    </div>
+                    <div className="form-item">
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Quantity / Units</label>
+                        <input 
+                            className="form-input" 
+                            type="number" 
+                            value={formData.quantity} 
+                            onChange={(e) => handleChange('quantity', e.target.value)} 
+                        />
+                    </div>
 
-                <div className="form-item">
-                    <label>GST Rate (%)</label>
-                    <input 
-                        className="form-input" 
-                        type="number" 
-                        value={formData.gst_rate} 
-                        onChange={(e) => handleChange('gst_rate', e.target.value)} 
-                    />
-                </div>
-                <div className="form-item">
-                    <label>GST Amount</label>
-                    <input 
-                        className="form-input" 
-                        type="number" 
-                        value={parseFloat(formData.gst_amount).toFixed(2)} 
-                        readOnly 
-                        style={{ background: '#f8fafc', fontWeight: 600 }} 
-                    />
-                </div>
-            </div>
-
-            <div style={{ 
-                padding: '24px', 
-                background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)', 
-                borderRadius: '16px', 
-                border: '1px solid #e2e8f0', 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center',
-                boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)'
-            }}>
-                <div>
-                    <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Final Grand Total</div>
-                    <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '1rem', color: '#94a3b8' }}>SGD</span>
-                        {formData.grand_total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <div className="form-item">
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>GST Rate (%)</label>
+                        <input 
+                            className="form-input" 
+                            type="number" 
+                            value={formData.gst_rate} 
+                            onChange={(e) => handleChange('gst_rate', e.target.value)} 
+                        />
+                    </div>
+                    <div className="form-item">
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>GST Amount</label>
+                        <input 
+                            className="form-input" 
+                            type="number" 
+                            value={parseFloat(formData.gst_amount).toFixed(2)} 
+                            readOnly 
+                            style={{ background: '#f8fafc', fontWeight: 600 }} 
+                        />
                     </div>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
-                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                        <DriveScannerLinker 
-                            selectedLink={formData.bill_url} 
-                            onLinkSelected={handleScannerLink} 
-                            onClear={() => setFormData(prev => ({ ...prev, bill_url: '' }))}
-                            label="Scan Repository"
-                        />
-                        <div style={{ width: '1px', height: '40px', background: '#e2e8f0', margin: '0 5px' }} />
-                        <label className={`btn ${formData.bill_url ? 'btn-secondary' : 'btn-primary'}`} style={{ cursor: 'pointer', padding: '10px 20px', gap: '10px', height: '44px', display: 'flex', alignItems: 'center' }}>
-                            {uploading ? <Loader2 size={18} className="animate-spin" /> : (formData.bill_url ? <RefreshCw size={18} /> : <Upload size={18} />)}
-                            {formData.bill_url ? 'Update Bill' : 'Upload Bill'}
-                            <input type="file" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
-                        </label>
+
+                <div style={{ 
+                    padding: '20px', 
+                    background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)', 
+                    borderRadius: '16px', 
+                    border: '1px solid #e2e8f0', 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center',
+                    boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)',
+                    marginTop: '8px'
+                }}>
+                    <div>
+                        <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Final Grand Total</div>
+                        <div style={{ fontSize: '1.6rem', fontWeight: 800, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '0.9rem', color: '#94a3b8' }}>SGD</span>
+                            {formData.grand_total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </div>
                     </div>
                     {aiStatus && (
-                        <div style={{ fontSize: '0.7rem', color: '#6366f1', fontWeight: 700, animation: 'pulse 2s infinite' }}>
+                        <div style={{ fontSize: '0.75rem', color: '#6366f1', fontWeight: 700, animation: 'pulse 2s infinite', textAlign: 'right', maxWidth: '200px' }}>
                             {aiStatus}
                         </div>
                     )}
-                    {formData.bill_url && (
-                        <a 
-                            href={formData.bill_url} 
-                            target="_blank" 
-                            rel="noreferrer" 
-                            style={{ 
-                                fontSize: '0.75rem', 
-                                color: '#10b981', 
-                                fontWeight: 700, 
-                                textDecoration: 'none',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '4px'
-                            }}
-                        >
-                            <FileCheck size={14} /> View Attached Bill
-                        </a>
-                    )}
+                </div>
+
+                <div className="quick-form-actions" style={{ marginTop: '16px', display: 'flex', gap: '12px' }}>
+                    <button type="button" className="btn btn-secondary" onClick={onCancel} style={{ flex: 1, height: '44px' }}>Discard</button>
+                    <button 
+                        type="button" 
+                        className="btn btn-primary" 
+                        onClick={handleSave} 
+                        disabled={loading || !formData.supplier_id || !formData.description}
+                        style={{ flex: 2, background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)', border: 'none', height: '44px', fontWeight: 700 }}
+                    >
+                        {loading ? <Loader2 size={18} className="animate-spin" style={{ margin: 'auto' }} /> : <Save size={18} />}
+                        <span>{loading ? 'Saving Bill...' : (expense ? 'Update Supplier Bill' : 'Save Supplier Bill')}</span>
+                    </button>
                 </div>
             </div>
 
-            <div className="quick-form-actions" style={{ marginTop: '10px' }}>
-                <button type="button" className="btn btn-secondary" onClick={onCancel}>Discard Changes</button>
-                <button 
-                    type="button" 
-                    className="btn btn-primary" 
-                    onClick={handleSave} 
-                    disabled={loading || !formData.supplier_id || !formData.description}
-                    style={{ background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)', border: 'none' }}
-                >
-                    <Save size={18} /> {loading ? 'Saving Expense...' : (expense ? 'Update Expense Record' : 'Save Expense Record')}
-                </button>
+            {/* RIGHT COLUMN: Interactive Bill Preview Sheet (Width 55%) */}
+            <div style={{ 
+                flex: '1.2', 
+                minWidth: '50%', 
+                background: '#fafbfd', 
+                border: '1.5px dashed #cbd5e1', 
+                borderRadius: '20px', 
+                padding: '24px', 
+                display: 'flex', 
+                flexDirection: 'column', 
+                gap: '16px',
+                boxShadow: '0 4px 20px rgba(99, 102, 241, 0.02)'
+            }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
+                    <h4 style={{ margin: 0, fontWeight: 800, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Receipt size={18} color="var(--accent)" />
+                        <span>Invoice / Receipt Full Viewer</span>
+                    </h4>
+                    {formData.bill_url && (
+                        <span style={{ fontSize: '0.7rem', background: '#dcfce7', color: '#15803d', padding: '4px 8px', borderRadius: '20px', fontWeight: 800 }}>
+                            DOCUMENT LOADED
+                        </span>
+                    )}
+                </div>
+
+                {formData.bill_url ? (
+                    /* Attached Document Preview Mode */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
+                        <div style={{ flex: 1, position: 'relative', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden', minHeight: '440px', background: '#f8fafc' }}>
+                            {formData.bill_url.includes('drive.google.com') ? (
+                                <iframe 
+                                    src={getEmbeddableUrl(formData.bill_url)} 
+                                    style={{ width: '100%', height: '100%', border: 'none', minHeight: '440px' }} 
+                                    title="Google Drive Preview"
+                                />
+                            ) : formData.bill_url.toLowerCase().endsWith('.pdf') ? (
+                                <iframe 
+                                    src={formData.bill_url} 
+                                    style={{ width: '100%', height: '100%', border: 'none', minHeight: '440px' }} 
+                                    title="PDF Preview"
+                                />
+                            ) : (
+                                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px' }}>
+                                    <img 
+                                        src={formData.bill_url} 
+                                        alt="Supplier Bill" 
+                                        style={{ maxWidth: '100%', maxHeight: '420px', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }} 
+                                    />
+                                </div>
+                            )}
+                            
+                            <button
+                                type="button"
+                                onClick={() => handleChange('bill_url', '')}
+                                style={{ 
+                                    position: 'absolute', 
+                                    bottom: '16px', 
+                                    right: '16px', 
+                                    background: 'rgba(239, 68, 68, 0.95)', 
+                                    color: 'white', 
+                                    border: 'none', 
+                                    borderRadius: '8px', 
+                                    padding: '8px 14px', 
+                                    fontSize: '0.8rem', 
+                                    fontWeight: 700, 
+                                    cursor: 'pointer', 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: '6px', 
+                                    boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.background = '#ef4444'}
+                                onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.95)'}
+                            >
+                                <Trash2 size={14} /> Detach Bill Document
+                            </button>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <a 
+                                href={formData.bill_url} 
+                                target="_blank" 
+                                rel="noreferrer" 
+                                style={{ 
+                                    fontSize: '0.8rem', 
+                                    color: '#6366f1', 
+                                    fontWeight: 700, 
+                                    textDecoration: 'none',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px'
+                                }}
+                            >
+                                <ExternalLink size={14} /> Open in New Tab
+                            </a>
+
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                    type="button"
+                                    onClick={handleManualExtraction}
+                                    disabled={isAiProcessing || uploading}
+                                    className="btn btn-sm"
+                                    style={{
+                                        background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
+                                        color: '#fff',
+                                        border: 'none',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        fontWeight: 700,
+                                        padding: '6px 12px',
+                                        borderRadius: '8px',
+                                        boxShadow: '0 4px 10px rgba(168, 85, 247, 0.2)',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    {isAiProcessing ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                                    <span>Run AI Extraction</span>
+                                </button>
+
+                                <label className="btn btn-sm btn-outline" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', margin: 0, padding: '6px 12px' }}>
+                                    <RefreshCw size={12} className={uploading ? 'animate-spin' : ''} />
+                                    <span style={{ fontSize: '0.8rem' }}>Replace Attachment</span>
+                                    <input type="file" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    /* Drag and Drop / Action Portal */
+                    <div style={{ 
+                        flex: 1, 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        justifyContent: 'center', 
+                        alignItems: 'center', 
+                        background: '#ffffff', 
+                        border: '1px dashed #cbd5e1', 
+                        borderRadius: '16px', 
+                        padding: '40px 24px', 
+                        textAlign: 'center', 
+                        minHeight: '440px',
+                        gap: '24px'
+                    }}>
+                        <div style={{ 
+                            width: '80px', 
+                            height: '80px', 
+                            background: 'rgba(99, 102, 241, 0.06)', 
+                            color: '#6366f1', 
+                            borderRadius: '50%', 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center',
+                            boxShadow: '0 8px 16px rgba(99, 102, 241, 0.05)'
+                        }}>
+                            <Upload size={32} />
+                        </div>
+                        
+                        <div>
+                            <h4 style={{ margin: '0 0 6px 0', fontSize: '1.1rem', fontWeight: 800, color: '#334155' }}>Attach Supplier Invoice / Bill</h4>
+                            <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748b', maxWidth: '340px', lineHeight: '1.5' }}>
+                                Snap a photo or link a scanned document. Gemini AI automatically reads details and pre-fills your form.
+                            </p>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', maxWidth: '320px' }}>
+                            
+                            {/* Local File Upload Button */}
+                            <label className="btn btn-primary" style={{ 
+                                cursor: 'pointer', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center', 
+                                gap: '8px', 
+                                background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)', 
+                                border: 'none', 
+                                height: '44px',
+                                borderRadius: '10px',
+                                fontWeight: 700,
+                                boxShadow: '0 4px 10px rgba(99,102,241,0.2)'
+                            }}>
+                                <Upload size={16} />
+                                <span>Upload local invoice / bill</span>
+                                <input type="file" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
+                            </label>
+
+                            {/* Snaps Camera Photo Button */}
+                            <label className="btn btn-secondary" style={{ 
+                                cursor: 'pointer', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center', 
+                                gap: '8px', 
+                                height: '44px',
+                                borderRadius: '10px',
+                                fontWeight: 700,
+                                background: '#fff',
+                                border: '1px solid #cbd5e1'
+                            }}>
+                                <Camera size={16} color="#475569" />
+                                <span style={{ color: '#475569' }}>Snap Photo / Camera</span>
+                                <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
+                            </label>
+
+                            <div style={{ display: 'flex', alignItems: 'center', margin: '8px 0', gap: '10px' }}>
+                                <div style={{ flex: 1, height: '1px', background: '#cbd5e1' }} />
+                                <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Google Scans Repository</span>
+                                <div style={{ flex: 1, height: '1px', background: '#cbd5e1' }} />
+                            </div>
+
+                            {/* Link from Celron Scanner Folder */}
+                            <button 
+                                type="button" 
+                                onClick={handlePickFromDrive}
+                                className="btn btn-outline"
+                                style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    justifyContent: 'center', 
+                                    gap: '8px', 
+                                    height: '44px', 
+                                    borderRadius: '10px', 
+                                    fontWeight: 700,
+                                    background: 'rgba(255, 255, 255, 0.5)'
+                                }}
+                            >
+                                <Archive size={16} />
+                                <span>Link from Celron Scanner Folder</span>
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Nested Modal for Editing Supplier */}
@@ -2710,6 +3124,12 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                     </div>
                 </div>
             )}
+
+            <GDriveConnectionModal 
+                isOpen={isAuthModalOpen} 
+                onClose={() => setIsAuthModalOpen(false)} 
+                state="scanner_module"
+            />
         </div>
     );
 };

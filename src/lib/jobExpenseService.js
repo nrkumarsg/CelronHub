@@ -26,6 +26,8 @@ export const saveJobExpense = async (expense) => {
         delete payload.id;
         delete payload.created_at;
         delete payload.partner; // Remove joined data
+        delete payload.job; // Remove joined data
+
 
         let result;
         if (id && !id.startsWith('temp_')) {

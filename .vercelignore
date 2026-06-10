@@ -1,0 +1,23 @@
+# Dependency directories
+node_modules/
+celron_expenses/
+
+# Build outputs
+dist/
+build/
+.vercel/
+
+# Version control
+.git/
+.github/
+
+# Environment files (do not upload secrets)
+.env
+.env.*
+
+# Database and SQL dumps
+*.sql
+*.log
+*.txt
+AI-PartnersList/
+

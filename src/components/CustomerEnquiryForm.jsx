@@ -460,11 +460,13 @@ export default function CustomerEnquiryForm({ onClose, onSave, editingEnquiry = 
                         if (locationName) projectFolderName += ` - ${locationName}`;
                         if (formData.customer_ref) projectFolderName += ` - ${formData.customer_ref}`;
 
+                        const cleanFolderName = projectFolderName.replace(/[/\\?%*:|"<>]/g, '-');
+
                         projectFolderId = await provisionFullProjectStructure(
                             accessToken,
                             topRootId,
                             year,
-                            projectFolderName
+                            cleanFolderName
                         );
                     }
                 } catch (folderErr) {
@@ -473,14 +475,10 @@ export default function CustomerEnquiryForm({ onClose, onSave, editingEnquiry = 
                 }
             }
 
-            // 2. Handle Drive Upload if attachment exists
+            // 2. Handle Drive Upload if attachment exists (Option B - Upload directly to root folder)
             if (attachment && accessToken && projectFolderId) {
-                // Upload to the specific sub-folder: "1. Customer_Request_&_Offer"
-                const { createFolderStructure } = await import('../lib/driveService');
-                const subFolderId = await createFolderStructure(accessToken, '1. Customer_Request_&_Offer', projectFolderId);
-
                 const uploadResult = await uploadFileToDrive(accessToken, attachment, {
-                    folderId: subFolderId,
+                    folderId: projectFolderId,
                     title: attachment.name,
                     company_id: profile.company_id
                 });

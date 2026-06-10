@@ -148,11 +148,21 @@ export default function UnifiedSupplierHub() {
 
     const filterData = (item) => {
         const query = searchQuery.toLowerCase();
-        const matchesPartner = !selectedPartnerId || 
-            (activeTab === 'customer_enquiries' ? item.partner_id === selectedPartnerId :
-             activeTab === 'rfq_floats' ? item.partner_id === selectedPartnerId :
-             activeTab === 'supplier_quotes' ? item.partner_id === selectedPartnerId :
-             activeTab === 'orders_to_suppliers' ? item.partner_id === selectedPartnerId : true);
+        const selectedPartner = partners.find(p => p.id === selectedPartnerId);
+        const selectedPartnerName = selectedPartner?.name;
+        
+        let matchesPartner = true;
+        if (selectedPartnerId) {
+            const getPartnerName = (pId) => partners.find(p => p.id === pId)?.name;
+            const docPartnerId = activeTab === 'customer_enquiries' ? item.partner_id :
+                                 activeTab === 'rfq_floats' ? item.partner_id :
+                                 activeTab === 'supplier_quotes' ? item.partner_id :
+                                 activeTab === 'orders_to_suppliers' ? item.partner_id : null;
+            const docPartnerName = getPartnerName(docPartnerId) || (activeTab === 'rfq_floats' ? item.partners?.name : activeTab === 'supplier_quotes' ? item.supplier?.name : activeTab === 'orders_to_suppliers' ? item.partners?.name : item.customer?.name);
+            
+            matchesPartner = docPartnerId === selectedPartnerId ||
+                (docPartnerName && selectedPartnerName && docPartnerName.trim().toLowerCase() === selectedPartnerName.trim().toLowerCase());
+        }
 
         if (activeTab === 'customer_enquiries') {
             return matchesPartner && (item.enquiry_no?.toLowerCase().includes(query) || 
@@ -287,9 +297,20 @@ export default function UnifiedSupplierHub() {
                                 onChange={(e) => setSelectedPartnerId(e.target.value)}
                             >
                                 <option value="">All Partners</option>
-                                {partners.map(p => (
-                                    <option key={p.id} value={p.id}>{p.name}</option>
-                                ))}
+                                {(() => {
+                                    const unique = [];
+                                    const seen = new Set();
+                                    (partners || []).forEach(p => {
+                                        const key = (p.name || '').trim().toLowerCase();
+                                        if (key && !seen.has(key)) {
+                                            seen.add(key);
+                                            unique.push(p);
+                                        }
+                                    });
+                                    return unique.map(p => (
+                                        <option key={p.id} value={p.id}>{p.name}</option>
+                                    ));
+                                })()}
                             </select>
                             <ChevronDown size={14} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', pointerEvents: 'none' }} />
                         </div>

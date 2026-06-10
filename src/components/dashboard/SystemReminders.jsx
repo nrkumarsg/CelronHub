@@ -106,6 +106,90 @@ export default function SystemReminders() {
             // Sort by absolute urgency
             filteredReminders.sort((a, b) => a.diffDays - b.diffDays);
 
+            // Check if there is an active SOA cycle due
+            const now = new Date();
+            const day = now.getDate();
+            const year = now.getFullYear();
+            const month = now.getMonth();
+            let dueCycle = null;
+            let cycleLabel = '';
+            
+            if (day >= 5 && day < 15) {
+                dueCycle = 5;
+                cycleLabel = '5th Billing Cycle';
+            } else if (day >= 15 && day < 25) {
+                dueCycle = 15;
+                cycleLabel = '15th Billing Cycle';
+            } else if (day >= 25 && day < 30) {
+                dueCycle = 25;
+                cycleLabel = '25th Billing Cycle';
+            } else if (day >= 30 || day < 5) {
+                dueCycle = 30;
+                cycleLabel = 'End of Month Billing Cycle';
+            }
+
+            let showSoaReminder = false;
+            if (dueCycle !== null && profile?.company_id) {
+                // Fetch if any dispatch log exists for this cycle in the current month
+                try {
+                    const { data: logs, error: logsError } = await supabase
+                        .from('soa_dispatch_logs')
+                        .select('id, sent_at')
+                        .eq('company_id', profile.company_id)
+                        .eq('status', 'Success');
+                    
+                    if (!logsError && logs) {
+                        const cycleHasLogs = logs.some(log => {
+                            const logDate = new Date(log.sent_at);
+                            if (logDate.getFullYear() !== year || logDate.getMonth() !== month) return false;
+                            const d = logDate.getDate();
+                            if (dueCycle === 5) return d >= 5 && d < 15;
+                            if (dueCycle === 15) return d >= 15 && d < 25;
+                            if (dueCycle === 25) return d >= 25 && d < 30;
+                            if (dueCycle === 30) return d >= 30 || d < 5;
+                            return false;
+                        });
+                        if (!cycleHasLogs) {
+                            showSoaReminder = true;
+                        }
+                    } else {
+                        // Fallback if table doesn't exist yet
+                        showSoaReminder = true;
+                    }
+                } catch (e) {
+                    console.warn("Could not check SOA dispatch logs:", e.message);
+                    showSoaReminder = true;
+                }
+            }
+
+            if (showSoaReminder) {
+                let overdueCount = 0;
+                try {
+                    const { data: unpaidDocs } = await supabase
+                        .from('workflow_documents')
+                        .select('partner_id, total_amount, status')
+                        .eq('company_id', profile.company_id)
+                        .not('status', 'in', '("Paid","Cancelled","Reversed","Completed")');
+                    
+                    if (unpaidDocs) {
+                        const uniqueOverduePartners = new Set(unpaidDocs.map(d => d.partner_id).filter(Boolean));
+                        overdueCount = uniqueOverduePartners.size;
+                    }
+                } catch (e) {
+                    console.warn("Could not count overdue partners:", e);
+                }
+
+                filteredReminders.unshift({
+                    id: 'soa-dispatch-reminder',
+                    document_no: `📅 SOA Cycle Due: ${cycleLabel}`,
+                    document_type: 'SOA Cycle',
+                    partnerName: `Outstanding statement run is active. Click here to review and dispatch statements to ${overdueCount || 'all'} overdue accounts.`,
+                    targetDateStr: new Date().toISOString(),
+                    diffDays: 0,
+                    isSoaReminder: true
+                });
+            }
+
             setReminders(filteredReminders);
         } catch (error) {
             console.error('Error fetching system reminders:', error);
@@ -119,6 +203,8 @@ export default function SystemReminders() {
 
     const getIcon = (type) => {
         switch (type) {
+            case 'SOA Cycle':
+                return <Calendar size={18} color="#10b981" />;
             case 'Tax Invoice':
             case 'Proforma Invoice':
                 return <Receipt size={18} color="#ef4444" />;
@@ -253,7 +339,7 @@ export default function SystemReminders() {
                                     Date: <strong>{new Date(rem.targetDateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</strong>
                                 </div>
                                 <Link 
-                                    to={`/workflows/editor/${rem.document_type}/${rem.id}`} 
+                                    to={rem.isSoaReminder ? "/soa?tab=automated" : `/workflows/editor/${rem.document_type}/${rem.id}`} 
                                     style={{ 
                                         display: 'flex', 
                                         alignItems: 'center', 

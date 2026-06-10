@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, Edit, Trash2, Printer, Upload, Download, Globe, CheckCircle2, UserCheck, UserPlus, User, MessageSquare, ChevronDown, Settings, Sparkles, Loader2 } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Printer, Upload, Download, Globe, CheckCircle2, UserCheck, UserPlus, User, MessageSquare, ChevronDown, Settings, Sparkles, Loader2, ArrowUpDown } from 'lucide-react';
 import Papa from 'papaparse';
 import { getContacts, deleteContact, getPartners, saveContact } from '../lib/store';
 import { translateQueryToFilters } from '../lib/geminiService';
@@ -21,6 +21,8 @@ export default function ContactsDirectory() {
     const [showAiSearch, setShowAiSearch] = useState(false);
     const [partnersList, setPartnersList] = useState([]);
     const [currentPage, setCurrentPage] = useState(1);
+    const [sortKey, setSortKey] = useState('name');
+    const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
     const itemsPerPage = 10;
     const navigate = useNavigate();
     const fileInputRef = useRef(null);
@@ -280,7 +282,25 @@ export default function ContactsDirectory() {
         );
     });
 
-    const paginatedContacts = filteredContacts.slice(
+    const sortedContacts = [...filteredContacts].sort((a, b) => {
+        let valA, valB;
+        if (sortKey === 'name') {
+            valA = a.name || '';
+            valB = b.name || '';
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        } else if (sortKey === 'partner') {
+            valA = partners[a.partnerId] || '';
+            valB = partners[b.partnerId] || '';
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        } else if (sortKey === 'created_at') {
+            valA = a.created_at ? new Date(a.created_at) : 0;
+            valB = b.created_at ? new Date(b.created_at) : 0;
+            return sortDirection === 'desc' ? valB - valA : valA - valB;
+        }
+        return 0;
+    });
+
+    const paginatedContacts = sortedContacts.slice(
         (currentPage - 1) * itemsPerPage,
         currentPage * itemsPerPage
     );
@@ -313,6 +333,9 @@ export default function ContactsDirectory() {
                     </button>
                     <button className="btn btn-secondary" onClick={() => window.print()} disabled={loading}>
                         <Printer size={18} /> Print
+                    </button>
+                    <button onClick={() => navigate('/partners/ai-parser')} style={{ background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500, cursor: 'pointer', boxShadow: '0 4px 6px -1px rgba(124, 58, 237, 0.2)' }}>
+                        <Sparkles size={18} /> AI Email &amp; Contact Parser
                     </button>
                     <button onClick={() => navigate('/contacts/new')} disabled={loading} style={{ background: '#6366f1', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500, cursor: 'pointer', boxShadow: '0 4px 6px -1px rgba(99, 102, 241, 0.2)' }}>
                         <Plus size={18} /> Add Contact
@@ -428,6 +451,27 @@ export default function ContactsDirectory() {
                         {['Contact', 'Purchase', 'Technical', 'Accounts', 'Delivery', 'Freelancer', 'Personal', 'Friend', 'Relative', 'Other'].map(t => (
                             <option key={t} value={t}>{t}</option>
                         ))}
+                    </select>
+                    <ChevronDown size={14} color="#94a3b8" style={{ position: 'absolute', right: '16px', pointerEvents: 'none' }} />
+                </div>
+
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 16px', gap: '8px', minWidth: '200px' }}>
+                    <ArrowUpDown size={16} color="#94a3b8" style={{ flexShrink: 0 }} />
+                    <select
+                        value={`${sortKey}-${sortDirection}`}
+                        onChange={(e) => {
+                            const [key, dir] = e.target.value.split('-');
+                            setSortKey(key);
+                            setSortDirection(dir);
+                        }}
+                        style={{ appearance: 'none', background: 'transparent', border: 'none', outline: 'none', color: '#475569', fontSize: '0.9rem', fontWeight: 500, padding: '10px 24px 10px 0', cursor: 'pointer', width: '100%' }}
+                    >
+                        <option value="name-desc">Contact Name (Z-A)</option>
+                        <option value="name-asc">Contact Name (A-Z)</option>
+                        <option value="partner-desc">Partner Name (Z-A)</option>
+                        <option value="partner-asc">Partner Name (A-Z)</option>
+                        <option value="created_at-desc">Date Added (Newest)</option>
+                        <option value="created_at-asc">Date Added (Oldest)</option>
                     </select>
                     <ChevronDown size={14} color="#94a3b8" style={{ position: 'absolute', right: '16px', pointerEvents: 'none' }} />
                 </div>

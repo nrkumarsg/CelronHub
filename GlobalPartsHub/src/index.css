@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Base style resets */
+html, body {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Light Theme overrides targeting standard Slate color palettes */
+.light-theme {
+  background-color: #f8fafc !important; /* slate-50 */
+  color: #0f172a !important; /* slate-900 */
+}
+
+/* Sticky Header light background */
+.light-theme header {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+  border-color: #cbd5e1 !important;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+}
+
+.light-theme h1,
+.light-theme h2,
+.light-theme h3,
+.light-theme h4 {
+  color: #0f172a !important;
+}
+
+/* Override background layouts & card panels */
+.light-theme .bg-slate-950,
+.light-theme #global-parts-hub-app {
+  background-color: #f8fafc !important;
+}
+
+.light-theme .bg-slate-900,
+.light-theme .bg-indigo-950\/20,
+.light-theme .bg-slate-950\/60,
+.light-theme .bg-slate-900\/60 {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1) !important;
+}
+
+/* Secondary Background blocks */
+.light-theme .bg-slate-950\/40,
+.light-theme .bg-slate-900\/90 {
+  background-color: #f1f5f9 !important;
+}
+
+/* Borders overrides */
+.light-theme .border-slate-800,
+.light-theme .border-slate-800\/80,
+.light-theme .border-slate-850,
+.light-theme .border-slate-900,
+.light-theme .border-indigo-900\/35 {
+  border-color: #e2e8f0 !important;
+}
+
+/* Text overrides */
+.light-theme .text-slate-100 {
+  color: #1e293b !important;
+}
+.light-theme .text-slate-300 {
+  color: #334155 !important;
+}
+.light-theme .text-slate-400 {
+  color: #64748b !important;
+}
+.light-theme .text-slate-500 {
+  color: #475569 !important;
+}
+.light-theme .text-white {
+  color: #0f172a !important;
+}
+
+/* Specific component tweaks to ensure professional visibility */
+.light-theme select,
+.light-theme input,
+.light-theme textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+.light-theme select::placeholder,
+.light-theme input::placeholder,
+.light-theme textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Table / Details view styling adjustment */
+.light-theme th {
+  background-color: #f1f5f9 !important;
+  color: #334155 !important;
+}
+
+.light-theme td {
+  border-color: #f1f5f9 !important;
+  color: #1e293b !important;
+}
+
+/* Dynamic radar mapping colors for light theme */
+.light-theme .radar-grid-circle {
+  stroke: rgba(148, 163, 184, 0.25) !important;
+}
+.light-theme .radar-axis-line {
+  stroke: rgba(148, 163, 184, 0.35) !important;
+}
+
+/* Badges and tags in light mode */
+.light-theme .bg-indigo-950,
+.light-theme .bg-indigo-950\/60 {
+  background-color: #e0e7ff !important;
+  color: #3730a3 !important;
+  border-color: #c7d2fe !important;
+}
+
+.light-theme .bg-emerald-950,
+.light-theme .bg-emerald-950\/60 {
+  background-color: #ecfdf5 !important;
+  color: #065f46 !important;
+  border-color: #a7f3d0 !important;
+}
+
+.light-theme .bg-cyan-950,
+.light-theme .bg-cyan-950\/60 {
+  background-color: #ecfeff !important;
+  color: #155e75 !important;
+  border-color: #a5f3fc !important;
+}
+
+.light-theme .text-indigo-300 {
+  color: #4338ca !important;
+}
+.light-theme .text-emerald-300 {
+  color: #047857 !important;
+}
+.light-theme .text-cyan-400 {
+  color: #0e7490 !important;
+}
+.light-theme .border-indigo-800,
+.light-theme .border-indigo-500\/30 {
+  border-color: #cbd5e1 !important;
+}
+
+/* Light theme for subtabs container is slate-200 */
+.light-theme nav.bg-slate-950 {
+  background-color: #e2e8f0 !important;
+  border-color: #cbd5e1 !important;
+}
+
+.light-theme nav.bg-slate-950 button {
+  color: #475569 !important;
+}
+
+.light-theme nav.bg-slate-950 button:hover {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+.light-theme nav.bg-slate-950 button.bg-indigo-600 {
+  background-color: #4f46e5 !important;
+  color: #ffffff !important;
+}
+
+/* Ensure prompt AI display looks high caliber and legible */
+.light-theme .ai-overview-block {
+  background-color: #ffffff !important;
+  border-color: #6366f1 !important;
+  box-shadow: 0 10px 15px -3px rgb(99 102 241 / 0.1) !important;
+}
+
+.light-theme .ai-spark-label {
+  color: #4f46e5 !important;
+}
+
+/* Star feedback system visibility adjustment */
+.light-theme .star-rating-unfilled {
+  color: #cbd5e1 !important;
+}
+
+/* Tooltips & over the top sticky tags */
+.light-theme .bg-slate-950\/95 {
+  background-color: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}

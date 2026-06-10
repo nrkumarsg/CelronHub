@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, StickyNote, Calendar, Clock, Pin, MoreVertical, Trash2, Edit, ChevronRight } from 'lucide-react';
+import { Plus, Search, StickyNote, Calendar, Clock, Pin, MoreVertical, Trash2, Edit, ChevronRight, ArrowUpDown, ChevronDown } from 'lucide-react';
 import { getNotes, deleteNote, updateNote } from '../lib/notesService';
 
 export default function NotesDirectory() {
@@ -8,6 +8,8 @@ export default function NotesDirectory() {
     const [notes, setNotes] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
+    const [sortKey, setSortKey] = useState('updated_at');
+    const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
 
     const fetchNotes = async () => {
         setLoading(true);
@@ -39,6 +41,23 @@ export default function NotesDirectory() {
         note.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (note.content && note.content.toLowerCase().includes(searchTerm.toLowerCase()))
     );
+
+    const sortedNotes = [...filteredNotes].sort((a, b) => {
+        if (a.is_pinned && !b.is_pinned) return -1;
+        if (!a.is_pinned && b.is_pinned) return 1;
+
+        let valA, valB;
+        if (sortKey === 'updated_at') {
+            valA = a.updated_at ? new Date(a.updated_at) : 0;
+            valB = b.updated_at ? new Date(b.updated_at) : 0;
+            return sortDirection === 'desc' ? valB - valA : valA - valB;
+        } else if (sortKey === 'title') {
+            valA = a.title || '';
+            valB = b.title || '';
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        }
+        return 0;
+    });
 
     const formatDate = (dateString) => {
         const date = new Date(dateString);
@@ -75,6 +94,24 @@ export default function NotesDirectory() {
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                     </div>
+                    <div style={{ display: 'flex', background: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '0 12px', alignItems: 'center', position: 'relative' }}>
+                        <ArrowUpDown size={18} color="#94a3b8" style={{ marginRight: '8px' }} />
+                        <select
+                            style={{ appearance: 'none', border: 'none', outline: 'none', background: 'transparent', padding: '10px 24px 10px 0', fontSize: '0.9rem', color: '#475569', fontWeight: 500, cursor: 'pointer', minWidth: '150px' }}
+                            value={`${sortKey}-${sortDirection}`}
+                            onChange={(e) => {
+                                const [key, dir] = e.target.value.split('-');
+                                setSortKey(key);
+                                setSortDirection(dir);
+                            }}
+                        >
+                            <option value="updated_at-desc">Modified (Newest)</option>
+                            <option value="updated_at-asc">Modified (Oldest)</option>
+                            <option value="title-desc">Title (Z-A)</option>
+                            <option value="title-asc">Title (A-Z)</option>
+                        </select>
+                        <ChevronDown size={14} color="#94a3b8" style={{ position: 'absolute', right: '12px', pointerEvents: 'none' }} />
+                    </div>
                     <button
                         onClick={() => navigate('/notes/new')}
                         style={{ background: '#6366f1', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500, cursor: 'pointer', boxShadow: '0 4px 6px -1px rgba(99, 102, 241, 0.2)' }}
@@ -88,7 +125,7 @@ export default function NotesDirectory() {
                 <div style={{ display: 'flex', justifyContent: 'center', padding: '100px' }}>
                     <div className="loading-spinner"></div>
                 </div>
-            ) : filteredNotes.length === 0 ? (
+            ) : sortedNotes.length === 0 ? (
                 <div className="glass-panel" style={{ textAlign: 'center', padding: '100px 20px' }}>
                     <StickyNote size={48} color="var(--text-secondary)" style={{ opacity: 0.2, marginBottom: '16px' }} />
                     <h3 style={{ color: 'var(--text-secondary)' }}>No notes found</h3>
@@ -96,7 +133,7 @@ export default function NotesDirectory() {
                 </div>
             ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '24px' }}>
-                    {filteredNotes.map(note => (
+                    {sortedNotes.map(note => (
                         <div
                             key={note.id}
                             onClick={() => navigate(`/notes/${note.id}`)}

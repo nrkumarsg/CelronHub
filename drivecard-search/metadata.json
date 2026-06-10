@@ -1,0 +1,6 @@
+{
+  "name": "DriveCard Search",
+  "description": "Browse and search business cards directly from your Google Drive using smart OCR and categorization powered by Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -8,10 +8,10 @@ import {
     Clock, CheckCircle2, AlertCircle,
     Building2, User, Hash, Calendar,
     ExternalLink, Trash2, Printer,
-    MoreVertical, Edit, ArrowLeft, ArrowRight
+    MoreVertical, Edit, ArrowLeft, ArrowRight, ArrowUpDown
 } from 'lucide-react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import { validateToken, connectGoogleAPI } from '../../lib/googleAuthService';
+import { validateToken, connectGoogleAPI, isTokenValid } from '../../lib/googleAuthService';
 import EditJobModal from '../../components/workflows/EditJobModal';
 import { Folder } from 'lucide-react';
 import { getWorkflowDocuments, getWorkflowCounts, deleteWorkflowDocument } from '../../lib/workflowV2Service';
@@ -36,6 +36,8 @@ export default function EnquiryList() {
     const [newJobCount, setNewJobCount] = useState(0);
     const [partners, setPartners] = useState([]);
     const [selectedPartnerId, setSelectedPartnerId] = useState('');
+    const [sortKey, setSortKey] = useState('date');
+    const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
 
     useEffect(() => {
         const tab = queryParams.get('tab') || 'enquiries';
@@ -59,6 +61,14 @@ export default function EnquiryList() {
             .eq('company_id', profile.company_id)
             .order('name');
         if (data) setPartners(data);
+    };
+
+    const handleGoBack = () => {
+        if (window.history.state && window.history.state.idx > 0) {
+            navigate(-1);
+        } else {
+            navigate('/dashboard');
+        }
     };
 
     const fetchData = async () => {
@@ -158,7 +168,11 @@ export default function EnquiryList() {
                     const year = new Date().getFullYear().toString();
                     
                     if (celronRootId) {
-                        await provisionFullProjectStructure(accessToken, celronRootId, year, job_no);
+                        const partnerName = enquiry.customer?.name || 'Walk-in';
+                        const vesselName = enquiry.vessels?.vessel_name || '';
+                        const folderTitle = vesselName ? `${job_no} - ${partnerName} - ${vesselName}` : `${job_no} - ${partnerName}`;
+                        const cleanTitle = folderTitle.replace(/[/\\?%*:|"<>]/g, '-');
+                        await provisionFullProjectStructure(accessToken, celronRootId, year, cleanTitle);
                     }
                 } catch (driveErr) {
                     console.error('GDrive folder creation failed:', driveErr);
@@ -203,6 +217,16 @@ export default function EnquiryList() {
 
         try {
             setLoading(true);
+
+            if (!isTokenValid()) {
+                if (window.confirm('Your Google connection has expired or is not connected. Would you like to connect now?')) {
+                    sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
+                    connectGoogleAPI();
+                }
+                setLoading(false);
+                return;
+            }
+
             const accessToken = localStorage.getItem('google_access_token');
             if (!accessToken) throw new Error('Google account not connected');
 
@@ -221,13 +245,32 @@ export default function EnquiryList() {
                 if (match) celronRootId = match[1];
             }
 
-            const currentYear = new Date().getFullYear().toString();
-            const timeBasedId = await getOrCreateFolder(accessToken, '01. TIME_BASED', celronRootId);
-            const yearId = await getOrCreateFolder(accessToken, `YEAR${currentYear}`, timeBasedId);
-            const enquiriesRootId = await getOrCreateFolder(accessToken, 'ENQUIRIES', yearId);
-            
+            const partner = activeTab === 'enquiries' ? item?.customer : item?.enquiries?.customer;
+            const partnerName = partner?.name || 'Walk-in';
+            const vesselName = item?.vessels?.vessel_name || item?.enquiries?.vessels?.vessel_name || '';
             const docNo = activeTab === 'enquiries' ? item.enquiry_no : item.enquiries?.enquiry_no;
-            const newFolderId = await getOrCreateFolder(accessToken, docNo, enquiriesRootId);
+            const folderTitle = vesselName ? `${docNo} - ${partnerName} - ${vesselName}` : `${docNo} - ${partnerName}`;
+            const cleanTitle = folderTitle.replace(/[/\\?%*:|"<>]/g, '-');
+
+            // Search first to avoid duplicates using a prefix search
+            let newFolderId;
+            try {
+                let query = `name contains '${docNo}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${enquiriesRootId}' in parents`;
+                const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+                    headers: { 'Authorization': 'Bearer ' + accessToken }
+                });
+                if (searchRes.ok) {
+                    const { files } = await searchRes.json();
+                    if (files && files.length > 0) {
+                        newFolderId = files[0].id;
+                    }
+                }
+            } catch (e) {
+                console.warn("Prefix search failed, falling back to exact get/create:", e);
+            }
+            if (!newFolderId) {
+                newFolderId = await getOrCreateFolder(accessToken, cleanTitle, enquiriesRootId);
+            }
 
             // Link to DB
             const enquiryId = activeTab === 'enquiries' ? item.id : item.enquiry_id;
@@ -289,12 +332,46 @@ export default function EnquiryList() {
 
         const matchesStatus = statusFilter === 'All' || item.status === statusFilter;
         
-        const matchesPartner = !selectedPartnerId || 
-            (activeTab === 'enquiries' ? item.customer_id === selectedPartnerId :
-             activeTab === 'jobs' ? item.customer_id === selectedPartnerId :
-             activeTab === 'rfqs' ? item.partner_id === selectedPartnerId : true);
+        const selectedPartner = partners.find(p => p.id === selectedPartnerId);
+        const selectedPartnerName = selectedPartner?.name;
+        
+        let matchesPartner = true;
+        if (selectedPartnerId) {
+            const getPartnerName = (pId) => partners.find(p => p.id === pId)?.name;
+            const docPartnerId = activeTab === 'enquiries' ? item.customer_id :
+                                 activeTab === 'jobs' ? item.customer_id :
+                                 activeTab === 'rfqs' ? item.partner_id : null;
+            const docPartnerName = getPartnerName(docPartnerId) || (activeTab === 'rfqs' ? item.partners?.name : item.customer?.name);
+            
+            matchesPartner = docPartnerId === selectedPartnerId ||
+                (docPartnerName && selectedPartnerName && docPartnerName.trim().toLowerCase() === selectedPartnerName.trim().toLowerCase());
+        }
 
         return matchesSearch && matchesStatus && matchesPartner;
+    });
+
+    const sortedData = [...filteredData].sort((a, b) => {
+        let valA, valB;
+        if (sortKey === 'date') {
+            valA = a.created_at ? new Date(a.created_at) : 0;
+            valB = b.created_at ? new Date(b.created_at) : 0;
+            return sortDirection === 'desc' ? valB - valA : valA - valB;
+        } else if (sortKey === 'number') {
+            valA = activeTab === 'enquiries' ? (a.enquiry_no || '') : activeTab === 'jobs' ? (a.job_no || '') : (a.document_no || '');
+            valB = activeTab === 'enquiries' ? (b.enquiry_no || '') : activeTab === 'jobs' ? (b.job_no || '') : (b.document_no || '');
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        } else if (sortKey === 'customer') {
+            const getPartnerName = (item) => {
+                if (activeTab === 'enquiries') return item.customer?.name || 'Walk-in';
+                if (activeTab === 'jobs') return item.enquiries?.customer?.name || 'Customer';
+                if (activeTab === 'rfqs') return item.partners?.name || 'Supplier Not Set';
+                return '';
+            };
+            valA = getPartnerName(a);
+            valB = getPartnerName(b);
+            return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        }
+        return 0;
     });
 
     return (
@@ -302,7 +379,7 @@ export default function EnquiryList() {
             <header className="page-header" style={{ marginBottom: '32px', alignItems: 'flex-start' }}>
                 <div>
                     <button
-                        onClick={() => navigate(-1)}
+                        onClick={handleGoBack}
                         className="btn btn-sm btn-outline"
                         style={{ display: 'inline-flex', marginBottom: '16px', gap: '8px' }}
                     >
@@ -482,9 +559,37 @@ export default function EnquiryList() {
                                 onChange={(e) => setSelectedPartnerId(e.target.value)}
                             >
                                 <option value="">All Customers</option>
-                                {partners.map(p => (
-                                    <option key={p.id} value={p.id}>{p.name}</option>
-                                ))}
+                                {(() => {
+                                    const unique = [];
+                                    const seen = new Set();
+                                    (partners || []).forEach(p => {
+                                        const key = (p.name || '').trim().toLowerCase();
+                                        if (key && !seen.has(key)) {
+                                            seen.add(key);
+                                            unique.push(p);
+                                        }
+                                    });
+                                    return unique;
+                                })()}
+                            </select>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '0 12px', minWidth: '200px' }}>
+                            <ArrowUpDown size={16} color="var(--text-secondary)" style={{ marginRight: '8px' }} />
+                            <select
+                                style={{ border: 'none', background: 'transparent', outline: 'none', flex: 1, color: 'var(--text-primary)', fontSize: '0.9rem', cursor: 'pointer', height: '38px' }}
+                                value={`${sortKey}-${sortDirection}`}
+                                onChange={(e) => {
+                                    const [key, dir] = e.target.value.split('-');
+                                    setSortKey(key);
+                                    setSortDirection(dir);
+                                }}
+                            >
+                                <option value="date-desc">Date Created (Newest)</option>
+                                <option value="date-asc">Date Created (Oldest)</option>
+                                <option value="number-desc">Document No (Z-A)</option>
+                                <option value="number-asc">Document No (A-Z)</option>
+                                <option value="customer-desc">Name (Z-A)</option>
+                                <option value="customer-asc">Name (A-Z)</option>
                             </select>
                         </div>
                     </div>
@@ -524,19 +629,17 @@ export default function EnquiryList() {
                                         <span style={{ color: 'var(--text-secondary)' }}>Syncing with system...</span>
                                     </div>
                                 </td></tr>
-                            ) : filteredData.length === 0 ? (
-                                <tr>
-                                    <td colSpan="7" className="text-center py-20">
+                            ) : sortedData.length === 0 ? (
+                                <tr><td colSpan="7" className="text-center py-20">
                                         <div style={{ color: 'var(--text-secondary)', opacity: 0.6 }}>
                                             <div style={{ marginBottom: '16px' }}>
                                                 {activeTab === 'enquiries' ? <FileText size={48} style={{ margin: '0 auto' }} /> : <ShieldCheck size={48} style={{ margin: '0 auto' }} />}
                                             </div>
                                             <p style={{ fontSize: '1rem', fontWeight: 500 }}>No record found matching criteria.</p>
                                         </div>
-                                    </td>
-                                </tr>
+                                    </td></tr>
                             ) : (
-                                filteredData.map((item) => {
+                                sortedData.map((item) => {
                                     const st = getStatusStyle(item?.status) || { bg: '#f1f5f9', color: '#64748b', icon: null };
                                     const partner = activeTab === 'enquiries' ? item?.customer : item?.enquiries?.customer;
                                     const contact = activeTab === 'enquiries' ? item?.contact : null;

@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 
-export const getCatalogItems = async (page = 1, limit = 50, filters = {}, searchQuery = '') => {
+export const getCatalogItems = async (page = 1, limit = 50, filters = {}, searchQuery = '', sortBy = 'name', sortDirection = 'desc') => {
     try {
         const from = (page - 1) * limit;
         const to = from + limit - 1;
@@ -16,7 +16,7 @@ export const getCatalogItems = async (page = 1, limit = 50, filters = {}, search
         }
 
         const { data, error, count } = await query
-            .order('name', { ascending: true })
+            .order(sortBy, { ascending: sortDirection === 'asc' })
             .range(from, to);
 
         if (error) throw error;

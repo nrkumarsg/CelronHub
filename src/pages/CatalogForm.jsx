@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
-    X, Plus, Search, Filter, ArrowLeft, Save, Trash, FileText, 
+    X, Plus, Search, Filter, ArrowLeft, Save, Trash2, FileText, 
     MoreHorizontal, ChevronDown, Package, Database, Edit, Ship, 
-    Link, ArrowRight, Cloud, ImageIcon, Pencil
+    Link, ArrowRight, Cloud, ImageIcon, Pencil, Globe, QrCode, 
+    Camera, ExternalLink, Loader, UploadCloud, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { Modal, QuickPartnerContactDualAdd } from '../components/workflow/QuickAddForms';
 import { supabase } from '../lib/supabase';
@@ -26,8 +27,8 @@ import {
 import { getDocumentSettings } from '../lib/store';
 
 import { uploadFile } from '../lib/store';
-import { uploadFileToDrive, getOrCreateFolder, makeFilePublic, getDirectImageUrl, checkFileExists } from '../lib/driveService';
-import { connectGoogleAPI, validateToken } from '../lib/googleAuthService';
+import { uploadFileToDrive, getOrCreateFolder, makeFilePublic, getDirectImageUrl } from '../lib/driveService';
+import { validateToken } from '../lib/googleAuthService';
 import GDriveConnectionModal from '../components/common/GDriveConnectionModal';
 
 const CatalogForm = () => {
@@ -41,15 +42,13 @@ const CatalogForm = () => {
     const [loading, setLoading] = useState(!isNewItem);
     const [saving, setSaving] = useState(false);
     const [activeTab, setActiveTab] = useState('details'); // 'details', 'purchaseHistory', or 'photos'
-    const [uploading, setUploading] = useState(false);
-    const [uploadProgress, setUploadProgress] = useState(0);
+    const [uploadingPhotos, setUploadingPhotos] = useState(false);
     const [editModal, setEditModal] = useState({ isOpen: false, type: null, initialData: null });
     const [showScanner, setShowScanner] = useState(false);
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
     const [driveFolderId, setDriveFolderId] = useState(null);
     const [photosFolderId, setPhotosFolderId] = useState(null);
     const [datasheetsFolderId, setDatasheetsFolderId] = useState(null);
-    const [photoExistence, setPhotoExistence] = useState({}); // { [index]: boolean }
     const photoInputRef = useRef(null);
     const datasheetInputRef = useRef(null);
     const [uploadingDatasheet, setUploadingDatasheet] = useState(false);
@@ -287,7 +286,7 @@ const CatalogForm = () => {
 
     const handleEditMasterSuccess = () => {
         setEditModal({ isOpen: false, type: null, initialData: null });
-        fetchData(); // This should reload partners
+        fetchPartners(); // This should reload partners
     };
 
     const handlePurchaseDetailsChange = (content) => {
@@ -373,7 +372,6 @@ const CatalogForm = () => {
         if (files.length === 0) return;
 
         const token = sessionStorage.getItem('google_contacts_token');
-        const expires = sessionStorage.getItem('google_contacts_expires');
 
         if (!token) {
             setIsAuthModalOpen(true);

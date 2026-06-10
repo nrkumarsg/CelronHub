@@ -1,17 +1,86 @@
 import { supabase } from './supabase';
 
 export const getPartners = async (profile = null) => {
-  let query = supabase.from('partners').select('*, contacts(*)').order('name', { ascending: true });
+  let allData = [];
+  let page = 0;
+  const pageSize = 1000;
+  let keepFetching = true;
 
-  // ONLY filter if user is NOT a superadmin. Superadmins should see global totals.
-  if (profile?.company_id && profile.role !== 'superadmin') {
-    query = query.eq('company_id', profile.company_id);
+  while (keepFetching) {
+    let query = supabase
+      .from('partners')
+      .select('*, contacts(*)')
+      .range(page * pageSize, (page + 1) * pageSize - 1)
+      .order('name', { ascending: true });
+
+    // Exclude pending drafts from active lists
+    query = query.or('status.neq.pending_approval,status.is.null');
+
+    // ONLY filter if user is NOT a superadmin. Superadmins should see global totals.
+    if (profile?.company_id && profile.role !== 'superadmin') {
+      query = query.eq('company_id', profile.company_id);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('Error fetching partners:', error);
+      break;
+    }
+
+    if (data && data.length > 0) {
+      allData = [...allData, ...data];
+      if (data.length < pageSize) {
+        keepFetching = false;
+      } else {
+        page++;
+      }
+    } else {
+      keepFetching = false;
+    }
   }
 
-  const { data, error } = await query;
-  if (error) console.error('Error fetching partners:', error);
-  return data || [];
+  return allData;
 };
+
+export const getPendingPartners = async (profile = null) => {
+  let allData = [];
+  let page = 0;
+  const pageSize = 1000;
+  let keepFetching = true;
+
+  while (keepFetching) {
+    let query = supabase
+      .from('partners')
+      .select('*, contacts(*)')
+      .range(page * pageSize, (page + 1) * pageSize - 1)
+      .eq('status', 'pending_approval')
+      .order('name', { ascending: true });
+
+    if (profile?.company_id && profile.role !== 'superadmin') {
+      query = query.eq('company_id', profile.company_id);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('Error fetching pending partners:', error);
+      break;
+    }
+
+    if (data && data.length > 0) {
+      allData = [...allData, ...data];
+      if (data.length < pageSize) {
+        keepFetching = false;
+      } else {
+        page++;
+      }
+    } else {
+      keepFetching = false;
+    }
+  }
+
+  return allData;
+};
+
 
 export const savePartner = async (partnerData) => {
   const isExisting = !!partnerData.id;
@@ -53,16 +122,41 @@ export const deletePartner = async (id) => {
 };
 
 export const getContacts = async (profile = null) => {
-  let query = supabase.from('contacts').select('*');
+  let allData = [];
+  let page = 0;
+  const pageSize = 1000;
+  let keepFetching = true;
 
-  // Isolation for non-superadmins
-  if (profile?.company_id && profile.role !== 'superadmin') {
-    query = query.eq('company_id', profile.company_id);
+  while (keepFetching) {
+    let query = supabase
+      .from('contacts')
+      .select('*')
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+
+    // Isolation for non-superadmins
+    if (profile?.company_id && profile.role !== 'superadmin') {
+      query = query.eq('company_id', profile.company_id);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('Error fetching contacts:', error);
+      break;
+    }
+
+    if (data && data.length > 0) {
+      allData = [...allData, ...data];
+      if (data.length < pageSize) {
+        keepFetching = false;
+      } else {
+        page++;
+      }
+    } else {
+      keepFetching = false;
+    }
   }
 
-  const { data, error } = await query;
-  if (error) console.error('Error fetching contacts:', error);
-  return data || [];
+  return allData;
 };
 
 export const getContactsByPartner = async (partnerId) => {

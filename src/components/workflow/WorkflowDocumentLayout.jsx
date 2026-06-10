@@ -144,9 +144,9 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
 
     return (
         <div className="print-paper" style={{
-            background: '#fff', width: '100%', maxWidth: '210mm', minHeight: '270mm',
+            background: '#fff', width: '100%', maxWidth: '210mm', minHeight: '255mm',
             margin: '0 auto', position: 'relative', boxSizing: 'border-box',
-            padding: '30px', display: 'flex', flexDirection: 'column',
+            padding: '24px 30px', display: 'flex', flexDirection: 'column',
             fontFamily: 'Inter, system-ui, sans-serif'
         }}>
             {/* Company Header */}

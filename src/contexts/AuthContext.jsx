@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { getProfile } from '../lib/userService';
 import { getMyCompanies, getAllCompanies } from '../lib/companyService';
 import { getDocumentSettings } from '../lib/store';
+import { logUserActivity } from '../lib/auditService';
 
 const AuthContext = createContext({});
 
@@ -18,14 +19,18 @@ export const AuthProvider = ({ children }) => {
     const initializationStartedRef = React.useRef(false);
     const currentUserIdRef = React.useRef(null);
 
-    const defaultDemoProfile = (user) => ({
-        id: user.id || 'demo-user',
-        email: user?.email || 'demo@celron.ae',
-        role: 'superadmin',
-        status: 'active',
-        company_id: '8431cd0b-7449-44a5-8213-2a8680d09ebe',
-        accessible_modules: ['partners', 'contacts', 'vessels', 'work-locations', 'catalog', 'reports', 'settings', 'workflows', 'universal-finder', 'storage-directory']
-    });
+    const defaultDemoProfile = (user) => {
+        const email = user?.email || 'demo@celron.ae';
+        const role = email.toLowerCase() === 'nrkumarsg@gmail.com' ? 'superadmin' : 'user';
+        return {
+            id: user.id || 'demo-user',
+            email,
+            role,
+            status: 'active',
+            company_id: '8431cd0b-7449-44a5-8213-2a8680d09ebe',
+            accessible_modules: ['partners', 'contacts', 'vessels', 'work-locations', 'catalog', 'reports', 'settings', 'workflows', 'universal-finder', 'storage-directory']
+        };
+    };
 
     const initializeAuth = async () => {
         if (initializationStartedRef.current) return;
@@ -193,6 +198,7 @@ export const AuthProvider = ({ children }) => {
                 if (sessionUserId) {
                     setUser(session.user);
                     await refreshProfileData(session.user);
+                    logUserActivity('LOGIN', null, null, { email: session.user.email });
                 } else {
                     setUser(null);
                     setProfile(null);
@@ -201,6 +207,7 @@ export const AuthProvider = ({ children }) => {
                     localStorage.removeItem('auth_cached_profile');
                     localStorage.removeItem('auth_cached_companies');
                     setLoading(false);
+                    logUserActivity('LOGOUT', null, null, { message: 'User logged out' });
                 }
             } else if (!sessionUserId && event === 'SIGNED_OUT') {
                 // Force cleanup on sign out even if ID was already null
@@ -211,6 +218,7 @@ export const AuthProvider = ({ children }) => {
                 localStorage.removeItem('auth_cached_profile');
                 localStorage.removeItem('auth_cached_companies');
                 setLoading(false);
+                logUserActivity('LOGOUT', null, null, { message: 'Session signed out' });
             } else if (!session) {
                 setLoading(false);
             }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Bell, Building2, User, ChevronDown, Search, X, Folder, FileText, Briefcase, LayoutDashboard, StickyNote, MessageSquare, Loader2, Package, Plus } from 'lucide-react';
+import { LogOut, Bell, Building2, User, ChevronDown, Search, X, Folder, FileText, Briefcase, LayoutDashboard, StickyNote, MessageSquare, Loader2, Package, Plus, History } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getTodos } from '../lib/todoService';
 import { searchInternal, searchDrive } from '../lib/searchService';
@@ -408,6 +408,42 @@ export default function Header() {
             </div>
 
             <div className="header-right">
+                {profile?.role === 'superadmin' && (
+                    <button
+                        onClick={() => navigate('/admin/logs')}
+                        style={{
+                            marginRight: '12px',
+                            background: 'rgba(168, 85, 247, 0.1)',
+                            border: '1px solid rgba(168, 85, 247, 0.25)',
+                            borderRadius: '10px',
+                            padding: '8px 12px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            color: '#a855f7',
+                            fontWeight: 700,
+                            fontSize: '0.75rem',
+                            transition: 'all 0.2s',
+                            boxShadow: '0 0 12px rgba(168, 85, 247, 0.05)'
+                        }}
+                        onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(168, 85, 247, 0.2)';
+                            e.currentTarget.style.boxShadow = '0 0 16px rgba(168, 85, 247, 0.2)';
+                            e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.4)';
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'rgba(168, 85, 247, 0.1)';
+                            e.currentTarget.style.boxShadow = '0 0 12px rgba(168, 85, 247, 0.05)';
+                            e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.25)';
+                        }}
+                        title="View System Audit Logs"
+                    >
+                        <History size={14} className="animate-pulse" style={{ animationDuration: '3s' }} />
+                        <span>AUDIT LOGS</span>
+                    </button>
+                )}
+
                 {todoCount > 0 && (
                     <div className="header-icon-badge" title={`${todoCount} tasks due today`}>
                         <Bell size={20} color="var(--accent)" />

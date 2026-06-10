@@ -120,7 +120,7 @@ export default function WorkflowPrintPreview() {
             margin: [0, 0, 0, 0],
             filename: finalFilename,
             image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, logging: false },
+            html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, logging: false },
             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
         };
         
@@ -183,7 +183,7 @@ export default function WorkflowPrintPreview() {
                                 margin: 0,
                                 filename: `${safeFilename}.pdf`,
                                 image: { type: 'jpeg', quality: 0.98 },
-                                html2canvas: { scale: 2, useCORS: true, logging: false },
+                                html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, logging: false },
                                 jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
                             };
                             

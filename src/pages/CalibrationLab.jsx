@@ -187,8 +187,12 @@ export default function CalibrationLab() {
                 
                 const year = new Date().getFullYear().toString();
                 const jobNo = doc.assigned_job_no || doc.document_no; // Fallback to doc no if not linked to job
+                const customerName = doc.partners?.name || doc.customer_name || 'Walk-in';
+                const vesselName = doc.vessels?.vessel_name || doc.vessel_name || '';
+                const folderTitle = vesselName ? `${jobNo} - ${customerName} - ${vesselName}` : `${jobNo} - ${customerName}`;
+                const cleanTitle = folderTitle.replace(/[/\\?%*:|"<>]/g, '-');
                 
-                const newFolderId = await provisionFullProjectStructure(token, rootId, year, jobNo);
+                const newFolderId = await provisionFullProjectStructure(token, rootId, year, cleanTitle);
                 
                 // Update doc with folder ID
                 await supabase.from('workflow_documents').update({ drive_folder_id: newFolderId }).eq('id', doc.id);
@@ -664,7 +668,7 @@ export default function CalibrationLab() {
                     margin: 10,
                     filename: `Calibration_Cert_${jobNo}.pdf`,
                     image: { type: 'jpeg', quality: 0.98 },
-                    html2canvas: { scale: 2 },
+                    html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0 },
                     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
                 };
 

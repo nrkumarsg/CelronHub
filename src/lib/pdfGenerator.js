@@ -234,7 +234,7 @@ export const generateDocumentPDF = async (job, documentType) => {
         margin: 0,
         filename: `${documentType.replace(/\s+/g, '_')}_${job.job_no}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, letterRendering: true },
         jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
     };
 

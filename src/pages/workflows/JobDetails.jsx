@@ -76,6 +76,14 @@ export default function JobDetails() {
         }
     }, [fetchData, id, profile]);
 
+    const handleGoBack = () => {
+        if (window.history.state && window.history.state.idx > 0) {
+            navigate(-1);
+        } else {
+            navigate('/workflows/jobs-dashboard');
+        }
+    };
+
     const handleUpdateDescription = async () => {
         setIsUpdatingDesc(true);
         try {
@@ -191,7 +199,7 @@ export default function JobDetails() {
             {/* Header Area */}
             <div style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
-                    <button onClick={() => navigate(-1)} className="btn btn-icon btn-outline" style={{ borderRadius: '50%' }}>
+                    <button onClick={handleGoBack} className="btn btn-icon btn-outline" style={{ borderRadius: '50%' }}>
                         <ArrowLeft size={20} />
                     </button>
                     <div>

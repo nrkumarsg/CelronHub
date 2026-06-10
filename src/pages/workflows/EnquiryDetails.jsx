@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { updateEnquiry, shortlistSupplierQuote } from '../../lib/workflowService';
 import { convertEnquiryToV2Document } from '../../lib/workflowV2Service';
+import toast from 'react-hot-toast';
 
 import { getPartners, getDocumentSettings, saveVessel, saveWorkLocation } from '../../lib/store';
 import { getCatalogItems, createCatalogItem, updateCatalogItem } from '../../lib/catalogService';
@@ -20,8 +21,7 @@ import CommunicationWall from '../../components/common/CommunicationWall';
 import { ITEM_UNITS } from '../../utils/units';
 import { WhatsAppShareModal } from '../../components/workflow/WhatsAppShareModal';
 import { Modal, QuickPartnerContactDualAdd } from '../../components/workflow/QuickAddForms';
-import { performOCR } from '../../lib/googleAuthService';
-import { extractLineItemsFromImage } from '../../lib/geminiService';
+import SmartEnquiryParserModal from '../../components/workflow/SmartEnquiryParserModal';
 
 export default function EnquiryDetails() {
     const { id } = useParams();
@@ -112,7 +112,7 @@ export default function EnquiryDetails() {
                 updates.due_date = new Date(baseDate.getTime() + 86400000).toISOString().split('T')[0];
             }
             if (!enquiry.customer_ref && enquiry.enquiry_no) {
-                updates.customer_ref = `Ref: ${enquiry.enquiry_no}`;
+                updates.customer_ref = enquiry.enquiry_no === 'Draft' ? 'Ref: Enquiry' : `Ref: ${enquiry.enquiry_no}`;
             }
             
             if (Object.keys(updates).length > 0) {
@@ -160,7 +160,7 @@ export default function EnquiryDetails() {
             ? `Dear ${recipientOverrides[selectedSuppliers[0].id]?.attn_name || 'Supplier'},\n\n`
             : `Dear Supplier,\n\n`;
 
-        const body = encodeURIComponent(`${greeting}We are pleased to invite you to quote for the following items:\n\n${itemRows}\n\n${enquiry.gdrive_file_link ? `You can view photos and additional attachments here: ${enquiry.gdrive_file_link}\n\n` : ''}Please revert with your best price and lead time at your earliest convenience.\n\nThank you,\nCEL-RON ENTERPRISES PTE LTD`);
+        const body = encodeURIComponent(`${greeting}We are pleased to invite you to quote for the following items:\n\n${itemRows}\n\n${enquiry.gdrive_file_link ? `You can view photos and additional attachments here: ${enquiry.gdrive_file_link}\n\n` : ''}Please revert with your best price and lead time at your earliest convenience.\n\nThank you,\nN.R.KUMAR HP:+65 97685891\nCELRON ENTERPRISES PTE LTD\n10, Jln, Besar,"Sim Lim Tower", #03-05, Singapore 208787\nEmail: sales@celron.net | Tel: +6597685891/81962270 Web : https://www.celron.net    / https://celron.shop`);
 
         setEmailPreviewData({ emails, subject, body });
     };
@@ -281,6 +281,16 @@ export default function EnquiryDetails() {
             const accessToken = localStorage.getItem('google_access_token');
             const isValid = await validateToken(accessToken);
 
+            if (attachment && (!accessToken || !isValid)) {
+                const { connectGoogleAPI } = await import('../../lib/googleAuthService');
+                if (window.confirm('You have selected an attachment but your Google connection has expired or is not connected. Connect now to upload?')) {
+                    sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
+                    connectGoogleAPI();
+                    setIsSavingMaster(false);
+                    return;
+                }
+            }
+
             // 1. Provision Folder Structure if needed
             if (accessToken && isValid && !projectFolderId) {
                 try {
@@ -291,17 +301,22 @@ export default function EnquiryDetails() {
                         const year = `YEAR${new Date().getFullYear()}`;
                         const partner = allPartners.find(c => c.id === enquiry.customer_id)?.name || 'Unknown Partner';
                         const enq_no = enquiry.enquiry_no === 'Draft' ? 'NEW' : enquiry.enquiry_no;
-                        projectFolderId = await provisionFullProjectStructure(accessToken, topRootId, year, `${enq_no} - ${partner}`);
+                        const vesselName = vessels.find(v => v.id === enquiry.vessel_id)?.vessel_name || '';
+                        const locationName = locations.find(l => l.id === enquiry.work_location_id)?.location_name || '';
+                        const suffix = vesselName || locationName || '';
+                        const folderTitle = suffix ? `${enq_no} - ${partner} - ${suffix}` : `${enq_no} - ${partner}`;
+                        const cleanTitle = folderTitle.replace(/[/\\?%*:|"<>]/g, '-');
+                        
+                        projectFolderId = await provisionFullProjectStructure(accessToken, topRootId, year, cleanTitle);
                     }
                 } catch (e) { console.error("Folder creation failed", e); }
             }
 
-            // 2. Handle Attachment Upload
+            // 2. Handle Attachment Upload (Option B - Upload directly to root folder)
             if (attachment && accessToken && isValid && projectFolderId) {
-                const { createFolderStructure, uploadFileToDrive } = await import('../../lib/driveService');
-                const subFolderId = await createFolderStructure(accessToken, '1. Customer_Request_&_Offer', projectFolderId);
+                const { uploadFileToDrive } = await import('../../lib/driveService');
                 const uploadResult = await uploadFileToDrive(accessToken, attachment, {
-                    folderId: subFolderId,
+                    folderId: projectFolderId,
                     title: attachment.name,
                     company_id: profile.company_id
                 });
@@ -683,63 +698,75 @@ export default function EnquiryDetails() {
                                 </button>
                             </div>
                             
-                            <div style={{ position: 'relative' }}>
-                                <button 
-                                    onClick={() => setShowCatalogList(!showCatalogList)}
-                                    style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '6px 12px', fontSize: '0.85rem', fontWeight: 600, color: '#1e293b', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
-                                >
-                                    <Database size={14} /> From Catalog <ChevronDown size={14} />
-                                </button>
-                                
-                                 {showCatalogList && (
-                                    <div style={{ position: 'absolute', bottom: '100%', right: 0, zIndex: 10, background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 -10px 15px -3px rgba(0,0,0,0.1)', marginBottom: '8px', minWidth: '400px', maxHeight: '450px', display: 'flex', flexDirection: 'column' }}>
-                                        <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', display: 'flex', gap: '8px' }}>
-                                            <div style={{ position: 'relative', flex: 1 }}>
-                                                <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-                                                <input 
-                                                    autoFocus
-                                                    type="text"
-                                                    placeholder="Search catalog..."
-                                                    style={{ width: '100%', padding: '8px 8px 8px 32px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.85rem', outline: 'none' }}
-                                                    value={searchQuery}
-                                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                                />
-                                            </div>
-                                            <button 
-                                                onClick={() => { setEditingCatalogItem({ name: searchQuery, specification: '', type: 'Supply' }); }}
-                                                className="btn btn-sm btn-primary"
-                                                style={{ padding: '0 12px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                                            >
-                                                <Plus size={16} /> New
-                                            </button>
-                                        </div>
-                                        <div style={{ overflowY: 'auto', flex: 1 }}>
-                                            {catalog.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase())).map(c => (
-                                                <div 
-                                                    key={c.id}
-                                                    style={{ width: '100%', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', transition: 'background 0.2s' }}
-                                                    className="catalog-item-row"
-                                                    onMouseOver={e => e.currentTarget.style.background = '#f8fafc'}
-                                                    onMouseOut={e => e.currentTarget.style.background = 'none'}
-                                                >
-                                                    <button 
-                                                        onClick={() => { handleAddItem({ ...c, unit_price: 0 }); setShowCatalogList(false); }}
-                                                        style={{ flex: 1, textAlign: 'left', border: 'none', background: 'none', cursor: 'pointer', padding: 0 }}
-                                                    >
-                                                        <div style={{ fontWeight: 600, color: '#1e293b' }}>{c.name}</div>
-                                                        <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{c.specification}</div>
-                                                    </button>
-                                                    <button 
-                                                        onClick={(e) => { e.stopPropagation(); setEditingCatalogItem(c); }}
-                                                        style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
-                                                    >
-                                                        <Edit size={14} />
-                                                    </button>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                <div style={{ position: 'relative' }}>
+                                    <button 
+                                        onClick={() => setShowCatalogList(!showCatalogList)}
+                                        style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '6px 12px', fontSize: '0.85rem', fontWeight: 600, color: '#1e293b', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                                    >
+                                        <Database size={14} /> From Catalog <ChevronDown size={14} />
+                                    </button>
+                                    
+                                     {showCatalogList && (
+                                        <div style={{ position: 'absolute', bottom: '100%', right: 0, zIndex: 10, background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 -10px 15px -3px rgba(0,0,0,0.1)', marginBottom: '8px', minWidth: '400px', maxHeight: '450px', display: 'flex', flexDirection: 'column' }}>
+                                            <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', display: 'flex', gap: '8px' }}>
+                                                <div style={{ position: 'relative', flex: 1 }}>
+                                                    <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                                                    <input 
+                                                        autoFocus
+                                                        type="text"
+                                                        placeholder="Search catalog..."
+                                                        style={{ width: '100%', padding: '8px 8px 8px 32px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.85rem', outline: 'none' }}
+                                                        value={searchQuery}
+                                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                                    />
                                                 </div>
-                                            ))}
+                                                <button 
+                                                    onClick={() => { setEditingCatalogItem({ name: searchQuery, specification: '', type: 'Supply' }); }}
+                                                    className="btn btn-sm btn-primary"
+                                                    style={{ padding: '0 12px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                >
+                                                    <Plus size={16} /> New
+                                                </button>
+                                            </div>
+                                            <div style={{ overflowY: 'auto', flex: 1 }}>
+                                                {catalog.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase())).map(c => (
+                                                    <div 
+                                                        key={c.id}
+                                                        style={{ width: '100%', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', transition: 'background 0.2s' }}
+                                                        className="catalog-item-row"
+                                                        onMouseOver={e => e.currentTarget.style.background = '#f8fafc'}
+                                                        onMouseOut={e => e.currentTarget.style.background = 'none'}
+                                                    >
+                                                        <button 
+                                                            onClick={() => { handleAddItem({ ...c, unit_price: 0 }); setShowCatalogList(false); }}
+                                                            style={{ flex: 1, textAlign: 'left', border: 'none', background: 'none', cursor: 'pointer', padding: 0 }}
+                                                        >
+                                                            <div style={{ fontWeight: 600, color: '#1e293b' }}>{c.name}</div>
+                                                            <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{c.specification}</div>
+                                                        </button>
+                                                        <button 
+                                                            onClick={(e) => { e.stopPropagation(); setEditingCatalogItem(c); }}
+                                                            style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                                                        >
+                                                            <Edit size={14} />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
+                                    )}
+                                </div>
+
+                                <button 
+                                    onClick={handleSaveMaster}
+                                    disabled={isSavingMaster}
+                                    className="btn btn-sm btn-primary" 
+                                    style={{ background: '#6366f1', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                >
+                                    {isSavingMaster ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} 
+                                    {id === 'new' ? 'Create Enquiry' : 'Save Changes'}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -968,7 +995,7 @@ export default function EnquiryDetails() {
                                             margin: 10,
                                             filename: `RFQ_${enquiry.enquiry_no}.pdf`,
                                             image: { type: 'jpeg', quality: 0.98 },
-                                            html2canvas: { scale: 2, useCORS: true },
+                                            html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0 },
                                             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
                                         };
                                         try {
@@ -1313,70 +1340,47 @@ export default function EnquiryDetails() {
                 />
             </Modal>
 
-            {/* OCR Modal */}
-            {showOCRModal && (
-                <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-                    <div style={{ background: '#fff', borderRadius: '24px', width: '100%', maxWidth: '600px', padding: '40px', position: 'relative', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
-                        <button onClick={() => setShowOCRModal(false)} style={{ position: 'absolute', right: '24px', top: '24px', border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8' }}><X size={24} /></button>
-                        
-                        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-                            <div style={{ width: '64px', height: '64px', background: '#f5f3ff', borderRadius: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#8b5cf6' }}>
-                                <Sparkles size={32} />
-                            </div>
-                            <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800, color: '#1e293b' }}>Image to Line Items</h2>
-                            <p style={{ color: '#64748b', marginTop: '8px' }}>Upload an image of an enquiry or quote to extract line items automatically.</p>
-                        </div>
+            {/* Premium AI Enquiry Document Parser Modal */}
+            <SmartEnquiryParserModal 
+                isOpen={showOCRModal}
+                onClose={() => setShowOCRModal(false)}
+                partners={allPartners}
+                onApply={({ header, items: scannedItems, file: uploadedFile }) => {
+                    // 1. Update Enquiry Header fields
+                    const headerUpdates = {};
+                    if (header.customer_id) headerUpdates.customer_id = header.customer_id;
+                    if (header.customer_ref) headerUpdates.customer_ref = header.customer_ref;
+                    if (header.enquiry_date) headerUpdates.enquiry_date = header.enquiry_date;
+                    if (header.due_date) headerUpdates.due_date = header.due_date;
+                    if (header.subject) headerUpdates.description = header.subject;
+                    
+                    if (Object.keys(headerUpdates).length > 0) {
+                        handleUpdateHeader(headerUpdates);
+                    }
 
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                            <div style={{ border: '2px dashed #e2e8f0', borderRadius: '16px', padding: '40px', textAlign: 'center', background: '#f8fafc' }}>
-                                <input 
-                                    type="file" 
-                                    accept="image/*" 
-                                    onChange={async (e) => {
-                                        const file = e.target.files[0];
-                                        if (!file) return;
-                                        setIsOCRLoading(true);
-                                        try {
-                                            const text = await performOCR(file);
-                                            if (text) {
-                                                const items = await extractLineItemsFromImage(text);
-                                                if (items && items.length > 0) {
-                                                    items.forEach(item => handleAddItem(item));
-                                                    setShowOCRModal(false);
-                                                } else {
-                                                    alert("No items found in the image. Please try a clearer photo.");
-                                                }
-                                            }
-                                        } catch (err) {
-                                            console.error(err);
-                                            alert("Failed to process image.");
-                                        } finally {
-                                            setIsOCRLoading(false);
-                                        }
-                                    }} 
-                                    style={{ display: 'none' }} 
-                                    id="ocr-upload"
-                                />
-                                <label htmlFor="ocr-upload" style={{ cursor: isOCRLoading ? 'not-allowed' : 'pointer' }}>
-                                    {isOCRLoading ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                                            <Loader2 size={40} className="animate-spin" color="#8b5cf6" />
-                                            <span style={{ fontWeight: 600, color: '#8b5cf6' }}>AI is extracting items...</span>
-                                        </div>
-                                    ) : (
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                                            <Upload size={40} color="#94a3b8" />
-                                            <span style={{ fontWeight: 700, color: '#1e293b' }}>Click to Upload Image</span>
-                                            <span style={{ fontSize: '0.85rem', color: '#64748b' }}>Supports JPEG, PNG</span>
-                                        </div>
-                                    )}
-                                </label>
-                            </div>
-                            <button onClick={() => setShowOCRModal(false)} className="btn btn-outline" style={{ width: '100%', padding: '12px', borderRadius: '12px' }}>Cancel</button>
-                        </div>
-                    </div>
-                </div>
-            )}
+                    // 2. Append parsed products to line items list (Zero data loss)
+                    const newItems = [...selectedItems];
+                    scannedItems.forEach(item => {
+                        if (!newItems.some(i => i.name.toLowerCase() === item.name.toLowerCase())) {
+                            newItems.push(item);
+                        }
+                    });
+                    setSelectedItems(newItems);
+                    if (id !== 'new') {
+                        import('../../lib/workflowService').then(({ updateEnquiry }) => {
+                            updateEnquiry(id, { catalog_items: newItems });
+                        });
+                    }
+                    setEnquiry(prev => ({ ...prev, catalog_items: newItems }));
+
+                    // 3. Queue file as Enquiry attachment for Google Drive backup
+                    if (uploadedFile) {
+                        setAttachment(uploadedFile);
+                    }
+
+                    toast.success(`Successfully loaded ${scannedItems.length} items and header fields! Click "Save Changes" to archive enquiry document in Google Drive.`);
+                }}
+            />
             </div>
         </div>
     );

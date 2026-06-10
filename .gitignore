@@ -32,3 +32,4 @@ dist-ssr
 scratch/
 *.txt
 *.timestamp*
+.env*

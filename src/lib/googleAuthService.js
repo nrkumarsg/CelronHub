@@ -3,6 +3,16 @@
  * Handles OAuth 2.0 flow and common API fetching (Gmail, Contacts)
  */
 
+import * as pdfjs from 'pdfjs-dist';
+
+// Set up PDF.js worker
+if (typeof window !== 'undefined' && !pdfjs.GlobalWorkerOptions.workerSrc) {
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+        'pdfjs-dist/build/pdf.worker.mjs',
+        import.meta.url
+    ).href;
+}
+
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 
 // Combined scopes for Gmail, Contacts, and Drive
@@ -269,7 +279,40 @@ export const fetchGoogleContacts = async (accessToken) => {
  * @returns {Promise<string>} Extracted text
  */
 export const performOCR = async (file) => {
-    const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
+    // If the file is a PDF, use pdfjs to extract text directly from the PDF client-side!
+    if (file && (
+        file.type === 'application/pdf' || 
+        file.name?.toLowerCase().endsWith('.pdf') ||
+        (file instanceof Blob && file.type === 'application/pdf')
+    )) {
+        try {
+            console.log('[performOCR] Detected PDF file. Extracting text client-side...');
+            const arrayBuffer = await file.arrayBuffer();
+            const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+            const pdf = await loadingTask.promise;
+            let fullText = '';
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map(item => item.str).join(' ');
+                fullText += pageText + '\n';
+            }
+            if (fullText.trim()) {
+                console.log('[performOCR] Successfully extracted text natively from PDF:', fullText.substring(0, 100) + '...');
+                return fullText;
+            } else {
+                console.warn('[performOCR] Native PDF text extraction returned no text. Falling back to Google Vision image OCR if possible.');
+            }
+        } catch (pdfErr) {
+            console.error('[performOCR] Native PDF text extraction failed:', pdfErr);
+        }
+    }
+
+    const apiKey = (
+        (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_API_KEY) ||
+        (typeof process !== 'undefined' && process.env?.VITE_GOOGLE_API_KEY) ||
+        'AIzaSyA5YW4mWUo__7hwGjvLor-DDsh-spg2r5M'
+    );
     if (!apiKey) {
         console.warn('VITE_GOOGLE_API_KEY not found. OCR disabled.');
         return '';
