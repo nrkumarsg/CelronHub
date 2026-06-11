@@ -44,7 +44,10 @@ export const extractCardWithOpenAI = async (base64Image) => {
         "postal_code": "string (Postal Code/Pincode)",
         "email": "string (General company email if found, e.g. info@company.com)",
         "phone": "string (General company/office phone number)",
-        "website": "string (Official website URL, e.g. www.ark.sg)"
+        "website": "string (Official website URL, e.g. www.ark.sg)",
+        "brands": "string (Product brands / manufacturers represented, comma-separated if multiple)",
+        "business_scope": "string (Brief description of products, services, or business scope)",
+        "notes": "string (Any other important notes or details on the card)"
       },
       "contact": {
         "name": "string (Full name of the contact representative)",
@@ -122,7 +125,10 @@ export const extractCardWithOpenAI = async (base64Image) => {
             website: parsedData.partner.website || enrichment.website || '',
             phone: parsedData.partner.phone || enrichment.phone || '',
             email: parsedData.partner.email || enrichment.email || '',
-            types: parsedData.partner.types || enrichment.categories || ['Supplier']
+            types: parsedData.partner.types || enrichment.categories || ['Supplier'],
+            brands: parsedData.partner.brands || enrichment.brands || '',
+            business_scope: parsedData.partner.business_scope || enrichment.activity_summary || '',
+            notes: parsedData.partner.notes || ''
           };
           console.log(`[OpenAI Vision] Enrichment successful for ${parsedData.partner.name}. UEN: ${parsedData.partner.uen}`);
         }

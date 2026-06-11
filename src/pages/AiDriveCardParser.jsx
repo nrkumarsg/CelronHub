@@ -11,6 +11,8 @@ import { getPartners, getPendingPartners, savePartner, saveContact, deletePartne
 import { extractCardWithOpenAI } from '../lib/openAiVisionService';
 import { connectGoogleAPI, isTokenValid } from '../lib/googleAuthService';
 import toast from 'react-hot-toast';
+import ReactQuill from 'react-quill-new';
+import 'react-quill-new/dist/quill.snow.css';
 
 // Secure Custom Drive Image Renderer bypassing CORS limits
 const DriveImage = ({ fileId, accessToken, style, className }) => {
@@ -94,7 +96,8 @@ export default function AiDriveCardParser() {
   // Interactive Double-Panel Review State
   const [selectedDraft, setSelectedDraft] = useState(null);
   const [editedPartner, setEditedPartner] = useState({
-    name: '', weblink: '', country: 'Singapore', city: '', address: '', phone1: '', email1: '', uen: '', types: ['Supplier']
+    name: '', weblink: '', country: 'Singapore', city: '', address: '', phone1: '', email1: '', uen: '', types: ['Supplier'],
+    brand: '', brands: '', business_scope: '', notes: ''
   });
   const [editedContact, setEditedContact] = useState({
     name: '', email: '', handphone: '', post: 'Representative', department: 'Operations'
@@ -385,7 +388,11 @@ export default function AiDriveCardParser() {
             info: `GoogleDrive File ID: ${file.id}. Extracted via OpenAI Vision OCR.`,
             company_id: profile?.company_id,
             status: 'pending_approval',
-            types: result.partner.types || ['Supplier']
+            types: result.partner.types || ['Supplier'],
+            brand: result.partner.brands || '',
+            brands: result.partner.brands || '',
+            business_scope: result.partner.business_scope || '',
+            notes: result.partner.notes || ''
           });
 
           // Save Contact Draft linked to Partner Draft
@@ -449,7 +456,11 @@ export default function AiDriveCardParser() {
       uen: draft.uen || '',
       types: draft.types || ['Supplier'],
       info: draft.info || '',
-      company_id: draft.company_id
+      company_id: draft.company_id,
+      brand: draft.brand || '',
+      brands: draft.brands || '',
+      business_scope: draft.business_scope || '',
+      notes: draft.notes || ''
     });
 
     // Extract draft representative (first contact in draft relation)
@@ -1048,6 +1059,56 @@ export default function AiDriveCardParser() {
                         style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
                         value={editedPartner.city}
                         onChange={(e) => setEditedPartner(prev => ({ ...prev, city: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ margin: '24px 0 16px 0', borderTop: '1px solid #f1f5f9', paddingTop: '20px' }}>
+                    <h5 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#475569', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Layers size={14} color="#7c3aed" /> Product &amp; Brands Details
+                    </h5>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px', marginBottom: '16px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Brands Represented</label>
+                        <input 
+                          type="text" 
+                          placeholder="e.g. Fluke, Megger, Raychem"
+                          style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
+                          value={editedPartner.brands || ''}
+                          onChange={(e) => setEditedPartner(prev => ({ ...prev, brands: e.target.value, brand: e.target.value }))}
+                        />
+                      </div>
+                      
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Business Scope / Product Description</label>
+                        <textarea 
+                          rows={2}
+                          placeholder="e.g. Electrical calibration laboratory, supplier of marine test equipment"
+                          style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem', fontFamily: 'sans-serif' }}
+                          value={editedPartner.business_scope || ''}
+                          onChange={(e) => setEditedPartner(prev => ({ ...prev, business_scope: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ margin: '24px 0 16px 0', borderTop: '1px solid #f1f5f9', paddingTop: '20px' }}>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '8px' }}>Partner Notes (Rich Text Builder)</label>
+                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
+                      <ReactQuill
+                        theme="snow"
+                        value={editedPartner.notes || ''}
+                        onChange={(content) => setEditedPartner(prev => ({ ...prev, notes: content }))}
+                        modules={{
+                          toolbar: [
+                            ['bold', 'italic', 'underline', 'strike'],
+                            [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                            ['link'],
+                            ['clean']
+                          ]
+                        }}
+                        style={{ height: '150px', marginBottom: '40px' }}
                       />
                     </div>
                   </div>
