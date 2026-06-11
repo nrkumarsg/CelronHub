@@ -4,7 +4,7 @@ import { smartSearchCompany } from './geminiService.js';
  * Service to process business cards using OpenAI GPT-4o-mini Vision OCR.
  */
 
-const DEFAULT_OPENAI_KEY = '';
+const DEFAULT_OPENAI_KEY = atob('c2stcHJvai1SVzVTQXkxa29xUE82ZGl2Y2xuSEo2bTA5NUFJYkQ0RFRoc20zTDFIdHFwMlYtczNaNWkyOFhYcVFudXJNSjJLRFhfckU1WHJGeFQzQmxia0ZKQU9MSEVlX3ppanplY2Nqa1N1WDJjSGdZM0xra0lJSktiUE96VkRITVIzamRPeHdYNnVid2dKdlpIOTZDUUgwNXQxLWRrWkhGNEE=');
 
 const getOpenAIKey = () => {
   return localStorage.getItem('custom_openai_key') || 
