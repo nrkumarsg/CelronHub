@@ -770,6 +770,25 @@ export default function BillsPortal() {
         })
         .reduce((sum, b) => sum + (b.grand_total || b.amount || 0), 0);
 
+    const quarterlyTotal = bills
+        .filter(b => {
+            if (b.status === 'Pending Approval') return false;
+            const date = new Date(b.invoice_date);
+            const now = new Date();
+            const getQuarter = (d) => Math.floor(d.getMonth() / 3);
+            return getQuarter(date) === getQuarter(now) && date.getFullYear() === now.getFullYear();
+        })
+        .reduce((sum, b) => sum + (b.grand_total || b.amount || 0), 0);
+
+    const yearlyTotal = bills
+        .filter(b => {
+            if (b.status === 'Pending Approval') return false;
+            const date = new Date(b.invoice_date);
+            const now = new Date();
+            return date.getFullYear() === now.getFullYear();
+        })
+        .reduce((sum, b) => sum + (b.grand_total || b.amount || 0), 0);
+
     const grandTotal = bills
         .filter(b => b.status !== 'Pending Approval')
         .reduce((sum, b) => sum + (b.grand_total || b.amount || 0), 0);
@@ -833,16 +852,16 @@ export default function BillsPortal() {
             </header>
 
             {/* Summary Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '40px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '24px', marginBottom: '40px' }}>
                 <div className="glass-panel" style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '24px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div>
                             <p style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Total Unpaid</p>
-                            <h2 style={{ fontSize: '2rem', fontWeight: 800, color: '#ef4444', margin: 0 }}>SGD {unpaidTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
+                            <h2 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#ef4444', margin: 0 }}>SGD {unpaidTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
                             <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px' }}>{bills.filter(b => b.status !== 'Paid' && b.status !== 'Pending Approval').length} pending bills</p>
                         </div>
                         <div style={{ background: '#fef2f2', padding: '12px', borderRadius: '14px' }}>
-                            <Clock size={28} color="#ef4444" />
+                            <Clock size={24} color="#ef4444" />
                         </div>
                     </div>
                 </div>
@@ -850,12 +869,38 @@ export default function BillsPortal() {
                 <div className="glass-panel" style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '24px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div>
-                            <p style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Total Expenses</p>
-                            <h2 style={{ fontSize: '2rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>SGD {grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
-                            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px' }}>SGD {monthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} this month (Across all projects)</p>
+                            <p style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Expenses (Current Month)</p>
+                            <h2 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>SGD {monthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
+                            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px' }}>Across all projects</p>
                         </div>
                         <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '14px' }}>
-                            <Receipt size={28} color="#6366f1" />
+                            <Receipt size={24} color="#6366f1" />
+                        </div>
+                    </div>
+                </div>
+
+                <div className="glass-panel" style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                            <p style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Expenses (Current Quarter)</p>
+                            <h2 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>SGD {quarterlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
+                            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px' }}>Active quarter expenses</p>
+                        </div>
+                        <div style={{ background: '#f0fdf4', padding: '12px', borderRadius: '14px' }}>
+                            <Calendar size={24} color="#16a34a" />
+                        </div>
+                    </div>
+                </div>
+
+                <div className="glass-panel" style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                            <p style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Expenses (Current Year)</p>
+                            <h2 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>SGD {yearlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
+                            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px' }}>Annual accumulated total</p>
+                        </div>
+                        <div style={{ background: '#eff6ff', padding: '12px', borderRadius: '14px' }}>
+                            <TrendingUp size={24} color="#3b82f6" />
                         </div>
                     </div>
                 </div>

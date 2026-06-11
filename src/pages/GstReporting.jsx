@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { useNavigate } from 'react-router-dom';
 import { 
     Calculator, Calendar, Download, Filter, 
     ArrowUpRight, ArrowDownLeft, Receipt, 
     FileText, Search, ChevronRight, Briefcase,
-    Plus, Upload, ExternalLink, X, FileCheck, Check, Loader2, Info
+    Plus, Upload, ExternalLink, X, FileCheck, Check, Loader2, Info,
+    ArrowLeft
 } from 'lucide-react';
 import { getPartners, uploadFile, getDocumentSettings } from '../lib/store';
 import { Modal, QuickExpenseAdd } from '../components/workflow/QuickAddForms';
@@ -14,6 +16,7 @@ import GstF5Form from '../components/workflow/GstF5Form';
 
 export default function GstReporting() {
     const { profile } = useAuth();
+    const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState('sales'); // 'sales' | 'purchases' | 'filing'
     const [documents, setDocuments] = useState([]);
@@ -168,35 +171,23 @@ export default function GstReporting() {
         return false;
     });
 
-    // Purchases: POs + Expenses
-    const purchaseDocs = [
-        ...(documents || []).filter(d => d && d.document_type === 'Purchase Order').map(d => ({
-            id: d.id,
-            type: 'PO',
-            doc_no: d.document_no,
-            job_no: d.assigned_job_no,
-            date: d.issue_date,
-            partner_name: d.partners?.name || 'Unknown',
-            subtotal: d.subtotal || 0,
-            tax: d.tax_amount || 0,
-            total: d.total_amount || 0,
-            currency: d.currency || 'SGD',
-            link: `/workflows/editor/Purchase Order/${d.id}`
-        })),
-        ...(expenses || []).map(e => ({
+    // Purchases: Only from Account payable module (job_expenses)
+    const purchaseDocs = (expenses || [])
+        .filter(e => e.status !== 'Pending Approval')
+        .map(e => ({
             id: e.id,
             type: 'Bill/Expense',
             doc_no: e.invoice_no || 'Bill',
             job_no: e.job_no || '', 
             date: e.invoice_date,
-            partner_name: e.partner?.name || 'Unknown',
-            subtotal: e.total_before_tax || (e.unit_price * e.quantity) || 0,
+            partner_name: e.partner?.name || e.supplier_name || 'Unknown',
+            subtotal: e.amount || 0,
             tax: e.gst_amount || 0,
             total: e.grand_total || 0,
             currency: 'SGD',
             link: e.job_id ? `/workflows/editor/Job/${e.job_id}` : null
         }))
-    ].filter(d => d && d.date && d.date >= range.start && d.date <= range.end);
+        .filter(d => d && d.date && d.date >= range.start && d.date <= range.end);
 
     const outputGst = salesDocs.reduce((sum, d) => sum + (parseFloat(d.tax_amount) || 0), 0);
     const inputGst = purchaseDocs.reduce((sum, d) => sum + (parseFloat(d.tax) || 0), 0);
@@ -327,12 +318,35 @@ export default function GstReporting() {
 
     return (
         <div className="animate-fade-in">
-            <header className="page-header">
-                <div>
-                    <h1 className="page-title">GST Reporting Dashboard</h1>
-                    <p style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>
-                        Quarterly GST summary for IRAS compliance and company finance.
-                    </p>
+            <header className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <button 
+                        onClick={() => navigate('/accounts/bills')} 
+                        style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center', 
+                            padding: '10px', 
+                            background: '#fff', 
+                            border: '1px solid #e2e8f0', 
+                            borderRadius: '12px', 
+                            color: '#64748b', 
+                            cursor: 'pointer', 
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)', 
+                            transition: 'all 0.2s' 
+                        }}
+                        onMouseOver={e => e.currentTarget.style.background = '#f8fafc'}
+                        onMouseOut={e => e.currentTarget.style.background = '#fff'}
+                        title="Back to Accounts Payable"
+                    >
+                        <ArrowLeft size={18} />
+                    </button>
+                    <div>
+                        <h1 className="page-title" style={{ margin: 0 }}>GST Reporting Dashboard</h1>
+                        <p style={{ color: 'var(--text-secondary)', marginTop: '4px', marginBottom: 0 }}>
+                            Quarterly GST summary for IRAS compliance and company finance.
+                        </p>
+                    </div>
                 </div>
                 <div style={{ display: 'flex', gap: '12px' }}>
                     <button className="btn btn-secondary" onClick={() => setIsImportModalOpen(true)}>
