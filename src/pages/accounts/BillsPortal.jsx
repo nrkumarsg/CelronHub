@@ -552,7 +552,7 @@ export default function BillsPortal() {
 
     const handleOpenReview = (bill) => {
         setSelectedDraft(bill);
-        setEditedBill({
+        const initialBill = {
             id: bill.id,
             supplier_id: bill.supplier_id || '',
             supplier_name: bill.supplier_name || '',
@@ -567,7 +567,8 @@ export default function BillsPortal() {
             bill_url: bill.bill_url || bill.attachment_url || '',
             gdrive_file_id: getDriveFileId(bill),
             attachment_note: bill.attachment_note || ''
-        });
+        };
+        setEditedBill(calculateTotals(initialBill));
     };
 
     const handleCreateSupplier = async () => {
