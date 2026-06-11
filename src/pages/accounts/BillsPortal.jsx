@@ -16,6 +16,7 @@ import {
     Download, 
     ExternalLink, 
     Trash2, 
+    Edit,
     CheckCircle2, 
     Clock, 
     AlertCircle, 
@@ -700,12 +701,15 @@ export default function BillsPortal() {
     };
 
     const handleDeleteDraft = async (id) => {
-        if (!window.confirm('Are you sure you want to delete this parsed draft?')) return;
+        const msg = selectedDraft?.status === 'Pending Approval' 
+            ? 'Are you sure you want to delete this parsed draft?' 
+            : 'Are you sure you want to delete this bill record permanently?';
+        if (!window.confirm(msg)) return;
         try {
-            toast.loading('Deleting draft...', { id: 'delete' });
+            toast.loading(selectedDraft?.status === 'Pending Approval' ? 'Deleting draft...' : 'Deleting bill...', { id: 'delete' });
             const { error } = await deleteJobExpense(id);
             if (error) throw error;
-            toast.success('Draft removed.', { id: 'delete' });
+            toast.success(selectedDraft?.status === 'Pending Approval' ? 'Draft removed.' : 'Bill deleted.', { id: 'delete' });
             setSelectedDraft(null);
             fetchData();
         } catch (err) {
@@ -1138,7 +1142,7 @@ export default function BillsPortal() {
                                         </td>
                                         <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                                                {activeTab === 'pending' && (
+                                                {activeTab === 'pending' ? (
                                                     <button 
                                                         className="btn btn-primary"
                                                         onClick={() => handleOpenReview(bill)}
@@ -1155,6 +1159,15 @@ export default function BillsPortal() {
                                                         }}
                                                     >
                                                         Review
+                                                    </button>
+                                                ) : (
+                                                    <button 
+                                                        className="btn-icon-sm" 
+                                                        onClick={() => handleOpenReview(bill)}
+                                                        title="Edit Bill Details"
+                                                        style={{ color: '#6366f1', borderColor: '#c7d2fe' }}
+                                                    >
+                                                        <Edit size={16} />
                                                     </button>
                                                 )}
                                                 {(bill.bill_url || bill.attachment_url) && (
@@ -1408,8 +1421,14 @@ export default function BillsPortal() {
                                     <Receipt size={20} />
                                 </span>
                                 <div>
-                                    <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>Review Scanned Invoice Details</h3>
-                                    <p style={{ margin: '2px 0 0 0', color: '#64748b', fontSize: '0.85rem' }}>Verify calculations, select supplier and job, then approve to accounts payable directory.</p>
+                                    <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>
+                                        {selectedDraft.status === 'Pending Approval' ? 'Review Scanned Invoice Details' : 'Edit Bill Details'}
+                                    </h3>
+                                    <p style={{ margin: '2px 0 0 0', color: '#64748b', fontSize: '0.85rem' }}>
+                                        {selectedDraft.status === 'Pending Approval' 
+                                            ? 'Verify calculations, select supplier and job, then approve to accounts payable directory.'
+                                            : 'Modify bill details, calculations, supplier, and project linkage.'}
+                                    </p>
                                 </div>
                             </div>
                             <button 
@@ -1600,7 +1619,7 @@ export default function BillsPortal() {
                                                 gap: '6px'
                                             }}
                                         >
-                                            <Check size={16} /> Approve (Unpaid)
+                                            <Check size={16} /> {selectedDraft.status === 'Pending Approval' ? 'Approve (Unpaid)' : 'Save as Unpaid'}
                                         </button>
                                         <button 
                                             disabled={isSavingApproval}
@@ -1620,7 +1639,7 @@ export default function BillsPortal() {
                                                 gap: '6px'
                                             }}
                                         >
-                                            <CheckCircle2 size={16} /> Approve (Paid)
+                                            <CheckCircle2 size={16} /> {selectedDraft.status === 'Pending Approval' ? 'Approve (Paid)' : 'Save as Paid'}
                                         </button>
                                     </div>
                                     
@@ -1638,7 +1657,7 @@ export default function BillsPortal() {
                                                 cursor: 'pointer' 
                                             }}
                                         >
-                                            Dismiss / Delete Draft
+                                            {selectedDraft.status === 'Pending Approval' ? 'Dismiss / Delete Draft' : 'Delete Bill'}
                                         </button>
                                         <button 
                                             onClick={() => setSelectedDraft(null)}
