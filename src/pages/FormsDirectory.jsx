@@ -149,6 +149,30 @@ export default function FormsDirectory() {
                         onChange={handleDirectUpload}
                         accept=".pdf,.doc,.docx,.xls,.xlsx"
                     />
+                    <a
+                        href={`https://drive.google.com/drive/folders/${FORMS_FOLDER_ID}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ 
+                            background: '#fff', 
+                            color: '#0f172a', 
+                            border: '1px solid #e2e8f0', 
+                            padding: '12px 24px', 
+                            borderRadius: '14px', 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: '10px', 
+                            fontWeight: 700, 
+                            cursor: 'pointer', 
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                            transition: 'all 0.2s',
+                            textDecoration: 'none'
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
+                        onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+                    >
+                        <FolderOpen size={18} style={{ color: '#3b82f6' }} /> Open Drive Folder
+                    </a>
                     <button
                         onClick={() => document.getElementById('form-upload-input').click()}
                         disabled={syncing}

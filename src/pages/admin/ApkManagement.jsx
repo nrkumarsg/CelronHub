@@ -16,8 +16,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { getStoredToken, connectGoogleAPI, validateToken } from '../../lib/googleAuthService';
-import { provisionApkStructure, uploadFileToDrive, makeFilePublic, deleteFile, checkFileExists, getFileLink } from '../../lib/driveService';
-import { getDocumentSettings } from '../../lib/store';
+import { provisionApkStructure, uploadFileToDrive, makeFilePublic, deleteFile, checkFileExists, getFileLink, getOrCreateFolder } from '../../lib/driveService';
+import { getDocumentSettings, saveDocumentSettings } from '../../lib/store';
 import UploadOverlay from '../../components/common/UploadOverlay';
 
 export default function ApkManagement() {
@@ -86,7 +86,21 @@ export default function ApkManagement() {
         setError(null);
         try {
             const settings = await getDocumentSettings();
-            const result = await provisionApkStructure(accessToken, `${app.display_name}-Apk`, settings?.gdrive_celron_root_id);
+            let celronRootId = settings?.gdrive_celron_root_id;
+            if (!celronRootId) {
+                let parentId = settings?.google_drive_folder_id || 'root';
+                if (parentId.includes('drive.google.com')) {
+                    const match = parentId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || parentId.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                    if (match) parentId = match[1];
+                    else parentId = 'root';
+                }
+                celronRootId = await getOrCreateFolder(accessToken, 'CELRONHUB', parentId);
+                await saveDocumentSettings({
+                    ...settings,
+                    gdrive_celron_root_id: celronRootId
+                });
+            }
+            const result = await provisionApkStructure(accessToken, `${app.display_name}-Apk`, celronRootId);
             
             const { error: updateError } = await supabase
                 .from('application_apks')

@@ -256,6 +256,9 @@ export const provisionFullProjectStructure = async (accessToken, celronRootId, y
     // 3. Navigate to JOBS
     const jobsRootId = await getOrCreateFolder(accessToken, 'JOBS', yearId);
 
+    // 3b. Also ensure AccountPayable folder exists under yearId
+    await getOrCreateFolder(accessToken, 'AccountPayable', yearId);
+
     // 4. Create/Find the specific Project folder (using prefix-contains query to avoid duplication)
     const jobNoPrefix = projectFolderName.split(' ')[0]; // E.g., 'CEL-2605-6063'
     let projectFolderId;

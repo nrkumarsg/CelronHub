@@ -1,4 +1,4 @@
-import { provisionPartnerStructure, uploadFileToDrive, makeFilePublic } from '../../lib/driveService';
+import { provisionPartnerStructure, uploadFileToDrive, makeFilePublic, getOrCreateFolder, createFolderStructure } from '../../lib/driveService';
 import { supabase } from '../../lib/supabase';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -839,9 +839,29 @@ export default function StatementOfAccount() {
             const pdfBlob = await html2pdf().from(element).set(opt).output('blob');
             
             // Upload to Drive
+            let celronRootId = settings?.gdrive_celron_root_id;
+            if (!celronRootId) {
+                let topRootId = settings?.google_drive_folder_id || 'root';
+                if (topRootId.includes('drive.google.com')) {
+                    const match = topRootId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || topRootId.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                    if (match) topRootId = match[1];
+                    else topRootId = 'root';
+                }
+                celronRootId = await getOrCreateFolder(token, 'CELRONHUB', topRootId);
+                setSettings(prev => ({ ...prev, gdrive_celron_root_id: celronRootId }));
+                const { saveDocumentSettings } = await import('../../lib/store');
+                await saveDocumentSettings({
+                    ...settings,
+                    gdrive_celron_root_id: celronRootId
+                });
+            }
+            const currentYear = new Date().getFullYear().toString();
+            const targetFolderId = await createFolderStructure(token, `SOA/${currentYear}`, celronRootId);
+
             const uploadRes = await uploadFileToDrive(token, pdfBlob, { 
                 title: opt.filename, 
-                mimeType: 'application/pdf' 
+                mimeType: 'application/pdf',
+                folderId: targetFolderId
             });
 
             if (uploadRes?.id) {
@@ -1012,9 +1032,30 @@ export default function StatementOfAccount() {
 
                 // 5. Upload to Google Drive for hosting
                 setDispatchProgress(prev => ({ ...prev, status: `Archiving Statement for ${partnerSummary.name} to Drive...` }));
+                 
+                let celronRootId = settings?.gdrive_celron_root_id;
+                if (!celronRootId) {
+                    let topRootId = settings?.google_drive_folder_id || 'root';
+                    if (topRootId.includes('drive.google.com')) {
+                        const match = topRootId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || topRootId.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                        if (match) topRootId = match[1];
+                        else topRootId = 'root';
+                    }
+                    celronRootId = await getOrCreateFolder(token, 'CELRONHUB', topRootId);
+                    setSettings(prev => ({ ...prev, gdrive_celron_root_id: celronRootId }));
+                    const { saveDocumentSettings } = await import('../../lib/store');
+                    await saveDocumentSettings({
+                        ...settings,
+                        gdrive_celron_root_id: celronRootId
+                    });
+                }
+                const currentYear = new Date().getFullYear().toString();
+                const targetFolderId = await createFolderStructure(token, `SOA/${currentYear}`, celronRootId);
+
                 const uploadRes = await uploadFileToDrive(token, pdfBlob, {
                     title: opt.filename,
-                    mimeType: 'application/pdf'
+                    mimeType: 'application/pdf',
+                    folderId: targetFolderId
                 });
 
                 let link = '';
@@ -1143,11 +1184,27 @@ export default function StatementOfAccount() {
             const file = new File([pdfBlob], opt.filename, { type: 'application/pdf' });
 
             // Create structured path: Financial Archive/Statements/[Customer Name]/[Year]
+            let celronRootId = settings?.gdrive_celron_root_id;
+            if (!celronRootId) {
+                let topRootId = settings?.google_drive_folder_id || 'root';
+                if (topRootId.includes('drive.google.com')) {
+                    const match = topRootId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || topRootId.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                    if (match) topRootId = match[1];
+                    else topRootId = 'root';
+                }
+                celronRootId = await getOrCreateFolder(token, 'CELRONHUB', topRootId);
+                setSettings(prev => ({ ...prev, gdrive_celron_root_id: celronRootId }));
+                const { saveDocumentSettings } = await import('../../lib/store');
+                await saveDocumentSettings({
+                    ...settings,
+                    gdrive_celron_root_id: celronRootId
+                });
+            }
             const year = new Date().getFullYear().toString();
             const archivePath = `Financial Archive/Statements/${statementData.partner?.name}/${year}`;
             
             const { createFolderStructure } = await import('../../lib/driveService');
-            const folderId = await createFolderStructure(token, archivePath);
+            const folderId = await createFolderStructure(token, archivePath, celronRootId);
 
             const uploadRes = await uploadFileToDrive(token, file, { folderId });
 
@@ -1173,9 +1230,26 @@ export default function StatementOfAccount() {
                 return;
             }
 
+            let celronRootId = settings?.gdrive_celron_root_id;
+            if (!celronRootId) {
+                let topRootId = settings?.google_drive_folder_id || 'root';
+                if (topRootId.includes('drive.google.com')) {
+                    const match = topRootId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || topRootId.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                    if (match) topRootId = match[1];
+                    else topRootId = 'root';
+                }
+                celronRootId = await getOrCreateFolder(token, 'CELRONHUB', topRootId);
+                setSettings(prev => ({ ...prev, gdrive_celron_root_id: celronRootId }));
+                const { saveDocumentSettings } = await import('../../lib/store');
+                await saveDocumentSettings({
+                    ...settings,
+                    gdrive_celron_root_id: celronRootId
+                });
+            }
+
             const archivePath = `Financial Archive/Statements/${statementData.partner?.name}`;
             const { createFolderStructure } = await import('../../lib/driveService');
-            const folderId = await createFolderStructure(token, archivePath);
+            const folderId = await createFolderStructure(token, archivePath, celronRootId);
             
             if (folderId) {
                 window.open(`https://drive.google.com/drive/folders/${folderId}`, '_blank');

@@ -239,9 +239,15 @@ export default function AiDriveCardParser() {
       }
       
       addLog(`Discovered ${allFiles.length} total card file(s) in Drive directory.`, 'success');
-      const files = allFiles;
+      
+      // Deduplicate discovered files by ID
+      const uniqueFilesMap = new Map();
+      allFiles.forEach(f => {
+        if (f && f.id) uniqueFilesMap.set(f.id, f);
+      });
+      const uniqueFiles = Array.from(uniqueFilesMap.values());
 
-      if (files.length === 0) {
+      if (uniqueFiles.length === 0) {
         addLog('No business card images found. Sync complete.', 'success');
         setIsSyncing(false);
         return;
@@ -250,18 +256,33 @@ export default function AiDriveCardParser() {
       // 2. Cross-reference with existing drafts and active profiles to avoid duplicates
       addLog('Cross-referencing files against Supabase indexed network...', 'info');
       
-      // Get currently pre-indexed cards in draft state (we map them by website/weblink or general info where we store fileId)
+      // Get currently pre-indexed cards in draft state
       const existingDraftsList = await getPendingPartners(profile);
       const activePartnersList = await getPartners(profile);
 
-      // Find files that haven't been saved yet
-      const unprocessedFiles = files.filter(file => {
-        const alreadyIndexed = existingDraftsList.some(p => p.info?.includes(file.id));
-        const alreadyActive = activePartnersList.some(p => p.info?.includes(file.id));
-        return !alreadyIndexed && !alreadyActive;
+      // Map indexed File IDs to quickly check
+      const indexedFileIds = new Set();
+      existingDraftsList.forEach(p => {
+        if (p.info) {
+          const match = p.info.match(/File ID: ([a-zA-Z0-9_-]+)/);
+          if (match) indexedFileIds.add(match[1]);
+          indexedFileIds.add(p.info);
+        }
+      });
+      activePartnersList.forEach(p => {
+        if (p.info) {
+          const match = p.info.match(/File ID: ([a-zA-Z0-9_-]+)/);
+          if (match) indexedFileIds.add(match[1]);
+          indexedFileIds.add(p.info);
+        }
       });
 
-      addLog(`Queue Analysis: ${files.length - unprocessedFiles.length} file(s) already cached. ${unprocessedFiles.length} new card(s) require processing.`, 'info');
+      // Find files that haven't been saved yet
+      const unprocessedFiles = uniqueFiles.filter(file => {
+        return !indexedFileIds.has(file.id);
+      });
+
+      addLog(`Queue Analysis: ${uniqueFiles.length - unprocessedFiles.length} file(s) already cached. ${unprocessedFiles.length} new card(s) require processing.`, 'info');
 
       if (unprocessedFiles.length === 0) {
         addLog('All cards in the directory are fully synced. Ready for review!', 'success');
@@ -333,6 +354,22 @@ export default function AiDriveCardParser() {
           }
 
           addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Structured data resolved. Company: "${result.partner.name}". Person: "${result.contact.name}".`, 'ai');
+
+          // Safety check: duplicate company name + contact email
+          const isNameEmailDuplicate = existingDraftsList.some(p => 
+              p.name && result.partner.name &&
+              p.name.toLowerCase().trim() === result.partner.name.toLowerCase().trim() &&
+              p.email1 && result.partner.email &&
+              p.email1.toLowerCase().trim() === result.partner.email.toLowerCase().trim()
+          );
+
+          if (isNameEmailDuplicate) {
+              addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Skipping: Duplicate partner by name & email ("${result.partner.name}").`, 'warning');
+              indexedFileIds.add(file.id);
+              await delay(600);
+              continue;
+          }
+
           addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Writing Draft record into Supabase...`, 'db');
 
           // Save Partner Draft
@@ -352,7 +389,7 @@ export default function AiDriveCardParser() {
           });
 
           // Save Contact Draft linked to Partner Draft
-          await saveContact({
+          const draftContact = await saveContact({
             name: result.contact.name || 'Unknown Contact',
             email: result.contact.email || `pending_${Date.now()}@example.com`,
             handphone: result.contact.handphone || '',
@@ -362,6 +399,12 @@ export default function AiDriveCardParser() {
             company_id: profile?.company_id,
             info: `Linked to Draft Partner ID: ${draftPartner.id}`
           });
+
+          // Add to memory list and update UI state in real-time
+          const fullDraftPartner = { ...draftPartner, contacts: [draftContact] };
+          existingDraftsList.push(fullDraftPartner);
+          setPendingDrafts(prev => [fullDraftPartner, ...prev]);
+          indexedFileIds.add(file.id);
 
           addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Saved Draft successfully.`, 'success');
 
@@ -506,6 +549,30 @@ export default function AiDriveCardParser() {
             <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.95rem' }}>Index folders of business cards automatically with OpenAI Vision OCR and verify them instantly</p>
           </div>
         </div>
+        <div>
+          <a 
+            href="https://platform.openai.com/home" 
+            target="_blank" 
+            rel="noreferrer" 
+            className="btn btn-secondary" 
+            style={{ 
+              display: 'inline-flex', 
+              alignItems: 'center', 
+              gap: '8px', 
+              textDecoration: 'none',
+              background: '#fff',
+              border: '1px solid #e2e8f0',
+              padding: '10px 16px',
+              borderRadius: '10px',
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              color: '#475569',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+            }}
+          >
+            <Sparkles size={16} style={{ color: '#10b981' }} /> OpenAI Balance
+          </a>
+        </div>
       </header>
 
       {/* TOP CONTROL GRID: Google Drive Connection Settings & Logs */}
@@ -639,6 +706,7 @@ export default function AiDriveCardParser() {
                   marginBottom: '4px',
                   color: log.type === 'error' ? '#ef4444' : 
                          log.type === 'success' ? '#22c55e' : 
+                         log.type === 'warning' ? '#f59e0b' : 
                          log.type === 'ai' ? '#c084fc' : 
                          log.type === 'db' ? '#38bdf8' : '#94a3b8' 
                 }}>

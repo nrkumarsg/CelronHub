@@ -188,7 +188,7 @@ export default function JobDetails() {
     );
 
     const totalRevenue = job.po_amount || 0;
-    const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+    const totalExpenses = expenses.reduce((sum, e) => sum + (e.grand_total || e.amount || 0), 0);
     const profit = totalRevenue - totalExpenses;
 
     // Activity Finder
@@ -382,7 +382,7 @@ export default function JobDetails() {
                                         <tr key={exp.id} className="table-row-hover" style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
                                             <td style={{ padding: '16px 12px', fontWeight: 700, color: '#1e293b' }}>{exp.supplier_name}</td>
                                             <td style={{ padding: '16px 12px', color: '#64748b', fontSize: '0.9rem' }}>{exp.description}</td>
-                                            <td style={{ padding: '16px 12px', textAlign: 'right', fontWeight: 800, color: 'var(--primary)', fontSize: '1rem' }}>${exp.amount?.toLocaleString()}</td>
+                                            <td style={{ padding: '16px 12px', textAlign: 'right', fontWeight: 800, color: 'var(--primary)', fontSize: '1rem' }}>${(exp.grand_total || exp.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                             <td style={{ padding: '16px 12px', textAlign: 'center' }}>
                                                 {exp.attachment_url ? (
                                                     <SafeDriveLink url={exp.attachment_url} label="View Bill" className="btn btn-xs btn-outline" />

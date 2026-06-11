@@ -28,6 +28,10 @@ export const saveJobExpense = async (expense) => {
         delete payload.partner; // Remove joined data
         delete payload.job; // Remove joined data
 
+        // Clean empty UUID fields to null
+        if (payload.supplier_id === '') payload.supplier_id = null;
+        if (payload.job_id === '') payload.job_id = null;
+        if (payload.company_id === '') payload.company_id = null;
 
         let result;
         if (id && !id.startsWith('temp_')) {
@@ -73,7 +77,7 @@ export const getGlobalExpenses = async (companyId) => {
             .from('job_expenses')
             .select(`
                 *,
-                partner:supplier_id (id, name, registration_no),
+                partner:supplier_id (id, name, uen),
                 job:job_id (id, job_no)
             `)
             .eq('company_id', companyId)

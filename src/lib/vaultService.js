@@ -271,7 +271,12 @@ export const migrateMessyFolders = async (accessToken, companyId) => {
                 item.name.toLowerCase().includes('report') ||
                 item.name.toLowerCase().includes('voucher') ||
                 item.name.toLowerCase().includes('order') ||
-                item.name.toLowerCase().includes('ticket')
+                item.name.toLowerCase().includes('ticket') ||
+                item.name.toLowerCase().includes('statement') ||
+                item.name.toLowerCase().includes('soa') ||
+                item.name.toLowerCase().includes('enquiry') ||
+                item.name.toLowerCase().includes('enq') ||
+                item.name.toLowerCase().endsWith('.apk')
             )
         );
 

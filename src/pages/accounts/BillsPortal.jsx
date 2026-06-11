@@ -116,15 +116,16 @@ export default function BillsPortal() {
     // Auth & Drive Configuration
     const [googleAccessToken, setGoogleAccessToken] = useState('');
     const [isDriveConnected, setIsDriveConnected] = useState(false);
-    const [folderLink, setFolderLink] = useState('https://drive.google.com/drive/folders/1ym6f-6HUFOgF10F-Tazu0KkTNj0xYi7z?usp=sharing');
-    const [folderId, setFolderId] = useState('1ym6f-6HUFOgF10F-Tazu0KkTNj0xYi7z');
+    const [folderLink, setFolderLink] = useState('https://drive.google.com/drive/folders/1MVrJO3j9xc9Ls9JpovmduW62i2YtfrRq?usp=drive_link');
+    const [folderId, setFolderId] = useState('1MVrJO3j9xc9Ls9JpovmduW62i2YtfrRq');
 
     // Portal State
     const [loading, setLoading] = useState(true);
     const [bills, setBills] = useState([]);
     const [partners, setPartners] = useState([]);
     const [jobs, setJobs] = useState([]);
-    const [activeTab, setActiveTab] = useState('all'); // 'all', 'unpaid', 'paid', 'scanned'
+    const [activeTab, setActiveTab] = useState('pending'); // 'all', 'unpaid', 'paid', 'scanned', 'pending'
+    const [selectedDraftIds, setSelectedDraftIds] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
@@ -179,12 +180,17 @@ export default function BillsPortal() {
                 getPartners(profile.company_id),
                 supabase
                     .from('workflow_documents')
-                    .select('id, document_no')
+                    .select('id, document_no, subject, partners(name), vessels!vessel_id(vessel_name)')
                     .eq('company_id', profile.company_id)
                     .eq('document_type', 'Job')
             ]);
 
-            if (billsRes.data) setBills(billsRes.data);
+            if (billsRes.data) {
+                console.log('Bills loaded:', billsRes.data);
+                setBills(billsRes.data);
+                const drafts = billsRes.data.filter(b => b.status && b.status.toLowerCase().includes('pending'));
+                console.log('Pending drafts found:', drafts.length);
+            }
             if (partnersRes) setPartners(partnersRes);
             if (jobsRes.data) setJobs(jobsRes.data);
         } catch (err) {
@@ -292,9 +298,16 @@ export default function BillsPortal() {
                 } while (pageToken);
             }
             
-            addLog(`Discovered ${allFiles.length} total document(s) in Drive directory.`, 'success');
+            // Deduplicate discovered files by ID
+            const uniqueFilesMap = new Map();
+            allFiles.forEach(f => {
+                if (f && f.id) uniqueFilesMap.set(f.id, f);
+            });
+            const uniqueFiles = Array.from(uniqueFilesMap.values());
 
-            if (allFiles.length === 0) {
+            addLog(`Discovered ${uniqueFiles.length} unique document(s) in Drive directory.`, 'success');
+
+            if (uniqueFiles.length === 0) {
                 addLog('No invoices or bills found. Sync complete.', 'success');
                 setIsSyncing(false);
                 return;
@@ -302,15 +315,18 @@ export default function BillsPortal() {
 
             addLog('Cross-referencing files against Supabase database...', 'info');
 
-            const unprocessedFiles = allFiles.filter(file => {
-                const alreadyIndexed = bills.some(b => 
+            // Maintain a local mutable copy of bills to avoid stale React state references
+            const currentBillsList = [...bills];
+
+            const unprocessedFiles = uniqueFiles.filter(file => {
+                const alreadyIndexed = currentBillsList.some(b => 
                     b.gdrive_file_id === file.id || 
                     (b.attachment_note && b.attachment_note.includes(file.id))
                 );
                 return !alreadyIndexed;
             });
 
-            addLog(`Queue Analysis: ${allFiles.length - unprocessedFiles.length} file(s) already cached. ${unprocessedFiles.length} new bill(s) require processing.`, 'info');
+            addLog(`Queue Analysis: ${uniqueFiles.length - unprocessedFiles.length} file(s) already cached. ${unprocessedFiles.length} new bill(s) require processing.`, 'info');
 
             if (unprocessedFiles.length === 0) {
                 addLog('All files in the directory are fully synced. Ready for review!', 'success');
@@ -325,6 +341,17 @@ export default function BillsPortal() {
             for (let i = 0; i < unprocessedFiles.length; i++) {
                 const file = unprocessedFiles[i];
                 setCurrentProgress({ current: i + 1, total: unprocessedFiles.length, file: file.name });
+                
+                // Double-check in case of duplicate runs or records inserted concurrently
+                const isAlreadyIndexed = currentBillsList.some(b => 
+                    b.gdrive_file_id === file.id || 
+                    (b.attachment_note && b.attachment_note.includes(file.id))
+                );
+                if (isAlreadyIndexed) {
+                    addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Skipping: File already indexed.`, 'warning');
+                    continue;
+                }
+
                 addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Pre-downloading: ${file.name}...`, 'info');
 
                 try {
@@ -342,46 +369,104 @@ export default function BillsPortal() {
                     const fileObj = new File([blob], file.name, { type: blob.type });
                     const publicUrl = await uploadFile('company_assets', 'vouchers', fileObj);
 
+                    // 2. Perform OCR & Parse details with Retry Logic
                     let result = null;
+                    let success = false;
 
-                    // 2. Perform OCR & Parse details
-                    if (isPdf) {
-                        addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Extracting text from PDF client-side...`, 'info');
-                        const extractedText = await performOCR(fileObj);
-                        if (!extractedText) throw new Error('No text content resolved from PDF file.');
-                        
-                        addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Sending PDF content to OpenAI OCR parser...`, 'ai');
-                        result = await extractBillWithOpenAI(extractedText, true);
-                    } else {
-                        addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Converting image to Base64...`, 'info');
-                        const base64 = await new Promise((resolve, reject) => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result);
-                            reader.onerror = reject;
-                            reader.readAsDataURL(blob);
-                        });
+                    for (let attempt = 1; attempt <= 3; attempt++) {
+                        try {
+                            if (isPdf) {
+                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Extracting text from PDF client-side...`, 'info');
+                                const extractedText = await performOCR(fileObj);
+                                if (!extractedText) throw new Error('No text content resolved from PDF file.');
+                                
+                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Submitting PDF content to OpenAI OCR parser (Attempt ${attempt}/3)...`, 'ai');
+                                result = await extractBillWithOpenAI(extractedText, true);
+                            } else {
+                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Converting image to Base64...`, 'info');
+                                const base64 = await new Promise((resolve, reject) => {
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => resolve(reader.result);
+                                    reader.onerror = reject;
+                                    reader.readAsDataURL(blob);
+                                });
 
-                        addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Submitting image to OpenAI Vision API...`, 'ai');
-                        result = await extractBillWithOpenAI(base64, false);
+                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Submitting image to OpenAI Vision API (Attempt ${attempt}/3)...`, 'ai');
+                                result = await extractBillWithOpenAI(base64, false);
+                            }
+                            success = true;
+                            break;
+                        } catch (apiError) {
+                            const errMsg = apiError.message || String(apiError);
+                            const isRateLimit = errMsg.toLowerCase().includes('rate limit') || 
+                                                errMsg.toLowerCase().includes('tpm') || 
+                                                errMsg.toLowerCase().includes('429') || 
+                                                errMsg.toLowerCase().includes('too many requests') ||
+                                                errMsg.toLowerCase().includes('tokens per min');
+
+                            if (isRateLimit && attempt < 3) {
+                                const backoffTime = attempt * 3500;
+                                addLog(`[Rate Limit Detected] Tokens/min limit reached. Cooling down for ${(backoffTime / 1000).toFixed(1)}s before retrying...`, 'error');
+                                await delay(backoffTime);
+                            } else {
+                                throw apiError; // Exhausted retries or a different error
+                            }
+                        }
                     }
 
-                    if (!result) throw new Error('OpenAI Vision OCR failed to return structured data.');
+                    if (!success || !result) {
+                        throw new Error('OpenAI Vision OCR failed to return structured data.');
+                    }
 
                     addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Extracted Details: Vendor: "${result.supplier_name}", Invoice No: "${result.invoice_no}", Total: ${result.grand_total} ${result.currency || 'SGD'}`, 'ai');
-                    addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Writing Draft record into Supabase...`, 'db');
 
                     // Match partner supplier if possible
                     let supplierId = null;
                     if (result.supplier_name) {
                         const matched = partners.find(p => 
                             p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
-                            (result.uen && p.registration_no === result.uen)
+                            (result.uen && p.uen === result.uen)
                         );
                         if (matched) {
                             supplierId = matched.id;
                             addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Linked to existing partner: ${matched.name}`, 'success');
                         }
                     }
+
+                    // Check for duplicate invoice in existing bills database
+                    if (result.invoice_no) {
+                        const isDuplicate = currentBillsList.some(b => 
+                            b.invoice_no && 
+                            b.invoice_no.toLowerCase().trim() === result.invoice_no.toLowerCase().trim() &&
+                            (
+                                (b.supplier_id && supplierId && b.supplier_id === supplierId) ||
+                                (b.supplier_name && result.supplier_name && b.supplier_name.toLowerCase().trim() === result.supplier_name.toLowerCase().trim())
+                            )
+                        );
+
+                        if (isDuplicate) {
+                            addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Skipping: Duplicate invoice detected (No: "${result.invoice_no}" for "${result.supplier_name || 'unknown supplier'}").`, 'warning');
+                            await delay(600);
+                            continue;
+                        }
+                    } else {
+                        // Check for duplicate by date and amount if invoice number is missing
+                        const isSimilarDuplicate = currentBillsList.some(b => 
+                            b.invoice_date === result.invoice_date &&
+                            (b.grand_total === result.grand_total || b.amount === result.subtotal) &&
+                            (
+                                (b.supplier_id && supplierId && b.supplier_id === supplierId) ||
+                                (b.supplier_name && result.supplier_name && b.supplier_name.toLowerCase().trim() === result.supplier_name.toLowerCase().trim())
+                            )
+                        );
+                        if (isSimilarDuplicate) {
+                            addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Skipping: Duplicate expense with same vendor, date and amount detected.`, 'warning');
+                            await delay(600);
+                            continue;
+                        }
+                    }
+
+                    addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Writing Draft record into Supabase...`, 'db');
 
                     // Save draft expense
                     const draftExpense = {
@@ -408,6 +493,11 @@ export default function BillsPortal() {
                         .select();
 
                     if (dbErr) throw dbErr;
+
+                    if (savedData && savedData[0]) {
+                        currentBillsList.push(savedData[0]);
+                        setBills(prev => [savedData[0], ...prev]);
+                    }
 
                     addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Saved Draft successfully.`, 'success');
                     
@@ -480,6 +570,56 @@ export default function BillsPortal() {
         });
     };
 
+    const handleCreateSupplier = async () => {
+        if (!editedBill.supplier_name) {
+            toast.error('Please specify a Supplier Name.');
+            return;
+        }
+        setIsSavingApproval(true);
+        try {
+            toast.loading('Creating supplier partner...', { id: 'create-supplier' });
+            
+            // Check if already exists just in case
+            const existing = partners.find(p => p.name.toLowerCase() === editedBill.supplier_name.toLowerCase());
+            if (existing) {
+                toast.success('Supplier already exists!', { id: 'create-supplier' });
+                handleReviewFieldChange('supplier_id', existing.id);
+                return;
+            }
+
+            const newPartner = {
+                company_id: profile.company_id,
+                name: editedBill.supplier_name,
+                types: ['Supplier'],
+                status: 'Active'
+            };
+
+            const { data, error } = await supabase
+                .from('partners')
+                .insert([newPartner])
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            toast.success('Supplier partner created successfully!', { id: 'create-supplier' });
+            
+            // Refresh partners list
+            const partnersRes = await getPartners(profile.company_id);
+            if (partnersRes) {
+                setPartners(partnersRes);
+            }
+
+            // Select the newly created supplier
+            handleReviewFieldChange('supplier_id', data.id);
+        } catch (err) {
+            console.error('Failed to create supplier:', err);
+            toast.error('Failed to create supplier: ' + err.message, { id: 'create-supplier' });
+        } finally {
+            setIsSavingApproval(false);
+        }
+    };
+
     const handleApproveDraft = async (approvalStatus) => {
         if (!editedBill.supplier_id && !editedBill.supplier_name) {
             alert('Please select or specify a Supplier Name.');
@@ -490,8 +630,36 @@ export default function BillsPortal() {
         try {
             toast.loading('Saving and approving expense...', { id: 'approve' });
             
+            let finalSupplierId = editedBill.supplier_id;
+            
+            // Auto-create supplier if name entered but not created as a partner yet
+            if (!finalSupplierId && editedBill.supplier_name) {
+                const existing = partners.find(p => p.name.toLowerCase() === editedBill.supplier_name.toLowerCase());
+                if (existing) {
+                    finalSupplierId = existing.id;
+                } else {
+                    const { data: newP, error: pErr } = await supabase
+                        .from('partners')
+                        .insert([{
+                            company_id: profile.company_id,
+                            name: editedBill.supplier_name,
+                            types: ['Supplier'],
+                            status: 'Active'
+                        }])
+                        .select()
+                        .single();
+                    if (pErr) throw pErr;
+                    finalSupplierId = newP.id;
+                    
+                    // Refresh partners local list
+                    const partnersRes = await getPartners(profile.company_id);
+                    if (partnersRes) setPartners(partnersRes);
+                }
+            }
+
             const payload = {
                 ...editedBill,
+                supplier_id: finalSupplierId,
                 status: approvalStatus // 'Paid' or 'Unpaid'
             };
 
@@ -506,6 +674,27 @@ export default function BillsPortal() {
             toast.error('Approval failed: ' + err.message, { id: 'approve' });
         } finally {
             setIsSavingApproval(false);
+        }
+    };
+
+    // Bulk approve selected drafts
+    const bulkApprove = async (status) => {
+        if (selectedDraftIds.length === 0) return;
+        toast.loading('Bulk approving drafts...', { id: 'bulk' });
+        try {
+            for (const id of selectedDraftIds) {
+                const bill = bills.find(b => b.id === id);
+                if (!bill) continue;
+                const payload = { ...bill, status };
+                const { error } = await saveJobExpense(payload);
+                if (error) throw error;
+            }
+            toast.success('Bulk approve completed.', { id: 'bulk' });
+            setSelectedDraftIds([]);
+            fetchData();
+        } catch (err) {
+            console.error('Bulk approve failed:', err);
+            toast.error('Bulk approve error: ' + err.message, { id: 'bulk' });
         }
     };
 
@@ -558,10 +747,14 @@ export default function BillsPortal() {
         
         if (activeTab === 'unpaid') return matchesSearch && b.status !== 'Paid';
         if (activeTab === 'paid') return matchesSearch && b.status === 'Paid';
+        if (activeTab === 'all') return matchesSearch && b.status !== 'Paid';
         return matchesSearch;
     });
 
-    const pendingDrafts = bills.filter(b => b.status === 'Pending Approval');
+    const pendingDrafts = bills.filter(b => b.status && b.status.toLowerCase().includes('pending'));
+
+
+    const displayedBills = activeTab === 'pending' ? pendingDrafts : filteredBills;
 
     const unpaidTotal = bills
         .filter(b => b.status !== 'Paid' && b.status !== 'Pending Approval')
@@ -584,6 +777,47 @@ export default function BillsPortal() {
                     <p style={{ color: '#64748b', marginTop: '4px' }}>Supplier Bills & GST Verification Portal</p>
                 </div>
                 <div style={{ display: 'flex', gap: '12px' }}>
+                    <button 
+                        className="btn btn-secondary" 
+                        onClick={() => setActiveTab('scanned')}
+                        style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: '8px', 
+                            background: activeTab === 'scanned' ? '#f5f3ff' : undefined, 
+                            borderColor: activeTab === 'scanned' ? '#c7d2fe' : undefined 
+                        }}
+                    >
+                        <Sparkles size={18} style={{ color: '#a855f7' }} /> AI Invoice Scanner
+                    </button>
+                    <a 
+                        href={folderLink} 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        className="btn btn-secondary" 
+                        style={{ 
+                            display: 'inline-flex', 
+                            alignItems: 'center', 
+                            gap: '8px', 
+                            textDecoration: 'none' 
+                        }}
+                    >
+                        <FolderOpen size={18} style={{ color: '#3b82f6' }} /> Google Drive Folder
+                    </a>
+                    <a 
+                        href="https://platform.openai.com/home" 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        className="btn btn-secondary" 
+                        style={{ 
+                            display: 'inline-flex', 
+                            alignItems: 'center', 
+                            gap: '8px', 
+                            textDecoration: 'none' 
+                        }}
+                    >
+                        <Sparkles size={18} style={{ color: '#10b981' }} /> OpenAI Balance
+                    </a>
                     <button className="btn btn-secondary" onClick={() => navigate('/gst-reporting')}>
                         <TrendingUp size={18} /> GST Summary
                     </button>
@@ -626,7 +860,7 @@ export default function BillsPortal() {
             <div className="glass-panel" style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '0', overflow: 'hidden' }}>
                 <div style={{ padding: '20px 24px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fcfdfe' }}>
                     <div style={{ display: 'flex', gap: '24px' }}>
-                        {['all', 'unpaid', 'paid', 'scanned'].map(tab => (
+                        {['all', 'unpaid', 'paid', 'scanned', 'pending'].map(tab => (
                             <button 
                                 key={tab}
                                 onClick={() => setActiveTab(tab)}
@@ -641,7 +875,7 @@ export default function BillsPortal() {
                                     position: 'relative'
                                 }}
                             >
-                                {tab === 'scanned' ? 'Invoice Images' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                                {tab === 'scanned' ? 'Invoice Images' : tab === 'pending' ? 'Pending Drafts' : tab.charAt(0).toUpperCase() + tab.slice(1)}
                                 {activeTab === tab && <div style={{ position: 'absolute', bottom: -1, left: 0, right: 0, height: '2px', background: '#6366f1' }} />}
                             </button>
                         ))}
@@ -668,30 +902,154 @@ export default function BillsPortal() {
                 </div>
 
                 {activeTab !== 'scanned' ? (
-                    <div className="table-responsive">
+                    <>
+                        {activeTab === 'pending' && selectedDraftIds.length > 0 && (
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                background: '#f8fafc',
+                                borderBottom: '1px solid #e2e8f0',
+                                padding: '12px 24px',
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <CheckSquare size={18} color="#6366f1" />
+                                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155' }}>
+                                        {selectedDraftIds.length} draft{selectedDraftIds.length > 1 ? 's' : ''} selected
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                    <button
+                                        onClick={() => setSelectedDraftIds([])}
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            color: '#64748b',
+                                            fontSize: '0.8rem',
+                                            fontWeight: 600,
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Clear Selection
+                                    </button>
+                                    <button
+                                        onClick={() => bulkApprove('Unpaid')}
+                                        style={{
+                                            background: '#6366f1',
+                                            color: '#fff',
+                                            border: 'none',
+                                            padding: '6px 12px',
+                                            borderRadius: '6px',
+                                            fontSize: '0.8rem',
+                                            fontWeight: 600,
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px'
+                                        }}
+                                    >
+                                        <Check size={14} /> Approve as Unpaid
+                                    </button>
+                                    <button
+                                        onClick={() => bulkApprove('Paid')}
+                                        style={{
+                                            background: '#10b981',
+                                            color: '#fff',
+                                            border: 'none',
+                                            padding: '6px 12px',
+                                            borderRadius: '6px',
+                                            fontSize: '0.8rem',
+                                            fontWeight: 600,
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px'
+                                        }}
+                                    >
+                                        <CheckCircle2 size={14} /> Approve as Paid
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                        <div className="table-responsive">
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead style={{ background: '#f8fafc' }}>
                                 <tr>
+                                    {activeTab === 'pending' ? (
+                                        <th style={{ width: '40px', padding: '16px 24px', textAlign: 'center' }}>
+                                            <input 
+                                                type="checkbox"
+                                                checked={selectedDraftIds.length === pendingDrafts.length && pendingDrafts.length > 0}
+                                                onChange={(e) => {
+                                                    if (e.target.checked) {
+                                                        setSelectedDraftIds(pendingDrafts.map(b => b.id));
+                                                    } else {
+                                                        setSelectedDraftIds([]);
+                                                    }
+                                                }}
+                                            />
+                                        </th>
+                                    ) : (
+                                        <th style={{ width: '40px' }}></th>
+                                    )}
                                     <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Supplier</th>
-                                    <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Invoice No</th>
-                                    <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Date</th>
-                                    <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Linked Job</th>
-                                    <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>GST</th>
-                                    <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Total</th>
-                                    <th style={{ textAlign: 'center', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Status</th>
-                                    <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Actions</th>
+                                <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Invoice No</th>
+                                <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Date</th>
+                                <th style={{ textAlign: 'left', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Linked Job</th>
+                                <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>GST</th>
+                                <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Total</th>
+                                <th style={{ textAlign: 'center', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Status</th>
+                                <th style={{ textAlign: 'right', padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {loading ? (
                                     <tr><td colSpan="8" style={{ textAlign: 'center', padding: '60px' }}><Loader2 className="animate-spin" style={{ margin: '0 auto' }} /></td></tr>
-                                ) : filteredBills.length === 0 ? (
+                                ) : displayedBills.length === 0 ? (
                                     <tr><td colSpan="8" style={{ textAlign: 'center', padding: '80px', color: '#94a3b8' }}>No bills found matching your criteria.</td></tr>
-                                ) : filteredBills.map(bill => (
-                                    <tr key={bill.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                ) : displayedBills.map(bill => (
+                                    <tr 
+                                        key={bill.id} 
+                                        onClick={(e) => {
+                                            if (e.target.tagName === 'BUTTON' || e.target.closest('button') || e.target.tagName === 'INPUT' || e.target.tagName === 'A' || e.target.closest('a')) {
+                                                return;
+                                            }
+                                            if (activeTab === 'pending') {
+                                                handleOpenReview(bill);
+                                            }
+                                        }}
+                                        style={{ 
+                                            borderBottom: '1px solid #f1f5f9',
+                                            cursor: activeTab === 'pending' ? 'pointer' : 'default',
+                                            transition: 'background 0.2s'
+                                        }}
+                                        onMouseOver={(e) => {
+                                            if (activeTab === 'pending') e.currentTarget.style.background = '#f8fafc';
+                                        }}
+                                        onMouseOut={(e) => {
+                                            if (activeTab === 'pending') e.currentTarget.style.background = 'none';
+                                        }}
+                                    >
+                                        {activeTab === 'pending' ? (
+                                            <td style={{ padding: '16px 24px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={selectedDraftIds.includes(bill.id)}
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) {
+                                                            setSelectedDraftIds(prev => [...prev, bill.id]);
+                                                        } else {
+                                                            setSelectedDraftIds(prev => prev.filter(id => id !== bill.id));
+                                                        }
+                                                    }}
+                                                />
+                                            </td>
+                                        ) : (
+                                            <td style={{ padding: '16px 24px' }}></td>
+                                        )}
                                         <td style={{ padding: '16px 24px' }}>
                                             <div style={{ fontWeight: 700, color: '#1e293b' }}>{bill.partner?.name || bill.supplier_name || 'Unknown Vendor'}</div>
-                                            {bill.partner?.registration_no && <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>GST: {bill.partner.registration_no}</div>}
+                                            {bill.partner?.uen && <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>GST: {bill.partner.uen}</div>}
                                         </td>
                                         <td style={{ padding: '16px 24px', fontSize: '0.85rem', color: '#475569', fontWeight: 600 }}>{bill.invoice_no || 'N/A'}</td>
                                         <td style={{ padding: '16px 24px', fontSize: '0.85rem', color: '#475569' }}>{bill.invoice_date ? new Date(bill.invoice_date).toLocaleDateString() : '-'}</td>
@@ -729,7 +1087,26 @@ export default function BillsPortal() {
                                             </button>
                                         </td>
                                         <td style={{ padding: '16px 24px', textAlign: 'right' }}>
-                                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                                {activeTab === 'pending' && (
+                                                    <button 
+                                                        className="btn btn-primary"
+                                                        onClick={() => handleOpenReview(bill)}
+                                                        style={{ 
+                                                            background: '#6366f1', 
+                                                            color: '#fff', 
+                                                            border: 'none', 
+                                                            padding: '6px 12px', 
+                                                            borderRadius: '6px', 
+                                                            fontSize: '0.75rem', 
+                                                            fontWeight: 600, 
+                                                            cursor: 'pointer',
+                                                            marginRight: '8px'
+                                                        }}
+                                                    >
+                                                        Review
+                                                    </button>
+                                                )}
                                                 {(bill.bill_url || bill.attachment_url) && (
                                                     <a href={bill.bill_url || bill.attachment_url} target="_blank" rel="noreferrer" className="btn-icon-sm" title="View PDF">
                                                         <FileText size={16} color="#6366f1" />
@@ -745,6 +1122,7 @@ export default function BillsPortal() {
                             </tbody>
                         </table>
                     </div>
+                    </>
                 ) : (
                     // Google Drive Scanner View
                     <div style={{ padding: '32px', background: '#f8fafc' }}>
@@ -855,6 +1233,7 @@ export default function BillsPortal() {
                                                 marginBottom: '4px',
                                                 color: log.type === 'error' ? '#ef4444' : 
                                                        log.type === 'success' ? '#22c55e' : 
+                                                       log.type === 'warning' ? '#f59e0b' : 
                                                        log.type === 'ai' ? '#c084fc' : 
                                                        log.type === 'db' ? '#38bdf8' : '#94a3b8' 
                                             }}>
@@ -1036,6 +1415,28 @@ export default function BillsPortal() {
                                                     placeholder="Supplier Name"
                                                     style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
                                                 />
+                                                <button
+                                                    onClick={handleCreateSupplier}
+                                                    disabled={isSavingApproval || !editedBill.supplier_name}
+                                                    style={{
+                                                        background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
+                                                        color: '#fff',
+                                                        border: 'none',
+                                                        padding: '8px 16px',
+                                                        borderRadius: '8px',
+                                                        fontSize: '0.8rem',
+                                                        fontWeight: 700,
+                                                        cursor: (isSavingApproval || !editedBill.supplier_name) ? 'not-allowed' : 'pointer',
+                                                        marginTop: '6px',
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        gap: '6px',
+                                                        boxShadow: '0 4px 6px -1px rgba(99, 102, 241, 0.2)'
+                                                    }}
+                                                >
+                                                    <Plus size={14} /> Add as New Supplier Partner
+                                                </button>
                                             </div>
                                         )}
                                     </div>
@@ -1072,7 +1473,12 @@ export default function BillsPortal() {
                                         >
                                             <option value="">Unlinked (General Expense)</option>
                                             {jobs.map(j => (
-                                                <option key={j.id} value={j.id}>{j.document_no}</option>
+                                                <option key={j.id} value={j.id}>
+                                                    {j.document_no}
+                                                    {j.partners?.name ? ` - ${j.partners.name}` : ''}
+                                                    {j.vessels?.vessel_name ? ` (${j.vessels.vessel_name})` : ''}
+                                                    {j.subject ? ` - ${j.subject}` : ''}
+                                                </option>
                                             ))}
                                         </select>
                                     </div>

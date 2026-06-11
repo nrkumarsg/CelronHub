@@ -294,9 +294,24 @@ export default function EnquiryDetails() {
             // 1. Provision Folder Structure if needed
             if (accessToken && isValid && !projectFolderId) {
                 try {
-                    const { provisionFullProjectStructure } = await import('../../lib/driveService');
+                    const { provisionFullProjectStructure, getOrCreateFolder } = await import('../../lib/driveService');
                     const settings = await getDocumentSettings();
-                    const topRootId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
+                    let celronRootId = settings?.gdrive_celron_root_id;
+                    if (!celronRootId) {
+                        let parentId = settings?.google_drive_folder_id || 'root';
+                        if (parentId.includes('drive.google.com')) {
+                            const match = parentId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || parentId.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                            if (match) parentId = match[1];
+                            else parentId = 'root';
+                        }
+                        celronRootId = await getOrCreateFolder(accessToken, 'CELRONHUB', parentId);
+                        const { saveDocumentSettings } = await import('../../lib/store');
+                        await saveDocumentSettings({
+                            ...settings,
+                            gdrive_celron_root_id: celronRootId
+                        });
+                    }
+                    const topRootId = celronRootId;
                     if (topRootId) {
                         const year = `YEAR${new Date().getFullYear()}`;
                         const partner = allPartners.find(c => c.id === enquiry.customer_id)?.name || 'Unknown Partner';

@@ -62,6 +62,7 @@ export default function ModuleSettings() {
     const [initializingVault, setInitializingVault] = useState(false);
     const [migratingDrive, setMigratingDrive] = useState(false);
     const [showFloatingHub, setShowFloatingHub] = useState(localStorage.getItem('show_floating_hub') !== 'false');
+    const [customOpenAIKey, setCustomOpenAIKey] = useState(localStorage.getItem('custom_openai_key') || '');
 
     const logoInputRef = useRef(null);
     const signatureInputRef = useRef(null);
@@ -521,6 +522,52 @@ export default function ModuleSettings() {
                                     style={{ cursor: 'pointer', color: showFloatingHub ? '#10b981' : '#cbd5e1', transition: 'all 0.2s' }}
                                 >
                                     {showFloatingHub ? <ToggleRight size={36} /> : <ToggleLeft size={36} />}
+                                </div>
+                            </div>
+                            <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid #e2e8f0' }} />
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <div>
+                                    <div style={{ fontSize: '0.95rem', fontWeight: 500, color: '#1e293b' }}>OpenAI API Key</div>
+                                    <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '8px' }}>Used for business card, invoice, and enquiry scanning. Configured locally in your browser.</div>
+                                </div>
+                                <div style={{ display: 'flex', gap: '12px' }}>
+                                    <input 
+                                        type="password"
+                                        placeholder="sk-proj-..."
+                                        value={customOpenAIKey}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setCustomOpenAIKey(val);
+                                            localStorage.setItem('custom_openai_key', val);
+                                        }}
+                                        style={{ 
+                                            flex: 1, 
+                                            padding: '8px 12px', 
+                                            borderRadius: '6px', 
+                                            border: '1px solid #cbd5e1',
+                                            fontSize: '0.9rem',
+                                            outline: 'none'
+                                        }}
+                                    />
+                                    {customOpenAIKey && (
+                                        <button 
+                                            onClick={() => {
+                                                setCustomOpenAIKey('');
+                                                localStorage.removeItem('custom_openai_key');
+                                            }}
+                                            style={{
+                                                padding: '8px 12px',
+                                                borderRadius: '6px',
+                                                border: '1px solid #ef4444',
+                                                background: '#fff',
+                                                color: '#ef4444',
+                                                cursor: 'pointer',
+                                                fontSize: '0.85rem'
+                                            }}
+                                        >
+                                            Clear
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         </div>

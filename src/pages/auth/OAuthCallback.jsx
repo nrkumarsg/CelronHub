@@ -23,7 +23,7 @@ export default function OAuthCallback() {
                     localStorage.setItem('google_access_token', accessToken);
                     localStorage.setItem('google_token_expiry', new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString());
 
-                    if (state === 'contacts_sync' || state === 'manual_upload' || state === 'enquiry_form' || state === 'catalog_photo_upload' || state === 'calibration_lab' || state === 'scanner_module' || state === 'apk_management' || state === 'drive_status_tray' || state === 'drive_card_sync') {
+                    if (state === 'contacts_sync' || state === 'manual_upload' || state === 'enquiry_form' || state === 'catalog_photo_upload' || state === 'calibration_lab' || state === 'scanner_module' || state === 'apk_management' || state === 'drive_status_tray' || state === 'drive_card_sync' || state === 'drive_bill_sync') {
                         // Temp store token for the sync process
                         sessionStorage.setItem('google_contacts_token', accessToken);
                         sessionStorage.setItem('google_contacts_expires', new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString());
@@ -37,7 +37,8 @@ export default function OAuthCallback() {
                             scanner_module: 'Google Drive Connected! Celron Scanner is active.',
                             apk_management: 'Google Drive Connected! APK Manager is ready.',
                             drive_status_tray: 'Google Drive Connected!',
-                            drive_card_sync: 'Google Drive Connected! Card Scanner is ready.'
+                            drive_card_sync: 'Google Drive Connected! Card Scanner is ready.',
+                            drive_bill_sync: 'Google Drive Connected! Accounts Payable Scanner is ready.'
                         };
 
                         const targetMap = {
@@ -49,7 +50,8 @@ export default function OAuthCallback() {
                             scanner_module: '/scanner',
                             apk_management: '/admin/apks',
                             drive_status_tray: '/dashboard',
-                            drive_card_sync: '/partners/ai-drive-parser'
+                            drive_card_sync: '/partners/ai-drive-parser',
+                            drive_bill_sync: '/accounts/bills'
                         };
 
                         const returnUrl = sessionStorage.getItem('google_auth_return_url');
