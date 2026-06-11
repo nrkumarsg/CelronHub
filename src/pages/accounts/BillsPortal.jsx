@@ -748,7 +748,7 @@ export default function BillsPortal() {
         
         if (activeTab === 'unpaid') return matchesSearch && b.status !== 'Paid';
         if (activeTab === 'paid') return matchesSearch && b.status === 'Paid';
-        if (activeTab === 'all') return matchesSearch && b.status !== 'Paid';
+        if (activeTab === 'all') return matchesSearch;
         return matchesSearch;
     });
 
@@ -768,6 +768,10 @@ export default function BillsPortal() {
             const now = new Date();
             return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
         })
+        .reduce((sum, b) => sum + (b.grand_total || b.amount || 0), 0);
+
+    const grandTotal = bills
+        .filter(b => b.status !== 'Pending Approval')
         .reduce((sum, b) => sum + (b.grand_total || b.amount || 0), 0);
 
     return (
@@ -846,9 +850,9 @@ export default function BillsPortal() {
                 <div className="glass-panel" style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '24px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div>
-                            <p style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Expenses (Current Month)</p>
-                            <h2 style={{ fontSize: '2rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>SGD {monthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
-                            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px' }}>Across all projects</p>
+                            <p style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Total Expenses</p>
+                            <h2 style={{ fontSize: '2rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>SGD {grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
+                            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px' }}>SGD {monthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} this month (Across all projects)</p>
                         </div>
                         <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '14px' }}>
                             <Receipt size={28} color="#6366f1" />
