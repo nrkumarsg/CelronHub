@@ -277,6 +277,10 @@ export const extractBillWithOpenAI = async (base64ImageOrText, isText = false) =
     {
       "supplier_name": "string (The name of the supplier/vendor, e.g. Ark Pte Ltd)",
       "uen": "string (Singapore Unique Entity Number/UEN of the supplier if printed)",
+      "address": "string (Singapore physical address of the supplier if printed)",
+      "phone": "string (Company/office phone or mobile number of the supplier if printed)",
+      "email": "string (General company email of the supplier if printed)",
+      "website": "string (Official supplier website URL if printed)",
       "invoice_no": "string (The invoice or bill number)",
       "invoice_date": "string (YYYY-MM-DD formatted date of the invoice)",
       "due_date": "string (YYYY-MM-DD formatted due date of the invoice if found)",

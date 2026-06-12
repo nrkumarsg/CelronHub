@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Globe, Plus, ExternalLink, Bookmark, Shield, User, Filter, LayoutGrid, List, Eye, EyeOff } from 'lucide-react';
-import { getUserTools } from '../lib/toolService';
+import { Search, Globe, Plus, ExternalLink, Bookmark, Shield, User, Filter, LayoutGrid, List, Eye, EyeOff, Edit, Trash2 } from 'lucide-react';
+import { getUserTools, createUserTool, updateUserTool, deleteUserTool } from '../lib/toolService';
 import { useNavigate } from 'react-router-dom';
 
 export default function Tools() {
@@ -11,6 +11,18 @@ export default function Tools() {
     const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'list'
     const [visibleNotes, setVisibleNotes] = useState({}); // { id: boolean }
     const navigate = useNavigate();
+
+    // CRUD state
+    const [showToolModal, setShowToolModal] = useState(false);
+    const [editingTool, setEditingTool] = useState(null);
+    const [toolForm, setToolForm] = useState({
+        name: '',
+        url: '',
+        logo_url: '',
+        group_name: '',
+        notes: '',
+        is_pinned: false
+    });
 
     const toggleNoteVisibility = (id) => {
         setVisibleNotes(prev => ({ ...prev, [id]: !prev[id] }));
@@ -27,6 +39,56 @@ export default function Tools() {
         fetchTools();
     }, []);
 
+    const openToolModal = (tool = null) => {
+        if (tool) {
+            setEditingTool(tool);
+            setToolForm({
+                name: tool.name,
+                url: tool.url,
+                logo_url: tool.logo_url || '',
+                group_name: tool.group_name || '',
+                notes: tool.notes || '',
+                is_pinned: tool.is_pinned || false
+            });
+        } else {
+            setEditingTool(null);
+            setToolForm({
+                name: '',
+                url: '',
+                logo_url: '',
+                group_name: '',
+                notes: '',
+                is_pinned: false
+            });
+        }
+        setShowToolModal(true);
+    };
+
+    const handleToolSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            let result;
+            if (editingTool) {
+                result = await updateUserTool(editingTool.id, toolForm);
+            } else {
+                result = await createUserTool(toolForm);
+            }
+            if (result.error) throw result.error;
+            setShowToolModal(false);
+            fetchTools();
+        } catch (error) {
+            console.error(error);
+            alert('Failed to save tool: ' + (error.message || error));
+        }
+    };
+
+    const handleDeleteTool = async (id) => {
+        if (window.confirm('Are you sure you want to delete this tool?')) {
+            const { error } = await deleteUserTool(id);
+            if (error) alert('Failed to delete tool: ' + error.message);
+            else fetchTools();
+        }
+    };
 
     const groups = ['All', ...new Set(tools.map(t => t.group_name || 'General'))];
 
@@ -47,13 +109,15 @@ export default function Tools() {
                     </h1>
                     <p style={{ margin: 0, color: '#64748b', fontSize: '0.95rem' }}>Quick access to your frequently visited maritime and business portals.</p>
                 </div>
-                <button
-                    onClick={() => navigate('/settings')}
-                    className="btn btn-primary"
-                    style={{ background: '#ec4899', borderColor: '#db2777' }}
-                >
-                    <Plus size={18} /> Manage My Tools
-                </button>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                    <button
+                        onClick={() => openToolModal()}
+                        className="btn btn-primary"
+                        style={{ background: '#ec4899', borderColor: '#db2777' }}
+                    >
+                        <Plus size={18} /> Add New Tool
+                    </button>
+                </div>
             </header>
 
             {/* Controls Bar */}
@@ -102,19 +166,36 @@ export default function Tools() {
                 <div style={{ textAlign: 'center', padding: '80px', background: '#fff', borderRadius: '24px', border: '2px dashed #e2e8f0' }}>
                     <Globe size={48} color="#cbd5e1" style={{ marginBottom: '16px' }} />
                     <h3 style={{ margin: '0 0 8px 0', color: '#1e293b' }}>No tools found</h3>
-                    <p style={{ margin: 0, color: '#64748b' }}>Try adjusting your search or add a new portal in your settings.</p>
+                    <p style={{ margin: 0, color: '#64748b' }}>Try adjusting your search or add a new portal.</p>
                 </div>
             ) : viewMode === 'grid' ? (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '24px' }}>
                     {filteredTools.map(tool => (
                         <div key={tool.id} className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', position: 'relative', border: tool.is_pinned ? '2px solid #ec4899' : '1px solid #e2e8f0' }}>
                             {tool.is_pinned && (
-                                <div style={{ position: 'absolute', top: '-12px', right: '20px', background: '#ec4899', color: '#fff', padding: '4px 12px', borderRadius: '12px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                <div style={{ position: 'absolute', top: '-12px', left: '20px', background: '#ec4899', color: '#fff', padding: '4px 12px', borderRadius: '12px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                     Pinned
                                 </div>
                             )}
 
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            <div style={{ position: 'absolute', top: '16px', right: '16px', display: 'flex', gap: '8px', zIndex: 10 }}>
+                                <button
+                                    onClick={() => openToolModal(tool)}
+                                    style={{ background: '#fff', color: '#6366f1', cursor: 'pointer', padding: '6px', borderRadius: '6px', display: 'flex', border: '1px solid #e2e8f0', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
+                                    title="Edit Tool"
+                                >
+                                    <Edit size={14} />
+                                </button>
+                                <button
+                                    onClick={() => handleDeleteTool(tool.id)}
+                                    style={{ background: '#fff', color: '#ef4444', cursor: 'pointer', padding: '6px', borderRadius: '6px', display: 'flex', border: '1px solid #e2e8f0', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
+                                    title="Delete Tool"
+                                >
+                                    <Trash2 size={14} />
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginRight: '60px' }}>
                                 <div style={{ width: '48px', height: '48px', background: '#f1f5f9', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                                     {tool.logo_url ? <img src={tool.logo_url} style={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <Globe size={24} color="#94a3b8" />}
                                 </div>
@@ -210,14 +291,74 @@ export default function Tools() {
                                             </div>
                                         </td>
                                         <td style={{ textAlign: 'right' }}>
-                                            <a href={tool.url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
-                                                <ExternalLink size={14} /> Open Tool
-                                            </a>
+                                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                                <button
+                                                    onClick={() => openToolModal(tool)}
+                                                    style={{ border: 'none', background: 'none', color: '#6366f1', cursor: 'pointer', padding: '4px' }}
+                                                    title="Edit Tool"
+                                                >
+                                                    <Edit size={16} />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteTool(tool.id)}
+                                                    style={{ border: 'none', background: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                                                    title="Delete Tool"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                                <a href={tool.url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                                    <ExternalLink size={14} /> Open Tool
+                                                </a>
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Tool Modal */}
+            {showToolModal && (
+                <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', backdropFilter: 'blur(2px)' }}>
+                    <div style={{ background: '#fff', borderRadius: '16px', width: '100%', maxWidth: '500px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+                        <div style={{ padding: '24px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: '#1e293b' }}>{editingTool ? 'Edit Tool' : 'Add New Tool'}</h3>
+                            <button onClick={() => setShowToolModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
+                        </div>
+                        <form onSubmit={handleToolSubmit} style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>Website Name *</label>
+                                <input required type="text" value={toolForm.name} onChange={e => setToolForm({ ...toolForm, name: e.target.value })} placeholder="e.g. Google" style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }} />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>Website URL *</label>
+                                <input required type="url" value={toolForm.url} onChange={e => setToolForm({ ...toolForm, url: e.target.value })} placeholder="https://..." style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }} />
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>Logo URL (Optional)</label>
+                                    <input type="text" value={toolForm.logo_url} onChange={e => setToolForm({ ...toolForm, logo_url: e.target.value })} placeholder="Icon URL" style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }} />
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>Group / Category</label>
+                                    <input type="text" value={toolForm.group_name} onChange={e => setToolForm({ ...toolForm, group_name: e.target.value })} placeholder="e.g. Search" style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }} />
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>Notes (Username, Password, etc.)</label>
+                                <textarea rows="3" value={toolForm.notes} onChange={e => setToolForm({ ...toolForm, notes: e.target.value })} placeholder="Username: admin&#10;Password: ****" style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', fontFamily: 'monospace', outline: 'none', fontSize: '0.9rem' }} />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <input type="checkbox" id="pinned" checked={toolForm.is_pinned} onChange={e => setToolForm({ ...toolForm, is_pinned: e.target.checked })} />
+                                <label htmlFor="pinned" style={{ fontSize: '0.85rem', fontWeight: 500, color: '#334155' }}>Pin to favorites</label>
+                            </div>
+                            <div style={{ marginTop: '12px', display: 'flex', gap: '12px' }}>
+                                <button type="button" onClick={() => setShowToolModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                                <button type="submit" style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>{editingTool ? 'Update Tool' : 'Add Tool'}</button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

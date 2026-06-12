@@ -184,6 +184,7 @@ export default function BillsPortal() {
                     .select('id, document_no, subject, partners(name), vessels!vessel_id(vessel_name)')
                     .eq('company_id', profile.company_id)
                     .eq('document_type', 'Job')
+                    .order('document_no', { ascending: false })
             ]);
 
             if (billsRes.data) {
@@ -221,7 +222,7 @@ export default function BillsPortal() {
     const getDriveFileId = (bill) => {
         if (bill.gdrive_file_id) return bill.gdrive_file_id;
         if (!bill.attachment_note) return '';
-        const match = bill.attachment_note.match(/File ID: ([a-zA-Z0-9_-]+)/);
+        const match = bill.attachment_note.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
         return match ? match[1] : '';
     };
 
@@ -485,7 +486,7 @@ export default function BillsPortal() {
                         bill_url: publicUrl,
                         attachment_url: publicUrl,
                         gdrive_file_id: file.id,
-                        attachment_note: `GoogleDrive File ID: ${file.id}. Extracted via OpenAI Vision OCR.`
+                        attachment_note: `GoogleDrive File ID: ${file.id}. UEN: ${result.uen || ''}. Address: ${result.address || ''}. Phone: ${result.phone || ''}. Email: ${result.email || ''}. Website: ${result.website || ''}. Extracted via OpenAI Vision OCR.`
                     };
 
                     const { data: savedData, error: dbErr } = await supabase
@@ -589,11 +590,24 @@ export default function BillsPortal() {
                 return;
             }
 
+            // Extract partner metadata parsed from attachment_note
+            const note = editedBill.attachment_note || '';
+            const uenMatch = note.match(/UEN:\s*([^\.]+)/i);
+            const addressMatch = note.match(/Address:\s*([^\.]+)/i);
+            const phoneMatch = note.match(/Phone:\s*([^\.]+)/i);
+            const emailMatch = note.match(/Email:\s*([^\.]+)/i);
+            const websiteMatch = note.match(/Website:\s*([^\.]+)/i);
+
             const newPartner = {
                 company_id: profile.company_id,
                 name: editedBill.supplier_name,
                 types: ['Supplier'],
-                status: 'Active'
+                status: 'Active',
+                uen: (uenMatch ? uenMatch[1].trim() : '') || null,
+                address: (addressMatch ? addressMatch[1].trim() : '') || null,
+                phone1: (phoneMatch ? phoneMatch[1].trim() : '') || null,
+                email1: (emailMatch ? emailMatch[1].trim() : '') || null,
+                website: (websiteMatch ? websiteMatch[1].trim() : '') || null
             };
 
             const { data, error } = await supabase

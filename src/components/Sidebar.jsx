@@ -177,25 +177,7 @@ export default function Sidebar() {
                 </NavLink>
 
                 <div className="nav-separator" />
-                <span className="nav-group-header">Operations & Certificates</span>
-                <NavLink to="/forms/calibration-lab" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Calibration Lab">
-                    <CheckSquare size={20} color="#059669" />
-                    <span className="nav-text">Calibration Lab</span>
-                </NavLink>
 
-
-                <NavLink to="/manuals" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Manuals & Ref. Books">
-                    <Book size={20} color="#f97316" />
-                    <span className="nav-text">Manuals & Ref. Books</span>
-                </NavLink>
-
-
-                <NavLink to="/tools" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Weblinks & Resources">
-                    <Wrench size={20} color="#ec4899" />
-                    <span className="nav-text">Weblinks & Resources</span>
-                </NavLink>
-
-                <div className="nav-separator" />
 
                 <span className="nav-group-header">Messaging Hub & Search</span>
                 <NavLink to="/messaging" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Messaging Hub">
@@ -441,10 +423,20 @@ export default function Sidebar() {
                                     <span className="nav-text">Partners</span>
                                 </NavLink>
                                 {isPinned && (
-                                    <NavLink to="/partners/ai-drive-parser" className={({ isActive }) => `nav-link shortcut-link ${isActive ? 'active' : ''}`} title="AI Drive Card Scanner">
-                                        <HardDrive size={16} color="#ec4899" style={{ marginLeft: '12px' }} />
-                                        <span className="nav-text" style={{ fontSize: '0.85rem', color: '#f472b6', fontWeight: 600 }}>AI Drive Card Scanner</span>
-                                    </NavLink>
+                                    <>
+                                        <NavLink to="/partners/ai-drive-parser" className={({ isActive }) => `nav-link shortcut-link ${isActive ? 'active' : ''}`} title="AI Drive Card Scanner">
+                                            <HardDrive size={16} color="#ec4899" style={{ marginLeft: '12px' }} />
+                                            <span className="nav-text" style={{ fontSize: '0.85rem', color: '#f472b6', fontWeight: 600 }}>AI Drive Card Scanner</span>
+                                        </NavLink>
+                                        <a href="https://business-card-merger.vercel.app" target="_blank" rel="noopener noreferrer" className="nav-link shortcut-link" title="Business Card Merger">
+                                            <Sparkles size={16} color="#ec4899" style={{ marginLeft: '12px' }} />
+                                            <span className="nav-text" style={{ fontSize: '0.85rem', color: '#f472b6', fontWeight: 600 }}>Business Card Merger</span>
+                                        </a>
+                                        <NavLink to="/partners/ai-parser" className={({ isActive }) => `nav-link shortcut-link ${isActive ? 'active' : ''}`} title="AI Parser">
+                                            <Sparkles size={16} color="#a855f7" style={{ marginLeft: '12px' }} />
+                                            <span className="nav-text" style={{ fontSize: '0.85rem', color: '#c084fc', fontWeight: 600 }}>AI Parser</span>
+                                        </NavLink>
+                                    </>
                                 )}
                             </>
                         )}
@@ -484,6 +476,24 @@ export default function Sidebar() {
                         <div className="nav-separator" />
                     </>
                 )}
+
+                <span className="nav-group-header">Operations & Certificates</span>
+                <NavLink to="/forms/calibration-lab" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Calibration Lab">
+                    <CheckSquare size={20} color="#059669" />
+                    <span className="nav-text">Calibration Lab</span>
+                </NavLink>
+
+                <NavLink to="/manuals" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Manuals & Ref. Books">
+                    <Book size={20} color="#f97316" />
+                    <span className="nav-text">Manuals & Ref. Books</span>
+                </NavLink>
+
+                <NavLink to="/tools" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Weblinks & Resources">
+                    <Wrench size={20} color="#ec4899" />
+                    <span className="nav-text">Weblinks & Resources</span>
+                </NavLink>
+
+                <div className="nav-separator" />
 
                 {hasAccess('catalog') && (
                     <>

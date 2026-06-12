@@ -142,6 +142,21 @@ export const getAllCompanies = async () => {
             .order('name', { ascending: true });
 
         if (error) throw error;
+
+        if (data) {
+            const filtered = data.filter(comp => {
+                const nameLower = comp.name?.toLowerCase();
+                const isCelron = nameLower === 'cel-ron enterprises pte ltd' || 
+                                 nameLower === 'celron hub' || 
+                                 nameLower === 'cel-ron hub';
+                if (isCelron && comp.id !== '8431cd0b-7449-44a5-8213-2a8680d09ebe') {
+                    return false;
+                }
+                return true;
+            });
+            return { data: filtered, error: null };
+        }
+
         return { data, error: null };
     } catch (error) {
         console.error('Error fetching companies:', error);

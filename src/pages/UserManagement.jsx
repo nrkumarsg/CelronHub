@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { ShieldCheck, UserCheck, Shield, Disc, Check, X, Search, Building2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { getAllProfiles, updateProfile } from '../lib/userService';
+import { getAllProfiles, updateProfile, createProfileManually } from '../lib/userService';
+import { getAllCompanies, assignUserToCompany, removeUserFromCompany, createCompany, updateCompany, deleteCompany } from '../lib/companyService';
+import { supabase } from '../lib/supabase';
+import { getDocumentSettings, saveDocumentSettings } from '../lib/store';
+import { getOrCreateFolder } from '../lib/driveService';
 
 import { ALL_MODULES } from '../lib/constants';
 
@@ -24,10 +28,16 @@ const UserManagement = () => {
     const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false); // for Create/Edit Company
     const [editingCompany, setEditingCompany] = useState(null);
     const [companyForm, setCompanyForm] = useState({ name: '', slug: '', logo_url: '' });
+    const [selectedCompanyId, setSelectedCompanyId] = useState('');
+
+    const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+    const [userForm, setUserForm] = useState({ email: '', password: 'password123', role: 'user', company_id: '' });
 
     useEffect(() => {
-        fetchInitialData();
-    }, []);
+        if (currentUserProfile?.id) {
+            fetchInitialData();
+        }
+    }, [currentUserProfile?.id]);
 
     const fetchInitialData = async () => {
         setLoading(true);
@@ -36,15 +46,19 @@ const UserManagement = () => {
     };
 
     const fetchCompanies = async () => {
-        if (currentUserProfile?.role === 'superadmin') {
-            const { getAllCompanies } = await import('../lib/companyService');
+        if (currentUserProfile?.role === 'superadmin' || currentUserProfile?.role === 'admin') {
             const { data } = await getAllCompanies();
-            if (data) setCompanies(data);
+            if (data) {
+                let filtered = data;
+                if (currentUserProfile?.role === 'admin') {
+                    filtered = data.filter(c => c.id === currentUserProfile.company_id);
+                }
+                setCompanies(filtered);
+            }
         }
     };
 
     const fetchUsers = async () => {
-        const { getAllProfiles } = await import('../lib/userService');
         const { data, error } = await getAllProfiles();
         if (data) {
             let filteredUserList = data;
@@ -56,6 +70,51 @@ const UserManagement = () => {
             }
             setUsers(filteredUserList);
         }
+    };
+
+    const handleUserSubmit = async (e) => {
+        e.preventDefault();
+        
+        // 1. Sign up the user in Supabase Auth (this inserts auth.users and triggers handle_new_user)
+        const { data: authData, error: authErr } = await supabase.auth.signUp({
+            email: userForm.email,
+            password: userForm.password,
+        });
+
+        if (authErr) {
+            console.error('Error creating auth user:', authErr);
+            alert("Failed to create user: " + authErr.message);
+            return;
+        }
+
+        const newUserId = authData?.user?.id;
+        if (!newUserId) {
+            alert("User created, but no user ID returned. It is possible they already exist.");
+            return;
+        }
+
+        // 2. Update their profile with role and company
+        const { error: profileErr } = await updateProfile(newUserId, {
+            role: userForm.role,
+            company_id: userForm.company_id || null,
+            accessible_modules: ALL_MODULES.map(m => m.id) // Default to all access for new manually created users
+        });
+
+        if (profileErr) {
+            console.error('Error updating user profile:', profileErr);
+        }
+
+        // 3. Assign company membership in company_users junction table
+        if (userForm.company_id) {
+            const { error: cuErr } = await assignUserToCompany(newUserId, userForm.company_id, userForm.role);
+            if (cuErr) {
+                console.error('Error assigning user to company_users:', cuErr);
+            }
+        }
+
+        alert("User successfully created!");
+        setIsUserModalOpen(false);
+        fetchUsers();
     };
 
     const handleUpdate = async (userId, field, value) => {
@@ -87,31 +146,52 @@ const UserManagement = () => {
     };
 
     const handleFetchUserCompanies = async (userId) => {
-        const { supabase } = await import('../lib/supabase');
-        const { data } = await supabase
+        const { data, error } = await supabase
             .from('company_users')
-            .select(`*, company:companies(name)`)
+            .select(`*`)
             .eq('user_id', userId);
-        setUserCompanyRoles(data || []);
+            
+        if (error) {
+            console.error("Error fetching memberships:", error);
+            setUserCompanyRoles([]);
+            return;
+        }
+
+        const mappedData = (data || []).map(cu => {
+            const match = companies.find(c => c.id === cu.company_id);
+            return {
+                ...cu,
+                company: match ? { name: match.name } : { name: 'Unknown Company' }
+            };
+        });
+        
+        setUserCompanyRoles(mappedData);
     };
 
     const handleAssignToCompany = async (userId, companyId, role) => {
-        const { assignUserToCompany } = await import('../lib/companyService');
         const { error } = await assignUserToCompany(userId, companyId, role);
-        if (error) alert("Failed to assign company");
-        else handleFetchUserCompanies(userId);
+        if (error) {
+            console.error("Failed to assign company:", error);
+            alert("Failed to assign company: " + (error.message || JSON.stringify(error)));
+        } else {
+            alert("Company successfully assigned!");
+            handleFetchUserCompanies(userId);
+        }
     };
 
     const handleRemoveFromCompany = async (userId, companyId) => {
-        const { removeUserFromCompany } = await import('../lib/companyService');
         const { error } = await removeUserFromCompany(userId, companyId);
-        if (error) alert("Failed to remove company");
-        else handleFetchUserCompanies(userId);
+        if (error) {
+            console.error("Failed to remove company:", error);
+            alert("Failed to remove company: " + (error.message || JSON.stringify(error)));
+        } else {
+            alert("Company membership removed!");
+            handleFetchUserCompanies(userId);
+        }
     };
 
     const handleCompanySubmit = async (e) => {
         e.preventDefault();
-        const { createCompany, updateCompany } = await import('../lib/companyService');
 
         let res;
         if (editingCompany) {
@@ -138,9 +218,6 @@ const UserManagement = () => {
                     let newFolderId = null;
                     
                     if (token) {
-                        const { getDocumentSettings } = await import('../lib/store');
-                        const { getOrCreateFolder } = await import('../lib/driveService');
-                        
                         let parentFolderId = null;
                         if (currentUserProfile?.company_id) {
                             const currentSettings = await getDocumentSettings(currentUserProfile.company_id);
@@ -163,7 +240,6 @@ const UserManagement = () => {
                         alert(`Notice: Google Drive is not connected. The company "${newCompany.name}" was created, but no Google Drive folder was provisioned.`);
                     }
                     
-                    const { saveDocumentSettings } = await import('../lib/store');
                     await saveDocumentSettings({
                         company_id: newCompany.id,
                         company_name: newCompany.name,
@@ -187,7 +263,6 @@ const UserManagement = () => {
     const handleDeleteCompany = async (companyId) => {
         if (!window.confirm("Are you sure you want to delete this company? This may fail if it has active users or data.")) return;
 
-        const { deleteCompany } = await import('../lib/companyService');
         const { error } = await deleteCompany(companyId);
 
         if (error) {
@@ -217,7 +292,7 @@ const UserManagement = () => {
                                 : 'Create and manage multiple system tenants and company identities.'}
                         </p>
                     </div>
-                    {currentUserProfile?.role === 'superadmin' && (
+                    {(currentUserProfile?.role === 'superadmin' || currentUserProfile?.role === 'admin') && (
                         <div style={{ display: 'flex', background: '#f1f5f9', padding: '4px', borderRadius: '10px', gap: '4px' }}>
                             <button
                                 onClick={() => setViewMode('users')}
@@ -259,7 +334,7 @@ const UserManagement = () => {
                             onChange={(e) => setSearchQuery(e.target.value)}
                         />
                     </div>
-                    {viewMode === 'companies' && (
+                    {viewMode === 'companies' ? (
                         <button
                             className="btn btn-primary"
                             onClick={() => {
@@ -269,6 +344,16 @@ const UserManagement = () => {
                             }}
                         >
                             <Building2 size={18} /> Create New Company
+                        </button>
+                    ) : (
+                        <button
+                            className="btn btn-primary"
+                            onClick={() => {
+                                setUserForm({ email: '', password: 'password123', role: 'user', company_id: currentUserProfile?.company_id || '' });
+                                setIsUserModalOpen(true);
+                            }}
+                        >
+                            <UserCheck size={18} style={{ marginBottom: '-2px', marginRight: '6px' }} /> Create New User
                         </button>
                     )}
                 </div>
@@ -300,7 +385,6 @@ const UserManagement = () => {
                                                     <button 
                                                         className="btn btn-primary"
                                                         onClick={async () => {
-                                                            const { createProfileManually } = await import('../lib/userService');
                                                             const { error } = await createProfileManually(currentUserProfile);
                                                             if (error) alert("Sync failed: " + error.message);
                                                             else {
@@ -367,6 +451,7 @@ const UserManagement = () => {
                                                     <button
                                                         onClick={() => {
                                                             setShowCompanyModal(user);
+                                                            setSelectedCompanyId('');
                                                             handleFetchUserCompanies(user.id);
                                                         }}
                                                         className="btn btn-secondary"
@@ -506,9 +591,9 @@ const UserManagement = () => {
                                 <label className="form-label">Add to Company</label>
                                 <div style={{ display: 'flex', gap: '8px' }}>
                                     <select
-                                        id="new-company-select"
                                         className="form-select"
-                                        defaultValue=""
+                                        value={selectedCompanyId}
+                                        onChange={(e) => setSelectedCompanyId(e.target.value)}
                                     >
                                         <option value="" disabled>Select Company...</option>
                                         {companies.map(c => (
@@ -517,8 +602,10 @@ const UserManagement = () => {
                                     </select>
                                     <button
                                         onClick={() => {
-                                            const sel = document.getElementById('new-company-select');
-                                            if (sel.value) handleAssignToCompany(showCompanyModal.id, sel.value, 'staff');
+                                            if (selectedCompanyId) {
+                                                handleAssignToCompany(showCompanyModal.id, selectedCompanyId, 'staff');
+                                                setSelectedCompanyId('');
+                                            }
                                         }}
                                         className="btn btn-primary"
                                     >
@@ -657,6 +744,95 @@ const UserManagement = () => {
                                 <button type="submit" className="btn btn-primary" style={{ flex: 2 }}>
                                     {editingCompany ? 'Save Changes' : 'Create Company'}
                                 </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Create New User Modal */}
+            {isUserModalOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0, zIndex: 1000,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)'
+                }}>
+                    <div className="glass-panel" style={{ width: '450px', padding: '32px', position: 'relative' }}>
+                        <button
+                            onClick={() => setIsUserModalOpen(false)}
+                            style={{ position: 'absolute', top: '16px', right: '16px', border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748b' }}
+                        >
+                            <X size={20} />
+                        </button>
+
+                        <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '24px' }}>Create New User</h2>
+
+                        <form onSubmit={handleUserSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            <div className="form-group">
+                                <label className="form-label">Email Address *</label>
+                                <input
+                                    required
+                                    type="email"
+                                    className="form-input"
+                                    value={userForm.email}
+                                    onChange={e => setUserForm({ ...userForm, email: e.target.value })}
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Password *</label>
+                                <input
+                                    required
+                                    type="text"
+                                    className="form-input"
+                                    value={userForm.password}
+                                    onChange={e => setUserForm({ ...userForm, password: e.target.value })}
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Role *</label>
+                                <select
+                                    required
+                                    className="form-select"
+                                    value={userForm.role}
+                                    onChange={e => setUserForm({ ...userForm, role: e.target.value })}
+                                >
+                                    <option value="user">User / Staff</option>
+                                    <option value="admin">Admin</option>
+                                    {currentUserProfile?.role === 'superadmin' && (
+                                        <option value="superadmin">Superadmin</option>
+                                    )}
+                                </select>
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Assign to Company *</label>
+                                {currentUserProfile?.role === 'superadmin' ? (
+                                    <select
+                                        required
+                                        className="form-select"
+                                        value={userForm.company_id}
+                                        onChange={e => setUserForm({ ...userForm, company_id: e.target.value })}
+                                    >
+                                        <option value="" disabled>Select Company...</option>
+                                        {companies.map(c => (
+                                            <option key={c.id} value={c.id}>{c.name}</option>
+                                        ))}
+                                    </select>
+                                ) : (
+                                    <input
+                                        disabled
+                                        type="text"
+                                        className="form-input"
+                                        value={activeCompany?.name || 'My Company'}
+                                    />
+                                )}
+                            </div>
+
+                            <div style={{ marginTop: '12px', display: 'flex', gap: '12px' }}>
+                                <button type="button" onClick={() => setIsUserModalOpen(false)} className="btn btn-secondary" style={{ flex: 1 }}>Cancel</button>
+                                <button type="submit" className="btn btn-primary" style={{ flex: 2 }}>Create User</button>
                             </div>
                         </form>
                     </div>

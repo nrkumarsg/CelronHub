@@ -19,6 +19,15 @@ export const AuthProvider = ({ children }) => {
     const initializationStartedRef = React.useRef(false);
     const currentUserIdRef = React.useRef(null);
 
+    useEffect(() => {
+        // Force CEL-RON ENTERPRISES PTE LTD on fresh opening (new tab/session)
+        const isSessionInitialized = sessionStorage.getItem('session_company_initialized');
+        if (!isSessionInitialized) {
+            localStorage.removeItem('active_company_id');
+            sessionStorage.setItem('session_company_initialized', 'true');
+        }
+    }, []);
+
     const defaultDemoProfile = (user) => {
         const email = user?.email || 'demo@celron.ae';
         const role = email.toLowerCase() === 'nrkumarsg@gmail.com' ? 'superadmin' : 'user';
@@ -57,14 +66,34 @@ export const AuthProvider = ({ children }) => {
                         (comp.name === 'CELRON HUB' || comp.name === 'Cel-Ron Hub') 
                             ? { ...comp, name: 'CEL-RON ENTERPRISES PTE LTD' } 
                             : comp
-                    );
+                    ).filter(comp => {
+                        const nameLower = comp.name?.toLowerCase();
+                        const isCelron = nameLower === 'cel-ron enterprises pte ltd' || 
+                                         nameLower === 'celron hub' || 
+                                         nameLower === 'cel-ron hub';
+                        if (isCelron && comp.id !== '8431cd0b-7449-44a5-8213-2a8680d09ebe') {
+                            return false;
+                        }
+                        return true;
+                    });
                 }
 
                 setProfile(p);
                 setCompanies(c);
                 
                 const storedCompany = localStorage.getItem('active_company_id');
-                setActiveCompanyId(storedCompany || p.company_id);
+                const celron = c.find(comp => 
+                    comp.name === 'CEL-RON ENTERPRISES PTE LTD' || 
+                    comp.name === 'Cel-Ron Hub' || 
+                    comp.name === 'CELRON HUB' ||
+                    comp.slug === 'celron-enterprises' ||
+                    comp.slug === 'celron-hub' ||
+                    comp.id === '8431cd0b-7449-44a5-8213-2a8680d09ebe'
+                );
+                setActiveCompanyId(storedCompany && c.some(comp => comp.id === storedCompany)
+                    ? storedCompany 
+                    : (celron?.id || p.company_id)
+                );
                 
                 hasCache = true;
                 setLoading(false); // INSTANT ACCESS if cache exists
@@ -123,9 +152,10 @@ export const AuthProvider = ({ children }) => {
         try {
             console.log('Auth: Refreshing workspace data...');
             // Parallel fetch for speed
-            const [profileRes, companiesRes] = await Promise.all([
+            const [profileRes, companiesRes, myCompaniesRes] = await Promise.all([
                 getProfile(currUser.id),
-                getAllCompanies() // Superadmin can see all, logic handled in refreshProfileData usually
+                getAllCompanies(),
+                getMyCompanies(currUser.id)
             ]);
             
             let profileData = profileRes.data;
@@ -136,14 +166,56 @@ export const AuthProvider = ({ children }) => {
             }
 
             // Filter companies if not superadmin (logic actually in service but to be safe)
-            const allComps = companiesRes?.data || [];
-            const myComps = (profileData && profileData.role === 'superadmin') 
-                ? allComps 
-                : allComps.filter(c => c.id === profileData?.company_id);
+            let allComps = companiesRes?.data || [];
+            allComps = allComps.map(comp => 
+                (comp.name === 'CELRON HUB' || comp.name === 'Cel-Ron Hub') 
+                    ? { ...comp, name: 'CEL-RON ENTERPRISES PTE LTD' } 
+                    : comp
+            ).filter(comp => {
+                const nameLower = comp.name?.toLowerCase();
+                const isCelron = nameLower === 'cel-ron enterprises pte ltd' || 
+                                 nameLower === 'celron hub' || 
+                                 nameLower === 'cel-ron hub';
+                if (isCelron && comp.id !== '8431cd0b-7449-44a5-8213-2a8680d09ebe') {
+                    return false;
+                }
+                return true;
+            });
+            
+            let myComps = [];
+            if (profileData && profileData.role === 'superadmin') {
+                myComps = allComps;
+            } else {
+                const memberComps = myCompaniesRes?.data || [];
+                if (memberComps.length > 0) {
+                    myComps = memberComps;
+                } else {
+                    const hasProfileCompany = profileData?.company_id && allComps.some(c => c.id === profileData.company_id);
+                    if (hasProfileCompany) {
+                        const profComp = allComps.find(c => c.id === profileData.company_id);
+                        myComps = [profComp];
+                    } else {
+                        myComps = [];
+                    }
+                }
+            }
+
+            if (profileData?.company?.name === 'CELRON HUB' || profileData?.company?.name === 'Cel-Ron Hub') {
+                profileData.company.name = 'CEL-RON ENTERPRISES PTE LTD';
+            }
 
             const storedCompany = localStorage.getItem('active_company_id');
+            const celronCompany = myComps.find(c => 
+                c.name === 'CEL-RON ENTERPRISES PTE LTD' || 
+                c.name === 'Cel-Ron Hub' || 
+                c.name === 'CELRON HUB' ||
+                c.slug === 'celron-enterprises' ||
+                c.slug === 'celron-hub' ||
+                c.id === '8431cd0b-7449-44a5-8213-2a8680d09ebe'
+            );
             const defaultCompany = (storedCompany && myComps.some(c => c.id === storedCompany))
-                ? storedCompany : (myComps[0]?.id || profileData?.company_id);
+                ? storedCompany 
+                : (celronCompany?.id || myComps[0]?.id || profileData?.company_id);
 
             const activeComp = myComps?.find(c => c.id === defaultCompany);
             if (activeComp?.enabled_modules && profileData.role !== 'superadmin') {

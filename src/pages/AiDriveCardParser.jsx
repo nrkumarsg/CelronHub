@@ -228,6 +228,10 @@ export default function AiDriveCardParser() {
           
           for (const f of filesInFolder) {
             if (f.mimeType === 'application/vnd.google-apps.folder') {
+              if (f.name && (f.name.toLowerCase() === 'raw_bus_cards' || f.name.toLowerCase().replace(/_/g, ' ') === 'raw bus cards')) {
+                addLog(`Excluding folder "${f.name}" from scanning.`, 'info');
+                continue;
+              }
               if (!scannedFolders.has(f.id) && !foldersToScan.includes(f.id)) {
                 foldersToScan.push(f.id);
               }
@@ -267,14 +271,14 @@ export default function AiDriveCardParser() {
       const indexedFileIds = new Set();
       existingDraftsList.forEach(p => {
         if (p.info) {
-          const match = p.info.match(/File ID: ([a-zA-Z0-9_-]+)/);
+          const match = p.info.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
           if (match) indexedFileIds.add(match[1]);
           indexedFileIds.add(p.info);
         }
       });
       activePartnersList.forEach(p => {
         if (p.info) {
-          const match = p.info.match(/File ID: ([a-zA-Z0-9_-]+)/);
+          const match = p.info.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
           if (match) indexedFileIds.add(match[1]);
           indexedFileIds.add(p.info);
         }
@@ -530,7 +534,7 @@ export default function AiDriveCardParser() {
 
   const getDriveFileId = (infoString) => {
     if (!infoString) return '';
-    const match = infoString.match(/File ID: ([a-zA-Z0-9_-]+)/);
+    const match = infoString.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
     return match ? match[1] : '';
   };
 

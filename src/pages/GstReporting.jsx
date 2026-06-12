@@ -150,8 +150,14 @@ export default function GstReporting() {
     const salesDocs = (documents || []).filter(doc => {
         if (!doc || !doc.issue_date) return false;
         
-        // Date range check
-        const inRange = doc.issue_date >= range.start && doc.issue_date <= range.end;
+        // Timezone-safe year and quarter check
+        const parts = doc.issue_date.split('T')[0].split('-');
+        if (parts.length < 3) return false;
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const quarter = Math.floor(month / 3) + 1;
+        
+        const inRange = year === selectedYear && quarter === selectedQuarter;
         if (!inRange) return false;
 
         if (doc.document_type === 'Tax Invoice') {
@@ -187,7 +193,16 @@ export default function GstReporting() {
             currency: 'SGD',
             link: e.job_id ? `/workflows/editor/Job/${e.job_id}` : null
         }))
-        .filter(d => d && d.date && d.date >= range.start && d.date <= range.end);
+        .filter(d => {
+            if (!d || !d.date) return false;
+            // Parse in a timezone-safe way by splitting YYYY-MM-DD
+            const parts = d.date.split('T')[0].split('-');
+            if (parts.length < 3) return false;
+            const year = parseInt(parts[0], 10);
+            const month = parseInt(parts[1], 10) - 1;
+            const quarter = Math.floor(month / 3) + 1;
+            return year === selectedYear && quarter === selectedQuarter;
+        });
 
     const outputGst = salesDocs.reduce((sum, d) => sum + (parseFloat(d.tax_amount) || 0), 0);
     const inputGst = purchaseDocs.reduce((sum, d) => sum + (parseFloat(d.tax) || 0), 0);

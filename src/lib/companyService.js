@@ -10,23 +10,71 @@ export const getMyCompanies = async (userId) => {
         userId = session.user.id;
     }
 
-    const { data, error } = await supabase
+    // Fetch flat memberships
+    const { data: memberships, error: cuError } = await supabase
         .from('company_users')
-        .select(`
-            id,
-            role,
-            company:companies(id, name, slug, logo_url, enabled_modules)
-        `)
+        .select('id, role, company_id')
         .eq('user_id', userId);
 
-    // Transform to simple array of company objects
-    const companies = data ? data.map(cu => ({
-        ...cu.company,
-        role: cu.role,
-        junction_id: cu.id
-    })) : [];
+    if (cuError) {
+        console.error('Error fetching company_users:', cuError);
+        return { data: [], error: cuError };
+    }
 
-    return { data: companies, error };
+    if (!memberships || memberships.length === 0) {
+        return { data: [], error: null };
+    }
+
+    // Fetch all companies to join in-memory
+    const { data: allCompanies, error: cError } = await supabase
+        .from('companies')
+        .select('id, name, slug, logo_url, enabled_modules');
+
+    if (cError) {
+        console.error('Error fetching companies for join fallback:', cError);
+        // Fallback to stubs if companies cannot be queried directly
+        const companies = memberships.map(cu => ({
+            id: cu.company_id,
+            name: cu.company_id === '8431cd0b-7449-44a5-8213-2a8680d09ebe' ? 'CEL-RON ENTERPRISES PTE LTD' : 'Company ' + cu.company_id.substring(0, 8),
+            slug: cu.company_id === '8431cd0b-7449-44a5-8213-2a8680d09ebe' ? 'celron-enterprises' : 'company-' + cu.company_id.substring(0, 8),
+            logo_url: cu.company_id === '8431cd0b-7449-44a5-8213-2a8680d09ebe' ? '/logo.png' : null,
+            role: cu.role,
+            junction_id: cu.id
+        }));
+        return { data: companies, error: null };
+    }
+
+    // Map companies in-memory
+    const companyMap = {};
+    if (allCompanies) {
+        allCompanies.forEach(c => {
+            companyMap[c.id] = c;
+        });
+    }
+
+    const companies = memberships.map(cu => {
+        const comp = companyMap[cu.company_id] || {
+            id: cu.company_id,
+            name: cu.company_id === '8431cd0b-7449-44a5-8213-2a8680d09ebe' ? 'CEL-RON ENTERPRISES PTE LTD' : 'Unknown Company',
+            slug: cu.company_id === '8431cd0b-7449-44a5-8213-2a8680d09ebe' ? 'celron-enterprises' : 'unknown'
+        };
+        return {
+            ...comp,
+            role: cu.role,
+            junction_id: cu.id
+        };
+    }).filter(comp => {
+        const nameLower = comp.name?.toLowerCase();
+        const isCelron = nameLower === 'cel-ron enterprises pte ltd' || 
+                         nameLower === 'celron hub' || 
+                         nameLower === 'cel-ron hub';
+        if (isCelron && comp.id !== '8431cd0b-7449-44a5-8213-2a8680d09ebe') {
+            return false;
+        }
+        return true;
+    });
+
+    return { data: companies, error: null };
 };
 
 /**
@@ -72,6 +120,20 @@ export const getAllCompanies = async () => {
         .from('companies')
         .select('*')
         .order('name', { ascending: true });
+        
+    if (data) {
+        const filtered = data.filter(comp => {
+            const nameLower = comp.name?.toLowerCase();
+            const isCelron = nameLower === 'cel-ron enterprises pte ltd' || 
+                             nameLower === 'celron hub' || 
+                             nameLower === 'cel-ron hub';
+            if (isCelron && comp.id !== '8431cd0b-7449-44a5-8213-2a8680d09ebe') {
+                return false;
+            }
+            return true;
+        });
+        return { data: filtered, error };
+    }
     return { data, error };
 };
 

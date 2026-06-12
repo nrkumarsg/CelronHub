@@ -70,11 +70,11 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
         .eq('company_id', companyId)
         .ilike('document_no', `${prefix}-%`)
         .not('document_no', 'ilike', '%-R%') // Exclude revisions
-        .order('created_at', { ascending: false })
-        .limit(100);
+        .order('created_at', { ascending: false });
 
     if (type !== 'Job') {
-        query = query.eq('document_type', type);
+        query = query.eq('document_type', type)
+                     .or('is_job.eq.false,is_job.is.null'); // Only look at standalone document sequences
     }
 
     const { data, error } = await query;
@@ -93,7 +93,7 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
             }
         }
         if (maxNum > 0) {
-            nextNum = maxNum + 1;
+            nextNum = Math.max(nextNum, maxNum + 1);
         }
     }
 
@@ -102,7 +102,7 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
     let isUnique = false;
     let attempts = 0;
 
-    while (!isUnique && attempts < 10) {
+    while (!isUnique && attempts < 100) {
         const { data: existing } = await supabase
             .from('workflow_documents')
             .select('id')
@@ -503,15 +503,38 @@ export const saveWorkflowDocument = async (docData, lineItems) => {
         savedDoc = data;
 
         if (oldJobNo && oldJobNo !== savedDoc.document_no) {
-            // Propagate the renamed job number to all other associated documents in the suite
-            const { error: renameError } = await supabase
-                .from('workflow_documents')
-                .update({ assigned_job_no: savedDoc.document_no })
-                .eq('assigned_job_no', oldJobNo);
-            if (renameError) {
-                console.error("Failed to propagate renamed assigned_job_no:", renameError);
-            } else {
-                console.log(`Propagated job suite rename from ${oldJobNo} to ${savedDoc.document_no} successfully.`);
+            try {
+                const oldSuffix = oldJobNo.includes('-') ? oldJobNo.substring(oldJobNo.indexOf('-') + 1) : oldJobNo;
+                const newSuffix = savedDoc.document_no.includes('-') ? savedDoc.document_no.substring(savedDoc.document_no.indexOf('-') + 1) : savedDoc.document_no;
+
+                // 1. Fetch all associated documents
+                const { data: suiteDocs } = await supabase
+                    .from('workflow_documents')
+                    .select('id, document_no')
+                    .eq('assigned_job_no', oldJobNo);
+
+                if (suiteDocs && suiteDocs.length > 0) {
+                    for (const doc of suiteDocs) {
+                        const newDocNo = doc.document_no.replace(oldSuffix, newSuffix);
+                        await supabase
+                            .from('workflow_documents')
+                            .update({ 
+                                document_no: newDocNo,
+                                assigned_job_no: savedDoc.document_no 
+                            })
+                            .eq('id', doc.id);
+                    }
+                }
+
+                // 2. Propagate to legacy jobs table
+                await supabase
+                    .from('jobs')
+                    .update({ job_no: savedDoc.document_no })
+                    .eq('job_no', oldJobNo);
+                    
+                console.log(`Successfully renamed job suite and propagated from ${oldJobNo} to ${savedDoc.document_no}`);
+            } catch (propErr) {
+                console.error("Failed to propagate job rename:", propErr);
             }
         }
     }
@@ -1049,9 +1072,29 @@ export const convertInvoiceToJob = async (invoiceId, poData = {}) => {
     const { data: inv, error: invErr } = await getWorkflowDocumentById(invoiceId);
     if (invErr) throw invErr;
 
-    // 1. Generate Job Number Suite (CEL-YYMM-XXXX)
+    // 1. Generate Job Number Suite (CEL-YYMM-XXXX) with prefix checks
     let baseJobNo = await generateDocNumber(inv.company_id, 'Job');
     let seqPart = baseJobNo.split('-').slice(1).join('-'); // YYMM-XXXX
+    
+    const prefixes = ['CEL', 'ORA', 'DO', 'PRO', 'INV', 'PKL', 'CERT', 'SR'];
+    let attempts = 0;
+    while (attempts < 20) {
+        const targetNos = prefixes.map(p => `${p}-${seqPart}`);
+        const { data: existing } = await supabase
+            .from('workflow_documents')
+            .select('document_no')
+            .in('document_no', targetNos);
+            
+        if (!existing || existing.length === 0) break;
+        
+        // If any taken, increment the number part
+        const parts = seqPart.split('-');
+        const yyMM = parts[0];
+        const num = parseInt(parts[1]);
+        seqPart = `${yyMM}-${padZero(num + 1, 4)}`;
+        attempts++;
+    }
+
     const jobNo = `CEL-${seqPart}`;
 
     // 2. Update Original Invoice to be part of the Job

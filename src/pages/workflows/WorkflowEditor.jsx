@@ -1598,43 +1598,90 @@ export default function WorkflowEditor() {
             setLineItems(uniqueItems);
 
             if (originalJobNo && formData.assigned_job_no && formData.assigned_job_no !== originalJobNo) {
-                const confirmRename = confirm(`You are changing the Assigned Job Number from "${originalJobNo}" to "${formData.assigned_job_no}".\n\nThis will update all associated documents in this Job suite to remain linked under the new job number.\n\nDo you want to proceed?`);
+                const confirmRename = confirm(`You are changing the Assigned Job Number from "${originalJobNo}" to "${formData.assigned_job_no}".\n\nThis will update all associated documents in this Job suite to remain linked and renamed under the new job number.\n\nDo you want to proceed?`);
                 if (!confirmRename) {
                     setSaving(false);
                     return;
                 }
-                
-                // 1. Update assigned_job_no for all associated documents in the suite
-                const { error: renameError } = await supabase
+
+                const oldSuffix = originalJobNo.includes('-') ? originalJobNo.substring(originalJobNo.indexOf('-') + 1) : originalJobNo;
+                const newSuffix = formData.assigned_job_no.includes('-') ? formData.assigned_job_no.substring(formData.assigned_job_no.indexOf('-') + 1) : formData.assigned_job_no;
+
+                // 1. Fetch all associated documents in the suite
+                const { data: suiteDocs, error: fetchErr } = await supabase
                     .from('workflow_documents')
-                    .update({ assigned_job_no: formData.assigned_job_no })
+                    .select('id, document_no, document_type')
                     .eq('assigned_job_no', originalJobNo)
                     .eq('company_id', profile.company_id);
-                    
-                if (renameError) {
-                    throw new Error('Failed to rename suite job number: ' + renameError.message);
+                
+                if (fetchErr) {
+                    throw new Error('Failed to fetch suite documents: ' + fetchErr.message);
                 }
 
-                // 2. ALSO update the Job document itself (both document_no and assigned_job_no)
-                const { error: jobRenameError } = await supabase
-                    .from('workflow_documents')
-                    .update({ 
-                        document_no: formData.assigned_job_no,
-                        assigned_job_no: formData.assigned_job_no
-                    })
-                    .eq('document_no', originalJobNo)
-                    .eq('document_type', 'Job')
+                // 2. Update all documents in the suite (renaming document_no and assigned_job_no)
+                if (suiteDocs && suiteDocs.length > 0) {
+                    for (const doc of suiteDocs) {
+                        const newDocNo = doc.document_no.replace(oldSuffix, newSuffix);
+                        const { error: renameError } = await supabase
+                            .from('workflow_documents')
+                            .update({ 
+                                document_no: newDocNo,
+                                assigned_job_no: formData.assigned_job_no 
+                            })
+                            .eq('id', doc.id);
+                        if (renameError) {
+                            console.error(`Failed to rename document ${doc.document_no}:`, renameError);
+                        }
+                    }
+                }
+
+                // 3. ALSO update the Job document itself (if not already handled in suiteDocs loop)
+                const jobDocInSuite = suiteDocs?.some(d => d.document_no === originalJobNo && d.document_type === 'Job');
+                if (!jobDocInSuite) {
+                    const { error: jobRenameError } = await supabase
+                        .from('workflow_documents')
+                        .update({ 
+                            document_no: formData.assigned_job_no,
+                            assigned_job_no: formData.assigned_job_no
+                        })
+                        .eq('document_no', originalJobNo)
+                        .eq('document_type', 'Job')
+                        .eq('company_id', profile.company_id);
+
+                    if (jobRenameError) {
+                        console.error('Failed to rename Job document number:', jobRenameError);
+                    }
+                }
+
+                // 4. Update the legacy jobs table job_no
+                const { error: jobTableError } = await supabase
+                    .from('jobs')
+                    .update({ job_no: formData.assigned_job_no })
+                    .eq('job_no', originalJobNo)
                     .eq('company_id', profile.company_id);
-
-                if (jobRenameError) {
-                    console.error('Failed to rename Job document number:', jobRenameError);
+                if (jobTableError) {
+                    console.error('Failed to update jobs table job_no:', jobTableError);
                 }
 
-                // 3. Rename Google Drive folder if linked
+                // 5. Rename Google Drive folder if linked, preserving customer/vessel names
                 if (formData.drive_folder_id) {
                     const token = await getStoredToken();
                     if (token) {
                         try {
+                            const driveGetRes = await fetch(`https://www.googleapis.com/drive/v3/files/${formData.drive_folder_id}?fields=name`, {
+                                headers: { 'Authorization': 'Bearer ' + token }
+                            });
+                            let newFolderName = formData.assigned_job_no;
+                            if (driveGetRes.ok) {
+                                const folderData = await driveGetRes.json();
+                                const currentName = folderData.name;
+                                if (currentName.includes(originalJobNo)) {
+                                    newFolderName = currentName.replace(originalJobNo, formData.assigned_job_no);
+                                } else {
+                                    newFolderName = currentName.replace(/CEL-\d{4}-\d{4}/, formData.assigned_job_no);
+                                }
+                            }
+                            
                             const driveRenameRes = await fetch(`https://www.googleapis.com/drive/v3/files/${formData.drive_folder_id}`, {
                                 method: 'PATCH',
                                 headers: {
@@ -1642,11 +1689,11 @@ export default function WorkflowEditor() {
                                     'Content-Type': 'application/json'
                                 },
                                 body: JSON.stringify({
-                                    name: formData.assigned_job_no
+                                    name: newFolderName
                                 })
                             });
                             if (driveRenameRes.ok) {
-                                console.log('Successfully renamed Google Drive folder to', formData.assigned_job_no);
+                                console.log('Successfully renamed Google Drive folder to', newFolderName);
                             } else {
                                 console.warn('Google Drive folder rename failed:', await driveRenameRes.text());
                             }
@@ -1656,8 +1703,15 @@ export default function WorkflowEditor() {
                     }
                 }
 
-                // If the current saved document is the Job document itself, sync document_no
-                if (formData.document_type === 'Job') {
+                // 6. Sync current editor state document_no if it was part of the suite rename
+                if (formData.id) {
+                    const currentDoc = suiteDocs?.find(d => d.id === formData.id);
+                    if (currentDoc) {
+                        const newCurrentDocNo = currentDoc.document_no.replace(oldSuffix, newSuffix);
+                        setFormData(prev => ({ ...prev, document_no: newCurrentDocNo, assigned_job_no: formData.assigned_job_no }));
+                        formData.document_no = newCurrentDocNo;
+                    }
+                } else if (formData.document_type === 'Job') {
                     setFormData(prev => ({ ...prev, document_no: formData.assigned_job_no }));
                     formData.document_no = formData.assigned_job_no;
                 }

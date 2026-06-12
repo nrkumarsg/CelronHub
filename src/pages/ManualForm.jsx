@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Save, ArrowLeft, Cloud, FileText, Book, User, Info, Building } from 'lucide-react';
+import { Save, ArrowLeft, Cloud, FileText, Book, User, Info, Building, Tag } from 'lucide-react';
 import { saveManual, getManuals } from '../lib/manualsService';
 import { uploadFileToDrive, getOrCreateFolder } from '../lib/driveService';
 import { connectGoogleAPI } from '../lib/googleAuthService';
@@ -14,11 +14,13 @@ export default function ManualForm() {
 
     const [formData, setFormData] = useState({
         title: '',
-        group_name: '',
-        author_company: '',
+        manufacturer: '',
+        model: '',
+        category: '',
+        summary: '',
+        tags: '',
         file_url: '',
-        file_id: '',
-        info: ''
+        file_id: ''
     });
 
     const [file, setFile] = useState(null);
@@ -26,7 +28,6 @@ export default function ManualForm() {
     const [uploading, setUploading] = useState(false);
 
     useEffect(() => {
-        // Restore pending data from before redirect
         const pendingData = sessionStorage.getItem('pending_manual_data');
         if (pendingData) {
             setFormData(JSON.parse(pendingData));
@@ -41,7 +42,26 @@ export default function ManualForm() {
     const loadManual = async () => {
         const { data } = await getManuals();
         const existing = data.find(m => m.id === id);
-        if (existing) setFormData(existing);
+        if (existing) {
+            let unpacked = { ...existing };
+            if (existing.info && existing.info.startsWith('{')) {
+                try {
+                    const extra = JSON.parse(existing.info);
+                    unpacked = { ...unpacked, ...extra };
+                } catch (e) {}
+            }
+            setFormData({
+                id: existing.id,
+                title: unpacked.title || '',
+                manufacturer: unpacked.manufacturer || unpacked.author_company || '',
+                model: unpacked.model || '',
+                category: unpacked.category || unpacked.group_name || '',
+                summary: unpacked.summary || (unpacked.info && !unpacked.info.startsWith('{') ? unpacked.info : ''),
+                tags: Array.isArray(unpacked.tags) ? unpacked.tags.join(', ') : (unpacked.tags || ''),
+                file_url: unpacked.file_url || '',
+                file_id: unpacked.file_id || ''
+            });
+        }
     };
 
     const handleFileChange = (e) => {
@@ -55,13 +75,11 @@ export default function ManualForm() {
         try {
             let finalData = { ...formData };
 
-            // If it's a new upload and we have a file
             if (file) {
-                const token = sessionStorage.getItem('google_contacts_token'); // Re-using the token storage
+                const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
                 const expires = sessionStorage.getItem('google_contacts_expires');
 
-                if (!token || new Date(expires) < new Date()) {
-                    // Need to re-auth
+                if (!token || (expires && new Date(expires) < new Date())) {
                     if (window.confirm('Google Drive access is required for upload. Redirect to login?')) {
                         sessionStorage.setItem('pending_manual_data', JSON.stringify(formData));
                         connectGoogleAPI('manual_upload');
@@ -71,13 +89,14 @@ export default function ManualForm() {
                 }
 
                 setUploading(true);
-                // 1. Get or create a specific folder named 'Manual' in the user's root
-                const folderId = await getOrCreateFolder(token, 'Manual');
+                // Upload to /Manuals/{Manufacturer}/{Model} folder structure
+                const manualsRootId = await getOrCreateFolder(token, 'Manuals');
+                const mfgFolderId = await getOrCreateFolder(token, formData.manufacturer || 'Unknown', manualsRootId);
+                const modelFolderId = await getOrCreateFolder(token, formData.model || 'General', mfgFolderId);
 
-                // 2. Upload with folder context
                 const driveFile = await uploadFileToDrive(token, file, {
                     title: formData.title || file.name,
-                    folderId: folderId
+                    folderId: modelFolderId
                 });
 
                 finalData.file_id = driveFile.id;
@@ -85,10 +104,30 @@ export default function ManualForm() {
                 setUploading(false);
             }
 
-            const { error } = await saveManual({
-                ...finalData,
-                user_id: profile?.id // Explicitly bind to current user
-            });
+            // Convert comma-separated tags to array
+            const tagsArray = formData.tags
+                ? formData.tags.split(',').map(t => t.trim().toLowerCase()).filter(t => t !== '')
+                : [];
+
+            const savePayload = {
+                title: finalData.title,
+                manufacturer: finalData.manufacturer,
+                model: finalData.model,
+                category: finalData.category,
+                summary: finalData.summary,
+                tags: tagsArray,
+                file_url: finalData.file_url,
+                file_id: finalData.file_id,
+                author_company: finalData.manufacturer, // For compatibility
+                group_name: finalData.category, // For compatibility
+                info: finalData.summary
+            };
+
+            if (formData.id) {
+                savePayload.id = formData.id;
+            }
+
+            const { error } = await saveManual(savePayload);
             if (error) throw error;
 
             alert('Manual saved successfully!');
@@ -135,22 +174,7 @@ export default function ManualForm() {
                     </div>
 
                     <div>
-                        <label className="form-label">Group / Category</label>
-                        <div style={{ position: 'relative' }}>
-                            <Info size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: '#94a3b8' }} />
-                            <input
-                                type="text"
-                                className="form-input"
-                                style={{ paddingLeft: '40px' }}
-                                placeholder="e.g. Propulsion"
-                                value={formData.group_name}
-                                onChange={(e) => setFormData({ ...formData, group_name: e.target.value })}
-                            />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="form-label">Company / Author</label>
+                        <label className="form-label">Manufacturer / Brand *</label>
                         <div style={{ position: 'relative' }}>
                             <Building size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: '#94a3b8' }} />
                             <input
@@ -158,10 +182,69 @@ export default function ManualForm() {
                                 className="form-input"
                                 style={{ paddingLeft: '40px' }}
                                 placeholder="e.g. Caterpillar Inc."
-                                value={formData.author_company}
-                                onChange={(e) => setFormData({ ...formData, author_company: e.target.value })}
+                                value={formData.manufacturer}
+                                onChange={(e) => setFormData({ ...formData, manufacturer: e.target.value })}
+                                required
                             />
                         </div>
+                    </div>
+
+                    <div>
+                        <label className="form-label">Model / Series *</label>
+                        <div style={{ position: 'relative' }}>
+                            <Info size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: '#94a3b8' }} />
+                            <input
+                                type="text"
+                                className="form-input"
+                                style={{ paddingLeft: '40px' }}
+                                placeholder="e.g. C32"
+                                value={formData.model}
+                                onChange={(e) => setFormData({ ...formData, model: e.target.value })}
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="form-label">Category / Group</label>
+                        <div style={{ position: 'relative' }}>
+                            <User size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: '#94a3b8' }} />
+                            <input
+                                type="text"
+                                className="form-input"
+                                style={{ paddingLeft: '40px' }}
+                                placeholder="e.g. Propulsion"
+                                value={formData.category}
+                                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="form-label">Tags (comma-separated)</label>
+                        <div style={{ position: 'relative' }}>
+                            <Tag size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: '#94a3b8' }} />
+                            <input
+                                type="text"
+                                className="form-input"
+                                style={{ paddingLeft: '40px' }}
+                                placeholder="e.g. engine, maintenance, service"
+                                value={formData.tags}
+                                onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
+                            />
+                        </div>
+                    </div>
+
+                    <div style={{ gridColumn: '1 / -1' }}>
+                        <label className="form-label">Technical Summary / Description</label>
+                        <textarea
+                            className="form-input"
+                            rows="4"
+                            style={{ resize: 'vertical', padding: '12px' }}
+                            placeholder="Enter a description or key technical summary..."
+                            value={formData.summary}
+                            onChange={(e) => setFormData({ ...formData, summary: e.target.value })}
+                        />
                     </div>
                 </div>
 

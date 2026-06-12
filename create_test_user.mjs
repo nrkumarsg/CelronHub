@@ -10,15 +10,17 @@ const supabase = createClient(url, key);
 async function createTestUser() {
     console.log('Attempting to create test user...');
     const { data, error } = await supabase.auth.signUp({
-        email: 'testuser@celron.com',
-        password: 'password123',
+        email: 'nrkumarsg@gmail.com',
+        password: 'celron1234',
     });
 
     if (error) {
         console.error('Error:', error.message);
     } else {
         console.log('User created or already exists:', data.user?.email);
+        console.log('Identities:', data.user?.identities);
     }
 }
 
 createTestUser();
+
