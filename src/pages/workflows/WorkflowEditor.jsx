@@ -185,13 +185,33 @@ export default function WorkflowEditor() {
     };
 
     // Open Specific Job Google Drive Folder
-    const handleOpenJobDrive = () => {
-        const folderId = formData.drive_folder_id || formData.gdrive_folder_id;
+    const handleOpenJobDrive = async () => {
+        let folderId = formData.drive_folder_id || formData.gdrive_folder_id || explorerFolderId;
         if (!folderId) {
-            toast.error('No Google Drive folder linked for this Job.');
-            return;
+            const loadToast = toast.loading('Provisioning/retrieving Google Drive folder...');
+            try {
+                folderId = await ensureJobFolder();
+                if (folderId) {
+                    setFormData(prev => ({ ...prev, drive_folder_id: folderId }));
+                    await supabase.from('workflow_documents').update({ drive_folder_id: folderId }).eq('id', id);
+                    toast.dismiss(loadToast);
+                    toast.success('Folder created successfully!');
+                } else {
+                    toast.dismiss(loadToast);
+                    toast.error('Could not create or retrieve the folder.');
+                    return;
+                }
+            } catch (err) {
+                toast.dismiss(loadToast);
+                toast.error('Failed to create folder: ' + err.message);
+                return;
+            }
         }
-        window.open(`https://drive.google.com/drive/folders/${folderId}`, '_blank');
+        if (folderId) {
+            window.open(`https://drive.google.com/drive/folders/${folderId}`, '_blank');
+        } else {
+            toast.error('No Google Drive folder linked for this Job.');
+        }
     };
 
     // Inline Contact Editing States
@@ -2935,15 +2955,13 @@ export default function WorkflowEditor() {
                             >
                                 <List size={16} /> View Job List Table
                             </button>
-                            {(formData.drive_folder_id || formData.gdrive_folder_id) && (
-                                <button 
-                                    onClick={handleOpenJobDrive} 
-                                    className="btn btn-secondary" 
-                                    style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#3b82f6', color: '#1d4ed8', background: '#eff6ff', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
-                                >
-                                    <Folder size={16} fill="#3b82f6" fillOpacity={0.15} /> Open Job Folder
-                                </button>
-                            )}
+                            <button 
+                                onClick={handleOpenJobDrive} 
+                                className="btn btn-secondary" 
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#3b82f6', color: '#1d4ed8', background: '#eff6ff', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
+                            >
+                                <Folder size={16} fill="#3b82f6" fillOpacity={0.15} /> Open Job Folder
+                            </button>
                             <button 
                                 onClick={handleOpenRootDrive} 
                                 className="btn btn-secondary" 

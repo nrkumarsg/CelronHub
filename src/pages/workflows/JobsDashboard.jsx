@@ -260,6 +260,76 @@ export default function JobsDashboard() {
         }
     };
 
+    // Open General Jobs Folder under Year-wise Hierarchy
+    const handleOpenJobsDrive = async () => {
+        let celronRootId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
+        if (!celronRootId) {
+            toast.error('Google Drive Root Folder ID is not configured in Settings.');
+            return;
+        }
+
+        if (celronRootId.includes('drive.google.com')) {
+            const match = celronRootId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || celronRootId.match(/\/d\/([a-zA-Z0-9_-]+)/);
+            if (match) celronRootId = match[1];
+        }
+
+        if (!isTokenValid()) {
+            if (window.confirm('Your Google connection has expired or is not connected. Would you like to connect now?')) {
+                sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
+                connectGoogleAPI();
+            }
+            return;
+        }
+
+        const accessToken = localStorage.getItem('google_access_token');
+        if (!accessToken) {
+            handleOpenRootDrive();
+            return;
+        }
+
+        const loadToast = toast.loading('Searching for general JOBS folder...');
+        try {
+            // Find '01. TIME_BASED' folder under celronRootId
+            let query = `name='01. TIME_BASED' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${celronRootId}' in parents`;
+            let res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+                headers: { 'Authorization': 'Bearer ' + accessToken }
+            });
+            let data = await res.json();
+            let timeBasedId = data.files?.[0]?.id;
+
+            if (timeBasedId) {
+                const currentYear = new Date().getFullYear().toString();
+                query = `name='${currentYear}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${timeBasedId}' in parents`;
+                res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+                    headers: { 'Authorization': 'Bearer ' + accessToken }
+                });
+                data = await res.json();
+                let yearFolderId = data.files?.[0]?.id;
+
+                if (yearFolderId) {
+                    query = `name='JOBS' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${yearFolderId}' in parents`;
+                    res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+                        headers: { 'Authorization': 'Bearer ' + accessToken }
+                    });
+                    data = await res.json();
+                    let jobsFolderId = data.files?.[0]?.id;
+
+                    if (jobsFolderId) {
+                        toast.dismiss(loadToast);
+                        window.open(`https://drive.google.com/drive/folders/${jobsFolderId}`, '_blank');
+                        return;
+                    }
+                }
+            }
+            toast.dismiss(loadToast);
+            handleOpenRootDrive();
+        } catch (err) {
+            console.error('Error finding JOBS folder:', err);
+            toast.dismiss(loadToast);
+            handleOpenRootDrive();
+        }
+    };
+
     const reloadDocuments = async () => {
         if (!profile?.company_id) return;
         try {
@@ -506,13 +576,29 @@ export default function JobsDashboard() {
                             <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '2px' }}>Access the centralized repository containing all job files and related documentation.</p>
                         </div>
                     </div>
-                    <button 
-                        onClick={handleOpenRootDrive} 
-                        className="btn btn-secondary" 
-                        style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#f59e0b', color: '#b45309', background: '#fffbeb', fontWeight: 700, padding: '10px 20px', transition: 'all 0.2s' }}
-                    >
-                        <ExternalLink size={16} /> Open Drive Root
-                    </button>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <button 
+                            onClick={() => navigate('/workflows?type=Job')}
+                            className="btn btn-secondary" 
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, padding: '10px 16px', borderRadius: '8px' }}
+                        >
+                            <List size={16} /> View Job List Table
+                        </button>
+                        <button 
+                            onClick={handleOpenJobsDrive} 
+                            className="btn btn-secondary" 
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#3b82f6', color: '#1d4ed8', background: '#eff6ff', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
+                        >
+                            <Folder size={16} fill="#3b82f6" fillOpacity={0.15} /> Open Jobs Folder
+                        </button>
+                        <button 
+                            onClick={handleOpenRootDrive} 
+                            className="btn btn-secondary" 
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#f59e0b', color: '#b45309', background: '#fffbeb', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
+                        >
+                            <ExternalLink size={16} /> Open Drive Root
+                        </button>
+                    </div>
                 </div>
             </div>
 
