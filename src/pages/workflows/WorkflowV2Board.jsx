@@ -17,7 +17,8 @@ import {
 import {
     FileCheck, Play, Briefcase, X, Loader2, PlayCircle, Folder, Upload,
     ArrowRightLeft, Filter, Eye, Printer, Search, Trash2, Plus, FileText, Copy, Clock,
-    ArrowUp, ArrowDown, RefreshCw, Download, CreditCard, Calendar, ArrowUpDown, LayoutDashboard
+    ArrowUp, ArrowDown, RefreshCw, Download, CreditCard, Calendar, ArrowUpDown, LayoutDashboard,
+    ArrowLeft
 } from 'lucide-react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import CustomerEnquiryForm from '../../components/CustomerEnquiryForm';
@@ -85,6 +86,13 @@ export default function WorkflowV2Board() {
     const { profile } = useAuth();
     const canAdmin = ['admin', 'finance', 'superadmin'].includes(profile?.role);
     const navigate = useNavigate();
+    const handleGoBack = () => {
+        if (window.history.state && window.history.state.idx > 0) {
+            navigate(-1);
+        } else {
+            navigate('/workflows/jobs-dashboard');
+        }
+    };
     const [documents, setDocuments] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -878,7 +886,35 @@ export default function WorkflowV2Board() {
         <div className="animate-fade-in">
             <header className="page-header">
                 <div>
-                    <h1 className="page-title">{getPageTitle()}</h1>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <button 
+                            onClick={handleGoBack} 
+                            style={{ 
+                                background: '#fff', 
+                                border: '1px solid var(--border-color)', 
+                                padding: '8px', 
+                                borderRadius: '10px', 
+                                cursor: 'pointer', 
+                                color: 'var(--text-secondary)', 
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.05)', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                transition: 'all 0.2s'
+                            }}
+                            onMouseOver={(e) => {
+                                e.currentTarget.style.borderColor = 'var(--accent)';
+                                e.currentTarget.style.color = 'var(--accent)';
+                            }}
+                            onMouseOut={(e) => {
+                                e.currentTarget.style.borderColor = 'var(--border-color)';
+                                e.currentTarget.style.color = 'var(--text-secondary)';
+                            }}
+                        >
+                            <ArrowLeft size={20} />
+                        </button>
+                        <h1 className="page-title" style={{ margin: 0 }}>{getPageTitle()}</h1>
+                    </div>
                     <p style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>
                         {getPageDescription()}
                     </p>
