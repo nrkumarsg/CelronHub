@@ -722,9 +722,11 @@ export default function WorkflowEditor() {
                     '5. Expenses & Payments',
                     '6. Job Gallery & Photos',
                     '7. Correspondence & Admin',
-                    '8. Technical Documents'
+                    '8. Technical Documents',
+                    'Photos & Gallery',
+                    'Worksuite'
                 ];
-                // Strict filter: only these 8 folders, or non-folder files
+                // Strict filter: only these folders, or non-folder files
                 const seenFolders = new Set();
                 files = files.filter(f => {
                     const isFolder = f.mimeType === 'application/vnd.google-apps.folder';
@@ -4654,12 +4656,11 @@ export default function WorkflowEditor() {
                                 </button>
                                 <input id="signed-proof-upload" type="file" hidden onChange={(e) => handleUploadSignedProofDirect(e.target.files[0])} />
                             </div>
-
                             {loadingSignedProofs ? (
                                 <div style={{ textAlign: 'center', padding: '20px' }}><Loader2 size={24} className="animate-spin" /></div>
                             ) : signedProofs.length === 0 ? (
                                 <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '0.9rem' }}>
-                                    No signed proofs found in Folder 6. Use the Scanner App or upload here.
+                                    No signed proofs found in Job Folder. Use the Scanner App or upload here.
                                 </div>
                             ) : (
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
@@ -4683,8 +4684,8 @@ export default function WorkflowEditor() {
                                     </div>
                                     <p style={{ margin: 0, fontSize: '0.8rem', color: '#b45309' }}>
                                         {signedProofs.length > 0 
-                                            ? `Found ${signedProofs.length} signed proof(s) in Folder 6. Ensure they are attached when emailing the customer.`
-                                            : "Warning: No signed Proof of Delivery found in Folder 6. It is highly recommended to upload a signed copy before sending the invoice."}
+                                            ? `Found ${signedProofs.length} signed proof(s) in Job Folder. Ensure they are attached when emailing the customer.`
+                                            : "Warning: No signed Proof of Delivery found in Job Folder. It is highly recommended to upload a signed copy before sending the invoice."}
                                     </p>
                                 </div>
                             )}

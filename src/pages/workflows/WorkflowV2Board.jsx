@@ -1594,7 +1594,7 @@ export default function WorkflowV2Board() {
                                                     >
                                                         <Trash2 size={14} />
                                                     </button>
-                                                    <label style={{ cursor: 'pointer', position: 'relative', zIndex: 20 }} title="Upload Signed Copy to Folder 6">
+                                                    <label style={{ cursor: 'pointer', position: 'relative', zIndex: 20 }} title="Upload Signed Copy to Job Folder">
                                                         <div className="btn btn-sm btn-secondary" style={{ color: '#059669' }}>
                                                             <Upload size={14} />
                                                         </div>
