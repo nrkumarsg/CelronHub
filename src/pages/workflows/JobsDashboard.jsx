@@ -987,10 +987,10 @@ export default function JobsDashboard() {
                                             <FileText size={13} /> Workflow Suite
                                         </button>
                                         <button 
-                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'po'); }}
+                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'other'); }}
                                             className="quick-link-btn po"
                                         >
-                                            <CreditCard size={13} /> PO Details
+                                            <CreditCard size={13} /> PO & Ref Info
                                         </button>
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'costing'); }}
@@ -1013,14 +1013,9 @@ export default function JobsDashboard() {
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'explorer'); }}
                                             className="quick-link-btn explorer"
+                                            style={{ gridColumn: 'span 2' }}
                                         >
                                             <FolderOpen size={13} /> Explorer (Drive)
-                                        </button>
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'other'); }}
-                                            className="quick-link-btn other"
-                                        >
-                                            <Info size={13} /> Other Info
                                         </button>
                                     </div>
                                 </div>
@@ -1195,12 +1190,11 @@ export default function JobsDashboard() {
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', maxWidth: '180px' }}>
                                             <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'items'); }} className="table-quick-link-btn items" title="Order Lines (Scope)"><Package size={11} /></button>
                                             <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'workflow'); }} className="table-quick-link-btn workflow" title="Workflow Suite (Documents)"><FileText size={11} /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'po'); }} className="table-quick-link-btn po" title="PO Details"><CreditCard size={11} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'other'); }} className="table-quick-link-btn po" title="PO & Reference Info"><CreditCard size={11} /></button>
                                             <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'costing'); }} className="table-quick-link-btn costing" title="Project Costing (Expenses)"><Calculator size={11} /></button>
                                             <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'payments'); }} className="table-quick-link-btn payments" title="Payments & GST"><DollarSign size={11} /></button>
                                             <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'gallery'); }} className="table-quick-link-btn gallery" title="Photos & Media"><Image size={11} /></button>
                                             <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'explorer'); }} className="table-quick-link-btn explorer" title="Google Drive Files"><FolderOpen size={11} /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'other'); }} className="table-quick-link-btn other" title="Other Info (Settings)"><Info size={11} /></button>
                                         </div>
                                     </td>
                                     

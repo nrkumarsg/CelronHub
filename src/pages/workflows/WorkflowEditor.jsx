@@ -282,8 +282,12 @@ export default function WorkflowEditor() {
     useEffect(() => {
         const queryParams = new URLSearchParams(location.search);
         const tab = queryParams.get('tab');
-        if (tab && ['items', 'other', 'workflow', 'po', 'costing', 'payments', 'gallery', 'explorer'].includes(tab)) {
-            setActiveTab(tab);
+        if (tab) {
+            let active = tab;
+            if (tab === 'po') active = 'other';
+            if (['items', 'other', 'workflow', 'costing', 'payments', 'gallery', 'explorer'].includes(active)) {
+                setActiveTab(active);
+            }
         }
     }, [location.search]);
 
@@ -1403,11 +1407,12 @@ export default function WorkflowEditor() {
 
         if (name.startsWith('delivery_verification.')) {
             const field = name.split('.')[1];
+            const val = field === 'po_value' ? (parseFloat(value) || 0) : value;
             setFormData(prev => ({
                 ...prev,
                 delivery_verification: {
                     ...(prev.delivery_verification || {}),
-                    [field]: value
+                    [field]: val
                 }
             }));
             return;
@@ -3390,9 +3395,8 @@ export default function WorkflowEditor() {
                 {/* Main Action Tabs */}
                 <div className="tab-container">
                     <button className={`tab ${activeTab === 'items' ? 'active' : ''}`} onClick={() => setActiveTab('items')}>Order Lines</button>
-                    <button className={`tab ${activeTab === 'other' ? 'active' : ''}`} onClick={() => setActiveTab('other')}>Other Info</button>
+                    <button className={`tab ${activeTab === 'other' ? 'active' : ''}`} onClick={() => setActiveTab('other')}>PO & Reference Info</button>
                     {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && <button className={`tab ${activeTab === 'workflow' ? 'active' : ''}`} onClick={() => setActiveTab('workflow')}>Workflow Suite</button>}
-                    {(formData.customer_po_no || formData.is_job || formData.document_type === 'Job') && <button className={`tab ${activeTab === 'po' ? 'active' : ''}`} onClick={() => setActiveTab('po')}>PO Details</button>}
                     {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && <button className={`tab ${activeTab === 'costing' ? 'active' : ''}`} onClick={() => setActiveTab('costing')}>Project Costing</button>}
                     {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && <button className={`tab ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}>Payments & GST</button>}
                     <button className={`tab ${activeTab === 'gallery' ? 'active' : ''}`} onClick={() => setActiveTab('gallery')}>Photos & Media</button>
@@ -4062,90 +4066,210 @@ export default function WorkflowEditor() {
                 )}
 
                 {activeTab === 'other' && (
-                    <div className="glass-panel other-info">
-                        <div className="grid-2">
-                            <div className="form-item">
-                                <label><Package size={14} /> Customer PO No</label>
-                                <input type="text" className="form-input" name="customer_po_no" value={formData.customer_po_no} onChange={handleHeaderChange} placeholder="PO-12345 (Bridge to Job)" />
+                    <div className="glass-panel other-info animate-fade-in">
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '28px', marginBottom: '24px' }}>
+                            {/* Column 1: Customer PO Details */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', background: '#f8fafc', padding: '20px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                                <h4 style={{ margin: '0 0 8px 0', color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1rem', fontWeight: 700 }}>
+                                    <Package size={18} color="var(--accent)" /> Customer PO Details
+                                </h4>
+                                
+                                <div className="form-item" style={{ margin: 0 }}>
+                                    <label style={{ fontWeight: 600 }}><Package size={14} /> Customer PO No</label>
+                                    <input type="text" className="form-input" name="customer_po_no" value={formData.customer_po_no || ''} onChange={handleHeaderChange} placeholder="PO-12345 (Bridge to Job)" />
+                                </div>
+
+                                <div className="form-item" style={{ margin: 0 }}>
+                                    <label style={{ fontWeight: 600 }}>Customer PO Date</label>
+                                    <input type="date" className="form-input" name="customer_po_date" value={formData.customer_po_date || ''} onChange={handleHeaderChange} />
+                                </div>
+
+                                <div className="form-item" style={{ margin: 0 }}>
+                                    <label style={{ fontWeight: 600 }}>PO Value ({formData.currency})</label>
+                                    <input 
+                                        type="number" 
+                                        step="0.01" 
+                                        className="form-input" 
+                                        name="delivery_verification.po_value" 
+                                        value={formData.delivery_verification?.po_value || ''} 
+                                        onChange={handleHeaderChange} 
+                                        placeholder={formData.total_amount ? `Default: ${formData.total_amount}` : "PO Value amount..."} 
+                                    />
+                                </div>
+
+                                <div className="form-item" style={{ margin: 0 }}>
+                                    <label style={{ fontWeight: 600 }}>Issued By (Customer Contact)</label>
+                                    <select 
+                                        className="form-input" 
+                                        name="customer_po_by_id" 
+                                        value={formData.customer_po_by_id || ''} 
+                                        onChange={handleHeaderChange}
+                                    >
+                                        <option value="">-- Select Customer Contact --</option>
+                                        {getCustomerContacts().map(c => (
+                                            <option key={c.id} value={c.id}>{c.name} ({c.email || 'No email'})</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className="form-item" style={{ margin: 0 }}>
+                                    <label style={{ fontWeight: 600 }}>Description / Project Scope</label>
+                                    <textarea 
+                                        className="form-input" 
+                                        name="delivery_verification.po_description" 
+                                        value={formData.delivery_verification?.po_description || ''} 
+                                        onChange={handleHeaderChange} 
+                                        rows={3} 
+                                        placeholder="Briefly describe the PO scope..." 
+                                        style={{ resize: 'none', padding: '10px' }}
+                                    />
+                                </div>
                             </div>
 
-                            <div className="form-item">
-                                <label>Customer PO Date</label>
-                                <input type="date" className="form-input" name="customer_po_date" value={formData.customer_po_date} onChange={handleHeaderChange} />
-                            </div>
+                            {/* Column 2: Reference & Salesperson Details */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', background: '#f8fafc', padding: '20px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                                <h4 style={{ margin: '0 0 8px 0', color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1rem', fontWeight: 700 }}>
+                                    <Info size={18} color="var(--accent)" /> Salesperson & References
+                                </h4>
 
-                            <div className="form-item">
-                                <label>Internal Company Reference</label>
-                                <input type="text" className="form-input" name="customer_ref" value={formData.customer_ref} onChange={handleHeaderChange} placeholder="Your internal tracking..." />
-                            </div>
+                                <div className="form-item" style={{ margin: 0 }}>
+                                    <label style={{ fontWeight: 600 }}>Internal Company Reference</label>
+                                    <input type="text" className="form-input" name="customer_ref" value={formData.customer_ref || ''} onChange={handleHeaderChange} placeholder="Your internal tracking reference..." />
+                                </div>
 
-                            <div className="form-item">
-                                <label>Salesperson Name</label>
-                                <input type="text" className="form-input" name="salesperson_name" value={formData.salesperson_name} onChange={handleHeaderChange} placeholder="Your name" />
-                            </div>
+                                <div className="form-item" style={{ margin: 0 }}>
+                                    <label style={{ fontWeight: 600 }}>Salesperson Name</label>
+                                    <input type="text" className="form-input" name="salesperson_name" value={formData.salesperson_name || ''} onChange={handleHeaderChange} placeholder="Your name" />
+                                </div>
 
-                            <div className="form-item">
-                                <label>Salesperson Phone</label>
-                                <input type="text" className="form-input" name="salesperson_phone" value={formData.salesperson_phone} onChange={handleHeaderChange} placeholder="+65 ..." />
-                            </div>
+                                <div className="form-item" style={{ margin: 0 }}>
+                                    <label style={{ fontWeight: 600 }}>Salesperson Phone</label>
+                                    <input type="text" className="form-input" name="salesperson_phone" value={formData.salesperson_phone || ''} onChange={handleHeaderChange} placeholder="+65 ..." />
+                                </div>
 
-                            <div className="form-item">
-                                <label>Salesperson Email</label>
-                                <input type="text" className="form-input" name="salesperson_email" value={formData.salesperson_email} onChange={handleHeaderChange} placeholder="your@email.com" />
+                                <div className="form-item" style={{ margin: 0 }}>
+                                    <label style={{ fontWeight: 600 }}>Salesperson Email</label>
+                                    <input type="text" className="form-input" name="salesperson_email" value={formData.salesperson_email || ''} onChange={handleHeaderChange} placeholder="your@email.com" />
+                                </div>
                             </div>
+                        </div>
 
-                            {formData.document_type === 'Payment Received' && (
-                                <div className="form-item" style={{ gridColumn: 'span 2', marginTop: '16px', padding: '20px', background: '#f0f9ff', borderRadius: '12px', border: '1px solid #bae6fd' }}>
-                                    <h4 style={{ margin: '0 0 16px 0', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <CreditCard size={18} /> Payment Details
-                                    </h4>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                                        <div className="form-item" style={{ margin: 0 }}>
-                                            <label>Payment Mode</label>
-                                            <select className="form-input" name="payment_method" value={formData.payment_method} onChange={handleHeaderChange}>
-                                                <option value="Bank Transfer">Bank Transfer</option>
-                                                <option value="PayNow">PayNow</option>
-                                                <option value="Cheque">Cheque</option>
-                                                <option value="Cash">Cash</option>
-                                                <option value="Credit Card">Credit Card</option>
-                                            </select>
-                                        </div>
-                                        <div className="form-item" style={{ margin: 0 }}>
-                                            <label>Transaction / Cheque Ref</label>
-                                            <input type="text" className="form-input" name="payment_ref" value={formData.payment_ref} onChange={handleHeaderChange} placeholder="e.g. TXN-123456" />
-                                        </div>
-                                        <div className="form-item" style={{ gridColumn: 'span 2', margin: 0 }}>
-                                            <label>Link to Specific Invoice (1:1)</label>
-                                            <select 
-                                                className="form-input" 
-                                                name="related_document_id" 
-                                                value={formData.related_document_id || ''} 
-                                                onChange={handleHeaderChange}
-                                                style={{ border: formData.related_document_id ? '2px solid var(--accent)' : '1px solid var(--border-color)' }}
-                                            >
-                                                <option value="">-- Unallocated / General Payment --</option>
-                                                {partnerInvoices.map(inv => (
-                                                    <option key={inv.id} value={inv.id}>
-                                                        {inv.document_no} - {inv.subject} (SGD {inv.total_amount?.toLocaleString()})
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            {formData.related_document_id && (
-                                                <div style={{ fontSize: '0.75rem', color: 'var(--accent)', marginTop: '4px', fontWeight: 600 }}>
-                                                    ✓ This payment will be precisely matched to {partnerInvoices.find(i => i.id === formData.related_document_id)?.document_no}
-                                                </div>
-                                            )}
-                                        </div>
+                        {formData.document_type === 'Payment Received' && (
+                            <div className="form-item" style={{ marginBottom: '24px', padding: '20px', background: '#f0f9ff', borderRadius: '12px', border: '1px solid #bae6fd' }}>
+                                <h4 style={{ margin: '0 0 16px 0', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <CreditCard size={18} /> Payment Details
+                                </h4>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                    <div className="form-item" style={{ margin: 0 }}>
+                                        <label>Payment Mode</label>
+                                        <select className="form-input" name="payment_method" value={formData.payment_method} onChange={handleHeaderChange}>
+                                            <option value="Bank Transfer">Bank Transfer</option>
+                                            <option value="PayNow">PayNow</option>
+                                            <option value="Cheque">Cheque</option>
+                                            <option value="Cash">Cash</option>
+                                            <option value="Credit Card">Credit Card</option>
+                                        </select>
+                                    </div>
+                                    <div className="form-item" style={{ margin: 0 }}>
+                                        <label>Transaction / Cheque Ref</label>
+                                        <input type="text" className="form-input" name="payment_ref" value={formData.payment_ref} onChange={handleHeaderChange} placeholder="e.g. TXN-123456" />
+                                    </div>
+                                    <div className="form-item" style={{ gridColumn: 'span 2', margin: 0 }}>
+                                        <label>Link to Specific Invoice (1:1)</label>
+                                        <select 
+                                            className="form-input" 
+                                            name="related_document_id" 
+                                            value={formData.related_document_id || ''} 
+                                            onChange={handleHeaderChange}
+                                            style={{ border: formData.related_document_id ? '2px solid var(--accent)' : '1px solid var(--border-color)' }}
+                                        >
+                                            <option value="">-- Unallocated / General Payment --</option>
+                                            {partnerInvoices.map(inv => (
+                                                <option key={inv.id} value={inv.id}>
+                                                    {inv.document_no} - {inv.subject} (SGD {inv.total_amount?.toLocaleString()})
+                                                </option>
+                                            ))}
+                                        </select>
+                                        {formData.related_document_id && (
+                                            <div style={{ fontSize: '0.75rem', color: 'var(--accent)', marginTop: '4px', fontWeight: 600 }}>
+                                                ✓ This payment will be precisely matched to {partnerInvoices.find(i => i.id === formData.related_document_id)?.document_no}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
-                            )}
-                            
-                            <div className="form-item" style={{ gridColumn: '1 / -1' }}>
-                                <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <Paperclip size={16} className="text-accent" />
-                                        <span>Documents & Attachments (Saved to GDrive)</span>
+                            </div>
+                        )}
+                        
+                        {/* Section 3: File Repository & PO Document Attachments */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '28px', borderTop: '1px solid #e2e8f0', paddingTop: '24px' }}>
+                            {/* PO Direct Upload & View */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                <label style={{ fontSize: '0.82rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
+                                    Customer Purchase Order Document
+                                </label>
+                                {formData.customer_po_attachment_url ? (
+                                    <div style={{ display: 'flex', gap: '12px' }}>
+                                        <a 
+                                            href={formData.customer_po_attachment_url} 
+                                            target="_blank" 
+                                            rel="noreferrer"
+                                            className="btn btn-secondary"
+                                            style={{ 
+                                                display: 'inline-flex', 
+                                                alignItems: 'center', 
+                                                gap: '8px', 
+                                                padding: '10px 20px', 
+                                                borderRadius: '10px', 
+                                                textDecoration: 'none',
+                                                fontWeight: 600,
+                                                fontSize: '0.9rem',
+                                                transition: 'all 0.2s',
+                                                flex: 1,
+                                                justifyContent: 'center'
+                                            }}
+                                        >
+                                            <FileText size={18} /> View PO File
+                                        </a>
+                                        
+                                        <button 
+                                            type="button"
+                                            className="btn btn-secondary"
+                                            onClick={() => document.getElementById('po-direct-upload').click()}
+                                            style={{ borderRadius: '10px', padding: '10px 20px', fontSize: '0.9rem', flex: 1 }}
+                                        >
+                                            <RefreshCw size={18} style={{ marginRight: '8px' }} /> Update PO
+                                        </button>
                                     </div>
+                                ) : (
+                                    <div 
+                                        onClick={() => document.getElementById('po-direct-upload').click()}
+                                        style={{ 
+                                            border: '2px dashed #cbd5e1', 
+                                            borderRadius: '12px', 
+                                            padding: '24px', 
+                                            textAlign: 'center', 
+                                            cursor: 'pointer',
+                                            background: '#f8fafc',
+                                            transition: 'all 0.2s'
+                                        }}
+                                        onMouseOver={(e) => e.currentTarget.style.borderColor = '#6366f1'}
+                                        onMouseOut={(e) => e.currentTarget.style.borderColor = '#cbd5e1'}
+                                    >
+                                        <Upload size={32} color="#64748b" style={{ marginBottom: '12px', margin: '0 auto 12px' }} />
+                                        <div style={{ fontWeight: 700, color: '#1e293b' }}>Upload Customer Purchase Order</div>
+                                        <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '4px' }}>Syncs to GDrive Project Folder</div>
+                                    </div>
+                                )}
+                                <input id="po-direct-upload" type="file" hidden onChange={(e) => handleUploadPODirect(e.target.files[0])} />
+                            </div>
+
+                            {/* General GDrive Attachments List */}
+                            <div className="form-item" style={{ margin: 0 }}>
+                                <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.82rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <Paperclip size={16} className="text-accent" />
+                                        <span>GDrive Folder Attachments</span>
+                                    </span>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                                         {formData.drive_folder_id && (
                                             <a 
@@ -4155,112 +4279,111 @@ export default function WorkflowEditor() {
                                                 style={{ color: '#16a34a', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', fontWeight: 600 }}
                                                 className="hover:underline"
                                             >
-                                                <Folder size={14} /> Open Folder in GDrive
+                                                <Folder size={14} /> Open Folder
                                             </a>
                                         )}
-                                        <label style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                        <label style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', margin: 0 }}>
                                             <Plus size={14} /> Upload File
                                             <input type="file" multiple style={{ display: 'none' }} onChange={async (e) => {
-                                            const files = Array.from(e.target.files);
-                                            if (files.length === 0) return;
-                                            
-                                            try {
-                                                const token = await getStoredToken();
-                                                if (!token) {
-                                                    alert('Please make sure you are logged into Google Drive via the Google Drive panel on the left side of the screen.');
-                                                    return;
-                                                }
+                                                const files = Array.from(e.target.files);
+                                                if (files.length === 0) return;
                                                 
-                                                let parentFolderId = formData.drive_folder_id;
-                                                if (!parentFolderId && formData.assigned_job_no) {
-                                                    const { data: suiteDocs } = await supabase
-                                                        .from('workflow_documents')
-                                                        .select('drive_folder_id, gdrive_folder_id')
-                                                        .eq('assigned_job_no', formData.assigned_job_no)
-                                                        .not('drive_folder_id', 'is', null);
-                                                    
-                                                    const found = suiteDocs?.find(d => d.drive_folder_id || d.gdrive_folder_id);
-                                                    if (found) {
-                                                        parentFolderId = found.drive_folder_id || found.gdrive_folder_id;
-                                                    }
-                                                }
-                                                
-                                                if (!parentFolderId) {
-                                                    const confirmProvision = confirm("No Google Drive folder structure exists for this Job yet.\n\nWould you like to provision the folder structure now?");
-                                                    if (!confirmProvision) return;
-                                                    
-                                                    const { getDocumentSettings } = await import('../../lib/store');
-                                                    const settings = await getDocumentSettings(profile.company_id);
-                                                    let celronRootId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
-                                                    if (!celronRootId) {
-                                                        alert('Google Drive Root Folder ID not configured in Settings.');
+                                                try {
+                                                    const token = await getStoredToken();
+                                                    if (!token) {
+                                                        alert('Please make sure you are logged into Google Drive via the Google Drive panel on the left side of the screen.');
                                                         return;
                                                     }
                                                     
-                                                    if (celronRootId.includes('drive.google.com')) {
-                                                        const match = celronRootId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || celronRootId.match(/\/d\/([a-zA-Z0-9_-]+)/);
-                                                        if (match) celronRootId = match[1];
-                                                    }
-                                                    
-                                                    setAttachmentUploadProgress({ fileName: 'Creating Google Drive Project folders...', percent: 20 });
-                                                    
-                                                    const year = new Date(formData.issue_date || new Date()).getFullYear().toString();
-                                                    const projName = getProjectFolderName();
-                                                    
-                                                    const newFolderId = await provisionFullProjectStructure(token, celronRootId, year, projName);
-                                                    parentFolderId = newFolderId;
-                                                    
-                                                    setFormData(prev => ({ ...prev, drive_folder_id: newFolderId }));
-                                                    await supabase
-                                                        .from('workflow_documents')
-                                                        .update({ drive_folder_id: newFolderId })
-                                                        .eq('id', formData.id);
-                                                }
-                                                
-                                                // Option B: upload directly to root folder
-                                                const subfolderId = parentFolderId;
-                                                const newUrls = [...(formData.attachment_urls || [])];
-                                                
-                                                for (let i = 0; i < files.length; i++) {
-                                                    const file = files[i];
-                                                    setAttachmentUploadProgress({ fileName: file.name, percent: 0 });
-                                                    
-                                                    const response = await uploadFileToDrive(token, file, {
-                                                        folderId: subfolderId,
-                                                        title: file.name,
-                                                        onProgress: (percent) => {
-                                                            setAttachmentUploadProgress({ fileName: file.name, percent });
-                                                        }
-                                                    });
-                                                    
-                                                    if (response && response.id) {
-                                                        const { makeFilePublic } = await import('../../lib/driveService');
-                                                        await makeFilePublic(token, response.id);
+                                                    let parentFolderId = formData.drive_folder_id;
+                                                    if (!parentFolderId && formData.assigned_job_no) {
+                                                        const { data: suiteDocs } = await supabase
+                                                            .from('workflow_documents')
+                                                            .select('drive_folder_id, gdrive_folder_id')
+                                                            .eq('assigned_job_no', formData.assigned_job_no)
+                                                            .not('drive_folder_id', 'is', null);
                                                         
-                                                        const webViewLink = `https://drive.google.com/file/d/${response.id}/view?usp=drivesdk&filename=${encodeURIComponent(file.name)}`;
-                                                        newUrls.push(webViewLink);
+                                                        const found = suiteDocs?.find(d => d.drive_folder_id || d.gdrive_folder_id);
+                                                        if (found) {
+                                                            parentFolderId = found.drive_folder_id || found.gdrive_folder_id;
+                                                        }
                                                     }
-                                                }
-                                                
-                                                setAttachmentUploadProgress(null);
-                                                setFormData(prev => ({ ...prev, attachment_urls: newUrls }));
-                                                
-                                                const { error: saveErr } = await supabase
-                                                    .from('workflow_documents')
-                                                    .update({ attachment_urls: newUrls })
-                                                    .eq('id', formData.id);
                                                     
-                                                if (saveErr) throw saveErr;
-                                                toast.success('Successfully uploaded all files to Google Drive!');
-                                            } catch (err) {
-                                                console.error(err);
-                                                setAttachmentUploadProgress(null);
-                                                alert('Upload failed: ' + err.message);
-                                            }
-                                        }} />
-                                    </label>
-                                </div>
-                            </label>
+                                                    if (!parentFolderId) {
+                                                        const confirmProvision = confirm("No Google Drive folder structure exists for this Job yet.\n\nWould you like to provision the folder structure now?");
+                                                        if (!confirmProvision) return;
+                                                        
+                                                        const { getDocumentSettings } = await import('../../lib/store');
+                                                        const settings = await getDocumentSettings(profile.company_id);
+                                                        let celronRootId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
+                                                        if (!celronRootId) {
+                                                            alert('Google Drive Root Folder ID not configured in Settings.');
+                                                            return;
+                                                        }
+                                                        
+                                                        if (celronRootId.includes('drive.google.com')) {
+                                                            const match = celronRootId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || celronRootId.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                                                            if (match) celronRootId = match[1];
+                                                        }
+                                                        
+                                                        setAttachmentUploadProgress({ fileName: 'Creating Google Drive Project folders...', percent: 20 });
+                                                        
+                                                        const year = new Date(formData.issue_date || new Date()).getFullYear().toString();
+                                                        const projName = getProjectFolderName();
+                                                        
+                                                        const newFolderId = await provisionFullProjectStructure(token, celronRootId, year, projName);
+                                                        parentFolderId = newFolderId;
+                                                        
+                                                        setFormData(prev => ({ ...prev, drive_folder_id: newFolderId }));
+                                                        await supabase
+                                                            .from('workflow_documents')
+                                                            .update({ drive_folder_id: newFolderId })
+                                                            .eq('id', formData.id);
+                                                    }
+                                                    
+                                                    const subfolderId = parentFolderId;
+                                                    const newUrls = [...(formData.attachment_urls || [])];
+                                                    
+                                                    for (let i = 0; i < files.length; i++) {
+                                                        const file = files[i];
+                                                        setAttachmentUploadProgress({ fileName: file.name, percent: 0 });
+                                                        
+                                                        const response = await uploadFileToDrive(token, file, {
+                                                            folderId: subfolderId,
+                                                            title: file.name,
+                                                            onProgress: (percent) => {
+                                                                setAttachmentUploadProgress({ fileName: file.name, percent });
+                                                            }
+                                                        });
+                                                        
+                                                        if (response && response.id) {
+                                                            const { makeFilePublic } = await import('../../lib/driveService');
+                                                            await makeFilePublic(token, response.id);
+                                                            
+                                                            const webViewLink = `https://drive.google.com/file/d/${response.id}/view?usp=drivesdk&filename=${encodeURIComponent(file.name)}`;
+                                                            newUrls.push(webViewLink);
+                                                        }
+                                                    }
+                                                    
+                                                    setAttachmentUploadProgress(null);
+                                                    setFormData(prev => ({ ...prev, attachment_urls: newUrls }));
+                                                    
+                                                    const { error: saveErr } = await supabase
+                                                        .from('workflow_documents')
+                                                        .update({ attachment_urls: newUrls })
+                                                        .eq('id', formData.id);
+                                                        
+                                                    if (saveErr) throw saveErr;
+                                                    toast.success('Successfully uploaded all files to Google Drive!');
+                                                } catch (err) {
+                                                    console.error(err);
+                                                    setAttachmentUploadProgress(null);
+                                                    alert('Upload failed: ' + err.message);
+                                                }
+                                            }} />
+                                        </label>
+                                    </div>
+                                </label>
                                 
                                 {attachmentUploadProgress && (
                                     <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', padding: '12px', borderRadius: '8px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -4274,7 +4397,7 @@ export default function WorkflowEditor() {
                                     </div>
                                 )}
 
-                                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px dashed #cbd5e1', minHeight: '60px' }}>
+                                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px dashed #cbd5e1', minHeight: '120px', maxHeight: '200px', overflowY: 'auto' }}>
                                     {formData.attachment_urls?.length > 0 ? (
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                             {formData.attachment_urls.map((url, idx) => {
@@ -4290,7 +4413,7 @@ export default function WorkflowEditor() {
                                                 
                                                 return (
                                                     <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff', padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                                                        <span style={{ fontSize: '0.85rem', color: '#334155', fontWeight: 500 }}>{fileName}</span>
+                                                        <span style={{ fontSize: '0.85rem', color: '#334155', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }} title={fileName}>{fileName}</span>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                                             <a href={url} target="_blank" rel="noreferrer" className="text-accent hover:underline" style={{ fontSize: '0.8rem', fontWeight: 600 }}>View</a>
                                                             <button 
@@ -4315,7 +4438,7 @@ export default function WorkflowEditor() {
                                             })}
                                         </div>
                                     ) : (
-                                        <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem' }}>No attachments yet. Click 'Upload' to add.</div>
+                                        <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', padding: '24px 0' }}>No attachments yet. Click 'Upload File' to add.</div>
                                     )}
                                 </div>
                             </div>
@@ -4377,126 +4500,7 @@ export default function WorkflowEditor() {
                     </div>
                 )}
 
-                {activeTab === 'po' && (
-                    <div className="glass-panel po-details">
-                        <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <Package size={20} className="text-accent" />
-                            <h3 style={{ margin: 0 }}>Customer Purchase Order Details</h3>
-                        </div>
 
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-                            <div className="po-info-group">
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                    <div className="info-item">
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>PO Number</label>
-                                        <div style={{ fontSize: '1.1rem', fontWeight: 600, color: '#1e293b' }}>{formData.customer_po_no || 'N/A'}</div>
-                                    </div>
-                                    <div className="info-item">
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>PO Date</label>
-                                        <div style={{ fontSize: '1rem', color: '#1e293b' }}>
-                                            {formData.customer_po_date ? new Date(formData.customer_po_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : 'N/A'}
-                                        </div>
-                                    </div>
-                                    <div className="info-item">
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>PO Value</label>
-                                        <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--accent)' }}>
-                                            {formData.currency} {formData.delivery_verification?.po_value?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || formData.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                        </div>
-                                    </div>
-                                    <div className="info-item">
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Issued By</label>
-                                        <div style={{ fontSize: '1rem', color: '#1e293b' }}>
-                                            {contacts.find(c => c.id === formData.customer_po_by_id)?.name || formData.customer_po_by_id || 'N/A'}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="po-description-group">
-                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Description / Project Scope</label>
-                                <div style={{ 
-                                    padding: '16px', 
-                                    background: '#f8fafc', 
-                                    borderRadius: '8px', 
-                                    border: '1px solid #e2e8f0',
-                                    fontSize: '0.95rem',
-                                    lineHeight: '1.5',
-                                    color: '#334155',
-                                    minHeight: '120px',
-                                    whiteSpace: 'pre-wrap'
-                                }}>
-                                    {formData.delivery_verification?.po_description || 'No description provided.'}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid #e2e8f0' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                                <div style={{ flex: 1 }}>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '12px' }}>
-                                        PO Repository & Attachments
-                                    </label>
-                                    
-                                    {formData.customer_po_attachment_url ? (
-                                        <div style={{ display: 'flex', gap: '12px' }}>
-                                            <a 
-                                                href={formData.customer_po_attachment_url} 
-                                                target="_blank" 
-                                                rel="noreferrer"
-                                                style={{ 
-                                                    display: 'inline-flex', 
-                                                    alignItems: 'center', 
-                                                    gap: '8px', 
-                                                    padding: '10px 20px', 
-                                                    background: '#eff6ff', 
-                                                    color: '#2563eb', 
-                                                    borderRadius: '10px', 
-                                                    textDecoration: 'none',
-                                                    fontWeight: 600,
-                                                    fontSize: '0.9rem',
-                                                    border: '1px solid #bfdbfe',
-                                                    transition: 'all 0.2s'
-                                                }}
-                                                onMouseOver={(e) => e.currentTarget.style.background = '#dbeafe'}
-                                                onMouseOut={(e) => e.currentTarget.style.background = '#eff6ff'}
-                                            >
-                                                <FileText size={18} /> View Current PO File
-                                            </a>
-                                            
-                                            <button 
-                                                className="btn btn-secondary"
-                                                onClick={() => document.getElementById('po-direct-upload').click()}
-                                                style={{ borderRadius: '10px', padding: '10px 20px', fontSize: '0.9rem' }}
-                                            >
-                                                <RefreshCw size={18} style={{ marginRight: '8px' }} /> Update PO File
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        <div 
-                                            onClick={() => document.getElementById('po-direct-upload').click()}
-                                            style={{ 
-                                                border: '2px dashed #cbd5e1', 
-                                                borderRadius: '12px', 
-                                                padding: '24px', 
-                                                textAlign: 'center', 
-                                                cursor: 'pointer',
-                                                background: '#f8fafc',
-                                                transition: 'all 0.2s'
-                                            }}
-                                            onMouseOver={(e) => e.currentTarget.style.borderColor = '#6366f1'}
-                                            onMouseOut={(e) => e.currentTarget.style.borderColor = '#cbd5e1'}
-                                        >
-                                            <Upload size={32} color="#64748b" style={{ marginBottom: '12px' }} />
-                                            <div style={{ fontWeight: 700, color: '#1e293b' }}>Upload Customer Purchase Order</div>
-                                            <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '4px' }}>Automatically syncs to Google Drive Project Folder</div>
-                                        </div>
-                                    )}
-                                    <input id="po-direct-upload" type="file" hidden onChange={(e) => handleUploadPODirect(e.target.files[0])} />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
 
                 {activeTab === 'explorer' && (
                     <div className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
