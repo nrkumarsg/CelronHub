@@ -1,3 +1,4 @@
+import './polyfills.js';
 import nodemailer from 'nodemailer';
 import express from 'express';
 import cors from 'cors';
@@ -635,12 +636,12 @@ Only return the JSON object, do not include any markdown or code blocks.
     } catch (e) {
         console.error('[Finder API] Dynamic metadata generation failed:', e);
         return {
-            title: \`\${manufacturer} \${model} Technical Manual\`,
+            title: `${manufacturer} ${model} Technical Manual`,
             manufacturer,
             model,
             category: category || 'Technical',
             keywords: [manufacturer.toLowerCase(), model.toLowerCase(), 'technical', 'manual'],
-            summary: \`Operating instructions and technical documentation for the \${manufacturer} \${model} unit.\`,
+            summary: `Operating instructions and technical documentation for the ${manufacturer} ${model} unit.`,
             tags: [manufacturer.toLowerCase(), 'technical']
         };
     }
@@ -654,23 +655,23 @@ function generateDynamicPagesText(metadata) {
     return [
         {
             page: 1,
-            text: \`TECHNICAL MANUAL & OPERATING INSTRUCTIONS: \${metadata.title}. Manufacturer: \${mfg}. Model: \${mod}. Category: \${cat}. This manual contains installation, operation, safety, and maintenance instructions for the system. Please read this manual carefully before installing or operating the equipment.\`
+            text: `TECHNICAL MANUAL & OPERATING INSTRUCTIONS: ${metadata.title}. Manufacturer: ${mfg}. Model: ${mod}. Category: ${cat}. This manual contains installation, operation, safety, and maintenance instructions for the system. Please read this manual carefully before installing or operating the equipment.`
         },
         {
             page: 2,
-            text: \`SECTION 2: SYSTEM SPECIFICATIONS. Model: \${mod}. Designed and manufactured by \${mfg}. Electrical requirements: Standard voltage, auto-sensing input. Environmental Protection: IP54/IP65 rated for industrial/marine environments. Operational limits and calibration parameters are pre-set at the factory.\`
+            text: `SECTION 2: SYSTEM SPECIFICATIONS. Model: ${mod}. Designed and manufactured by ${mfg}. Electrical requirements: Standard voltage, auto-sensing input. Environmental Protection: IP54/IP65 rated for industrial/marine environments. Operational limits and calibration parameters are pre-set at the factory.`
         },
         {
             page: 3,
-            text: \`SECTION 3: INSTALLATION & COMMISSIONING. Mount the \${mod} unit securely on a stable surface or panel. Ensure all electrical connections comply with local safety regulations. Check wiring diagrams before applying power. Perform a baseline test and zero calibration as detailed in this section.\`
+            text: `SECTION 3: INSTALLATION & COMMISSIONING. Mount the ${mod} unit securely on a stable surface or panel. Ensure all electrical connections comply with local safety regulations. Check wiring diagrams before applying power. Perform a baseline test and zero calibration as detailed in this section.`
         },
         {
             page: 4,
-            text: \`SECTION 4: MAINTENANCE & TROUBLESHOOTING. Perform monthly inspection of the unit. Clean any sensor elements or filters regularly. Common Error Codes: E1 - sensor signal out of range; E2 - communication timeout; E3 - internal power fault. If errors persist, contact \${mfg} technical support.\`
+            text: `SECTION 4: MAINTENANCE & TROUBLESHOOTING. Perform monthly inspection of the unit. Clean any sensor elements or filters regularly. Common Error Codes: E1 - sensor signal out of range; E2 - communication timeout; E3 - internal power fault. If errors persist, contact ${mfg} technical support.`
         },
         {
             page: 5,
-            text: \`SECTION 5: SYSTEM LOGS & CALIBRATION. The \${mfg} \${mod} system records internal operating telemetry and alarm conditions. Zero-point calibration adjustment screws are located inside the front panel cover. Use standard reference solutions or clean water to verify accuracy.\`
+            text: `SECTION 5: SYSTEM LOGS & CALIBRATION. The ${mfg} ${mod} system records internal operating telemetry and alarm conditions. Zero-point calibration adjustment screws are located inside the front panel cover. Use standard reference solutions or clean water to verify accuracy.`
         }
     ];
 }

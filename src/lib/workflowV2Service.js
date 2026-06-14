@@ -21,6 +21,56 @@ export const getDocumentHistory = async (doc) => {
  * Generate Next Document Number
  * Pattern: [PREFIX]-YYYYMM-XXXX
  */
+const getCompanyPrefixAndJobPrefix = async (companyId) => {
+    let docPrefix = '';
+    let jobPrefix = 'CEL';
+    if (!companyId) return { docPrefix, jobPrefix };
+
+    try {
+        const { data: company } = await supabase
+            .from('companies')
+            .select('name')
+            .eq('id', companyId)
+            .single();
+
+        if (company?.name) {
+            const name = company.name.toUpperCase();
+            if (name.includes('ARKIS')) {
+                docPrefix = 'ARKIS-';
+                jobPrefix = 'ARKIS';
+            } else if (name.includes('ARK INTERNATIONAL')) {
+                docPrefix = 'AIS-';
+                jobPrefix = 'AIS';
+            } else if (name.includes('CEL-RON') || name.includes('CELRON')) {
+                docPrefix = '';
+                jobPrefix = 'CEL';
+            } else {
+                // Auto prefix/initials generator for new companies (e.g. Seaway Control Services -> SCS)
+                const stopWords = ['PTE', 'LTD', 'LIMITED', 'CO', 'CORP', 'CORPORATION', 'AND', 'THE', 'OF', 'PTE.', 'LTD.'];
+                const words = company.name
+                    .replace(/[^a-zA-Z0-9\s]/g, '') // Remove punctuation
+                    .split(/\s+/)
+                    .filter(w => w && !stopWords.includes(w.toUpperCase()));
+                
+                let initials = '';
+                if (words.length >= 2) {
+                    initials = words.map(w => w[0].toUpperCase()).join('');
+                } else if (words.length === 1) {
+                    initials = words[0].substring(0, 3).toUpperCase();
+                } else {
+                    initials = 'DOC';
+                }
+                
+                docPrefix = `${initials}-`;
+                jobPrefix = initials;
+            }
+        }
+    } catch (e) {
+        console.error('Error fetching company name:', e);
+    }
+    return { docPrefix, jobPrefix };
+};
+
 export const generateDocNumber = async (companyId, type, isRevision = false, originalNo = null) => {
     if (isRevision && originalNo) {
         // Pattern: [ORIGINAL]-R[REV_NO]
@@ -44,6 +94,8 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
     const yy = String(today.getFullYear()).slice(2);
     const mm = padZero(today.getMonth() + 1, 2);
 
+    const { docPrefix, jobPrefix } = await getCompanyPrefixAndJobPrefix(companyId);
+
     let prefix = 'DOC';
     switch (type) {
         case 'Enquiry': prefix = 'ENQ'; break;
@@ -61,14 +113,21 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
         case 'Order Acknowledgment': prefix = 'ORA'; break;
     }
 
-    const fullPrefix = `${prefix}-${yy}${mm}-`;
+    let finalPrefix = prefix;
+    if (type === 'Job') {
+        finalPrefix = jobPrefix;
+    } else if (docPrefix) {
+        finalPrefix = `${docPrefix}${prefix}`;
+    }
+
+    const fullPrefix = `${finalPrefix}-${yy}${mm}-`;
 
     // Fetch the latest numbers across all months to find the absolute maximum serial number
     let query = supabase
         .from('workflow_documents')
         .select('document_no')
         .eq('company_id', companyId)
-        .ilike('document_no', `${prefix}-%`)
+        .ilike('document_no', `${finalPrefix}-%`)
         .not('document_no', 'ilike', '%-R%') // Exclude revisions
         .order('created_at', { ascending: false });
 
@@ -80,7 +139,7 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
     const { data, error } = await query;
 
     let nextNum = 1;
-    if (type === 'Job') nextNum = 6051;
+    if (type === 'Job' && jobPrefix === 'CEL') nextNum = 6051;
 
     if (data && data.length > 0) {
         let maxNum = 0;
@@ -922,7 +981,11 @@ export const convertQuotationToJob = async (quotationId, poData, options = {}) =
     let baseJobNo = await generateDocNumber(qtn.company_id, 'Job');
     let seqPart = baseJobNo.split('-').slice(1).join('-'); // YYMM-XXXX
     
-    const prefixes = ['CEL', 'ORA', 'DO', 'PRO', 'INV', 'PKL', 'CERT', 'SR'];
+    const { docPrefix, jobPrefix } = await getCompanyPrefixAndJobPrefix(qtn.company_id);
+    const prefixes = [
+        jobPrefix,
+        ...['ORA', 'DO', 'PRO', 'INV', 'PKL', 'CERT', 'SR'].map(p => docPrefix ? `${docPrefix}${p}` : p)
+    ];
     let attempts = 0;
     while (attempts < 20) {
         const targetNos = prefixes.map(p => `${p}-${seqPart}`);
@@ -941,7 +1004,7 @@ export const convertQuotationToJob = async (quotationId, poData, options = {}) =
         attempts++;
     }
     
-    const jobNo = `CEL-${seqPart}`;
+    const jobNo = `${jobPrefix}-${seqPart}`;
 
     // 3. Update Original Quotation
     const qtnUpdate = {
@@ -964,7 +1027,7 @@ export const convertQuotationToJob = async (quotationId, poData, options = {}) =
     // 4. Batch Generate Master Job Record
     // (Previously this loop generated ORA, DO, PRO, INV, etc. Now it only generates the Job master)
     const docTypes = [
-        { type: 'Job', prefix: 'CEL' } // Master Job Record
+        { type: 'Job', prefix: jobPrefix } // Master Job Record
     ];
 
     for (const doc of docTypes) {
@@ -1076,7 +1139,11 @@ export const convertInvoiceToJob = async (invoiceId, poData = {}) => {
     let baseJobNo = await generateDocNumber(inv.company_id, 'Job');
     let seqPart = baseJobNo.split('-').slice(1).join('-'); // YYMM-XXXX
     
-    const prefixes = ['CEL', 'ORA', 'DO', 'PRO', 'INV', 'PKL', 'CERT', 'SR'];
+    const { docPrefix, jobPrefix } = await getCompanyPrefixAndJobPrefix(inv.company_id);
+    const prefixes = [
+        jobPrefix,
+        ...['ORA', 'DO', 'PRO', 'INV', 'PKL', 'CERT', 'SR'].map(p => docPrefix ? `${docPrefix}${p}` : p)
+    ];
     let attempts = 0;
     while (attempts < 20) {
         const targetNos = prefixes.map(p => `${p}-${seqPart}`);
@@ -1095,7 +1162,7 @@ export const convertInvoiceToJob = async (invoiceId, poData = {}) => {
         attempts++;
     }
 
-    const jobNo = `CEL-${seqPart}`;
+    const jobNo = `${jobPrefix}-${seqPart}`;
 
     // 2. Update Original Invoice to be part of the Job
     const invUpdate = {

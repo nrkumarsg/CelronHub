@@ -4,13 +4,20 @@ import {
     LayoutDashboard, Folder, Calendar, DollarSign, TrendingUp, Plus, 
     Search, Grid, List, ArrowRight, ExternalLink, ShieldCheck, 
     AlertCircle, CheckCircle2, Activity, FileText, Printer, Eye, 
-    RefreshCcw, FolderOpen, Copy, Trash2, MoreVertical
+    RefreshCcw, FolderOpen, Copy, Trash2, MoreVertical,
+    Package, CreditCard, Calculator, Image, Info
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import { getWorkflowDocuments, deleteWorkflowDocument, duplicateWorkflowDocument } from '../../lib/workflowV2Service';
 import { isTokenValid, connectGoogleAPI } from '../../lib/googleAuthService';
 import { getDocumentSettings } from '../../lib/store';
 import toast from 'react-hot-toast';
+
+const stripHtml = (html) => {
+    if (!html) return '';
+    return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+};
 
 export default function JobsDashboard() {
     const [loading, setLoading] = useState(true);
@@ -21,7 +28,16 @@ export default function JobsDashboard() {
     const [viewMode, setViewMode] = useState('card'); // 'card' or 'table'
     const navigate = useNavigate();
 
-    const [profile, setProfile] = useState(null);
+    const handleNavigateToTab = (job, tabName) => {
+        const masterId = job.masterJob?.id || job.allDocs[0]?.id;
+        if (masterId) {
+            navigate(`/workflows/editor/job/${masterId}?tab=${tabName}`);
+        } else {
+            toast.error("No valid document found to open.");
+        }
+    };
+
+    const { profile } = useAuth();
     const [openDropdownJobNo, setOpenDropdownJobNo] = useState(null);
 
     // Close dropdown on click outside
@@ -31,29 +47,19 @@ export default function JobsDashboard() {
         return () => window.removeEventListener('click', handleOutsideClick);
     }, []);
 
-    // Fetch User Profile and Settings
+    // Fetch User Settings and Workflow Documents based on Active Company
     useEffect(() => {
         const loadInitialData = async () => {
+            if (!profile?.company_id) return;
             try {
-                const { data: { user } } = await supabase.auth.getUser();
-                if (user) {
-                    const { data: prof } = await supabase
-                        .from('profiles')
-                        .select('*')
-                        .eq('id', user.id)
-                        .single();
-                    setProfile(prof);
-
-                    if (prof?.company_id) {
-                        const docSettings = await getDocumentSettings(prof.company_id);
-                        setSettings(docSettings);
-                        
-                        // Load All Workflow Documents
-                        const { data: docs, error } = await getWorkflowDocuments(prof.company_id);
-                        if (error) throw error;
-                        setDocuments(docs || []);
-                    }
-                }
+                setLoading(true);
+                const docSettings = await getDocumentSettings(profile.company_id);
+                setSettings(docSettings);
+                
+                // Load All Workflow Documents for the active company workspace
+                const { data: docs, error } = await getWorkflowDocuments(profile.company_id);
+                if (error) throw error;
+                setDocuments(docs || []);
             } catch (err) {
                 console.error("Error loading dashboard data:", err);
                 toast.error("Failed to load dashboard data");
@@ -63,7 +69,7 @@ export default function JobsDashboard() {
         };
 
         loadInitialData();
-    }, []);
+    }, [profile?.company_id]);
 
     // Process & group documents by assigned_job_no
     const processJobs = () => {
@@ -92,7 +98,9 @@ export default function JobsDashboard() {
                     supplierInvoiceAmount: 0,
                     supplierPaidStatus: 'No PO',
                     suppliers: new Set(),
-                    driveFolderId: null
+                    driveFolderId: null,
+                    jobMajor: null,
+                    jobDescription: null
                 };
             }
 
@@ -111,6 +119,8 @@ export default function JobsDashboard() {
                 group.expiryDate = doc.expiry_date;
                 group.status = doc.status || 'Active';
                 group.driveFolderId = doc.drive_folder_id || doc.gdrive_folder_id;
+                group.jobMajor = doc.delivery_verification?.job_major === 'Other' ? doc.delivery_verification?.job_major_custom : doc.delivery_verification?.job_major;
+                group.jobDescription = doc.delivery_verification?.job_description;
             } else if (!group.masterJob) {
                 // Fallback details if no master Job document is found yet
                 if (doc.partners?.name) group.customer = doc.partners.name;
@@ -120,6 +130,12 @@ export default function JobsDashboard() {
                 if (doc.customer_po_no) group.customerPoNo = doc.customer_po_no;
                 if (doc.customer_ref) group.customerRef = doc.customer_ref;
                 if (doc.drive_folder_id || doc.gdrive_folder_id) group.driveFolderId = doc.drive_folder_id || doc.gdrive_folder_id;
+                if (doc.delivery_verification?.job_major) {
+                    group.jobMajor = doc.delivery_verification.job_major === 'Other' ? doc.delivery_verification.job_major_custom : doc.delivery_verification.job_major;
+                }
+                if (doc.delivery_verification?.job_description) {
+                    group.jobDescription = doc.delivery_verification.job_description;
+                }
             }
 
             // Financial Calculations
@@ -329,22 +345,35 @@ export default function JobsDashboard() {
         return dateStr ? new Date(dateStr).getFullYear().toString() : new Date().getFullYear().toString();
     }))].sort((a, b) => b.localeCompare(a));
 
-    // Filter jobs based on Year and Search query
-    const filteredJobs = processedJobs.filter(job => {
-        const jobYear = job.issueDate ? new Date(job.issueDate).getFullYear().toString() : new Date().getFullYear().toString();
-        const matchesYear = selectedYear === 'All' || jobYear === selectedYear;
+    // Filter and sort jobs by running job number in descending order (latest first)
+    const filteredJobs = processedJobs
+        .filter(job => {
+            const jobYear = job.issueDate ? new Date(job.issueDate).getFullYear().toString() : new Date().getFullYear().toString();
+            const matchesYear = selectedYear === 'All' || jobYear === selectedYear;
 
-        const term = searchQuery.toLowerCase().trim();
-        const matchesSearch = !term || 
-            job.jobNo.toLowerCase().includes(term) ||
-            job.customer.toLowerCase().includes(term) ||
-            job.vesselLocation.toLowerCase().includes(term) ||
-            job.description.toLowerCase().includes(term) ||
-            job.customerPoNo.toLowerCase().includes(term) ||
-            job.suppliersList.toLowerCase().includes(term);
+            const term = searchQuery.toLowerCase().trim();
+            const matchesSearch = !term || 
+                job.jobNo.toLowerCase().includes(term) ||
+                job.customer.toLowerCase().includes(term) ||
+                job.vesselLocation.toLowerCase().includes(term) ||
+                job.description.toLowerCase().includes(term) ||
+                job.customerPoNo.toLowerCase().includes(term) ||
+                job.suppliersList.toLowerCase().includes(term) ||
+                (job.jobMajor && job.jobMajor.toLowerCase().includes(term)) ||
+                (job.jobDescription && stripHtml(job.jobDescription).toLowerCase().includes(term));
 
-        return matchesYear && matchesSearch;
-    });
+            return matchesYear && matchesSearch;
+        })
+        .sort((a, b) => {
+            const getLastFourDigits = (jobNo) => {
+                if (!jobNo) return 0;
+                const parts = jobNo.split('-');
+                const lastPart = parts[parts.length - 1];
+                const parsed = parseInt(lastPart, 10);
+                return isNaN(parsed) ? 0 : parsed;
+            };
+            return getLastFourDigits(b.jobNo) - getLastFourDigits(a.jobNo);
+        });
 
     // KPI Metrics calculation
     const totalJobsCount = filteredJobs.length;
@@ -363,6 +392,82 @@ export default function JobsDashboard() {
 
     return (
         <div style={{ padding: '24px', maxWidth: '1600px', margin: '0 auto' }}>
+            <style>{`
+                .quick-links-section {
+                    margin-top: 16px;
+                    border-top: 1px solid #e2e8f0;
+                    padding-top: 16px;
+                }
+                .quick-link-btn {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 8px 10px;
+                    border-radius: 8px;
+                    font-size: 0.78rem;
+                    font-weight: 600;
+                    border: 1px solid transparent;
+                    cursor: pointer;
+                    text-align: left;
+                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                    background: #f8fafc;
+                    color: #475569;
+                }
+                .quick-link-btn:hover {
+                    transform: translateY(-1.5px);
+                    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.03);
+                }
+                .quick-link-btn:active {
+                    transform: translateY(0);
+                }
+                .quick-link-btn.items { background: rgba(99, 102, 241, 0.04); color: #4f46e5; border-color: rgba(99, 102, 241, 0.08); }
+                .quick-link-btn.items:hover { background: rgba(99, 102, 241, 0.08); border-color: rgba(99, 102, 241, 0.2); }
+                
+                .quick-link-btn.workflow { background: rgba(139, 92, 246, 0.04); color: #7c3aed; border-color: rgba(139, 92, 246, 0.08); }
+                .quick-link-btn.workflow:hover { background: rgba(139, 92, 246, 0.08); border-color: rgba(139, 92, 246, 0.2); }
+                
+                .quick-link-btn.po { background: rgba(245, 158, 11, 0.04); color: #d97706; border-color: rgba(245, 158, 11, 0.08); }
+                .quick-link-btn.po:hover { background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.2); }
+                
+                .quick-link-btn.costing { background: rgba(59, 130, 246, 0.04); color: #2563eb; border-color: rgba(59, 130, 246, 0.08); }
+                .quick-link-btn.costing:hover { background: rgba(59, 130, 246, 0.08); border-color: rgba(59, 130, 246, 0.2); }
+                
+                .quick-link-btn.payments { background: rgba(16, 185, 129, 0.04); color: #059669; border-color: rgba(16, 185, 129, 0.08); }
+                .quick-link-btn.payments:hover { background: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.2); }
+                
+                .quick-link-btn.gallery { background: rgba(244, 63, 94, 0.04); color: #e11d48; border-color: rgba(244, 63, 94, 0.08); }
+                .quick-link-btn.gallery:hover { background: rgba(244, 63, 94, 0.08); border-color: rgba(244, 63, 94, 0.2); }
+                
+                .quick-link-btn.explorer { background: rgba(6, 182, 212, 0.04); color: #0891b2; border-color: rgba(6, 182, 212, 0.08); }
+                .quick-link-btn.explorer:hover { background: rgba(6, 182, 212, 0.08); border-color: rgba(6, 182, 212, 0.2); }
+                
+                .quick-link-btn.other { background: rgba(100, 116, 139, 0.04); color: #475569; border-color: rgba(100, 116, 139, 0.08); }
+                .quick-link-btn.other:hover { background: rgba(100, 116, 139, 0.08); border-color: rgba(100, 116, 139, 0.2); }
+
+                .table-quick-link-btn {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 6px;
+                    border: 1.5px solid transparent;
+                    cursor: pointer;
+                    transition: all 0.15s ease;
+                }
+                .table-quick-link-btn:hover {
+                    transform: scale(1.18);
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+                }
+                .table-quick-link-btn.items { background: rgba(99, 102, 241, 0.1); color: #4f46e5; border-color: rgba(99, 102, 241, 0.2); }
+                .table-quick-link-btn.workflow { background: rgba(139, 92, 246, 0.1); color: #7c3aed; border-color: rgba(139, 92, 246, 0.2); }
+                .table-quick-link-btn.po { background: rgba(245, 158, 11, 0.1); color: #d97706; border-color: rgba(245, 158, 11, 0.2); }
+                .table-quick-link-btn.costing { background: rgba(59, 130, 246, 0.1); color: #2563eb; border-color: rgba(59, 130, 246, 0.2); }
+                .table-quick-link-btn.payments { background: rgba(16, 185, 129, 0.1); color: #059669; border-color: rgba(16, 185, 129, 0.2); }
+                .table-quick-link-btn.gallery { background: rgba(244, 63, 94, 0.1); color: #e11d48; border-color: rgba(244, 63, 94, 0.2); }
+                .table-quick-link-btn.explorer { background: rgba(6, 182, 212, 0.1); color: #0891b2; border-color: rgba(6, 182, 212, 0.2); }
+                .table-quick-link-btn.other { background: rgba(100, 116, 139, 0.1); color: #475569; border-color: rgba(100, 116, 139, 0.2); }
+            `}</style>
             {/* Page Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                 <div>
@@ -515,7 +620,7 @@ export default function JobsDashboard() {
                     <div className="animate-spin" style={{ margin: '0 auto 16px', width: '32px', height: '32px', border: '3px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%' }}></div>
                     <p style={{ color: 'var(--text-secondary)' }}>Loading jobs...</p>
                 </div>
-            ) : filteredJobs.length === 0 ? (
+            ) : filteredJobs.length === 0 && viewMode === 'table' ? (
                 <div className="glass-panel" style={{ padding: '64px 0', textAlign: 'center', borderRadius: '16px', background: '#ffffff', border: '1px solid var(--border-color)' }}>
                     <ShieldCheck size={48} style={{ margin: '0 auto 16px', opacity: 0.3 }} />
                     <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>No Jobs Found</h3>
@@ -524,6 +629,65 @@ export default function JobsDashboard() {
             ) : viewMode === 'card' ? (
                 /* Card View Mode (Image 2 style) */
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '24px' }}>
+                    {/* Add New Job Card */}
+                    <div 
+                        onClick={() => navigate('/workflows/editor/job/new')}
+                        className="glass-panel"
+                        style={{ 
+                            padding: '24px', 
+                            borderRadius: '18px', 
+                            border: '1.5px dashed var(--accent)', 
+                            background: 'rgba(99, 102, 241, 0.02)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            minHeight: '340px',
+                            cursor: 'pointer',
+                            transition: 'all 0.25s ease',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.01)',
+                            textAlign: 'center'
+                        }}
+                        onMouseOver={e => {
+                            e.currentTarget.style.transform = 'translateY(-4px)';
+                            e.currentTarget.style.boxShadow = '0 12px 24px rgba(99, 102, 241, 0.08)';
+                            e.currentTarget.style.background = 'rgba(99, 102, 241, 0.05)';
+                            e.currentTarget.style.borderColor = 'var(--accent-hover)';
+                        }}
+                        onMouseOut={e => {
+                            e.currentTarget.style.transform = 'none';
+                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.01)';
+                            e.currentTarget.style.background = 'rgba(99, 102, 241, 0.02)';
+                            e.currentTarget.style.borderColor = 'var(--accent)';
+                        }}
+                    >
+                        <div style={{
+                            width: '56px',
+                            height: '56px',
+                            borderRadius: '50%',
+                            background: '#eff6ff',
+                            color: 'var(--accent)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginBottom: '16px',
+                            transition: 'transform 0.2s ease',
+                            border: '1.5px solid #bfdbfe'
+                        }}
+                        onMouseOver={e => {
+                            e.currentTarget.style.transform = 'scale(1.1)';
+                        }}
+                        onMouseOut={e => {
+                            e.currentTarget.style.transform = 'scale(1)';
+                        }}
+                        >
+                            <Plus size={28} />
+                        </div>
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '8px' }}>Create New Job</h3>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', maxWidth: '200px' }}>
+                            Initialize a new job suite with draft forms, invoices, and folders.
+                        </p>
+                    </div>
                     {filteredJobs.map(job => (
                         <div 
                             key={job.jobNo}
@@ -771,14 +935,93 @@ export default function JobsDashboard() {
 
                                 {/* Additional Card Meta details */}
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '16px', fontSize: '0.83rem', color: '#64748b' }}>
+                                    {job.jobMajor && (
+                                        <div style={{ marginBottom: '4px' }}>
+                                            <span style={{ 
+                                                display: 'inline-block', 
+                                                padding: '2px 8px', 
+                                                borderRadius: '6px', 
+                                                background: '#eff6ff', 
+                                                color: '#1d4ed8', 
+                                                fontWeight: 800,
+                                                fontSize: '0.75rem',
+                                                textTransform: 'uppercase',
+                                                border: '1px solid #bfdbfe'
+                                            }}>
+                                                {job.jobMajor}
+                                            </span>
+                                        </div>
+                                    )}
                                     <div><strong style={{ color: '#475569' }}>Vessel/Loc:</strong> {job.vesselLocation}</div>
                                     <div><strong style={{ color: '#475569' }}>PO Ref:</strong> {job.customerPoNo}</div>
                                     <div style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={job.description}>
                                         <strong style={{ color: '#475569' }}>Desc:</strong> {job.description}
                                     </div>
+                                    {job.jobDescription && (
+                                        <div style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={stripHtml(job.jobDescription)}>
+                                            <strong style={{ color: '#475569' }}>Job Detail:</strong> {stripHtml(job.jobDescription)}
+                                        </div>
+                                    )}
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', borderTop: '1px solid #f1f5f9', paddingTop: '8px' }}>
                                         <span style={{ color: '#10b981', fontWeight: 700 }}>Billed: SGD {job.customerInvoiceAmount.toLocaleString()}</span>
                                         <span style={{ color: '#f59e0b', fontWeight: 700 }}>PO Cost: SGD {job.supplierInvoiceAmount.toLocaleString()}</span>
+                                    </div>
+                                </div>
+
+                                {/* Quick Entry Tray */}
+                                <div className="quick-links-section">
+                                    <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>
+                                        Quick Entry Sections
+                                    </span>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'items'); }}
+                                            className="quick-link-btn items"
+                                        >
+                                            <Package size={13} /> Order Lines
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'workflow'); }}
+                                            className="quick-link-btn workflow"
+                                        >
+                                            <FileText size={13} /> Workflow Suite
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'po'); }}
+                                            className="quick-link-btn po"
+                                        >
+                                            <CreditCard size={13} /> PO Details
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'costing'); }}
+                                            className="quick-link-btn costing"
+                                        >
+                                            <Calculator size={13} /> Costing & Exp
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'payments'); }}
+                                            className="quick-link-btn payments"
+                                        >
+                                            <DollarSign size={13} /> Payments / GST
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'gallery'); }}
+                                            className="quick-link-btn gallery"
+                                        >
+                                            <Image size={13} /> Photos & Media
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'explorer'); }}
+                                            className="quick-link-btn explorer"
+                                        >
+                                            <FolderOpen size={13} /> Explorer (Drive)
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'other'); }}
+                                            className="quick-link-btn other"
+                                        >
+                                            <Info size={13} /> Other Info
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -947,7 +1190,19 @@ export default function JobsDashboard() {
                             {filteredJobs.map(job => (
                                 <tr key={job.jobNo} className="table-row">
                                     {/* Job No */}
-                                    <td className="font-bold" style={{ color: '#1e3a8a' }}>{job.jobNo}</td>
+                                    <td className="font-bold" style={{ color: '#1e3a8a', padding: '12px 8px' }}>
+                                        <div style={{ fontSize: '0.98rem', marginBottom: '6px' }}>{job.jobNo}</div>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', maxWidth: '180px' }}>
+                                            <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'items'); }} className="table-quick-link-btn items" title="Order Lines (Scope)"><Package size={11} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'workflow'); }} className="table-quick-link-btn workflow" title="Workflow Suite (Documents)"><FileText size={11} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'po'); }} className="table-quick-link-btn po" title="PO Details"><CreditCard size={11} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'costing'); }} className="table-quick-link-btn costing" title="Project Costing (Expenses)"><Calculator size={11} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'payments'); }} className="table-quick-link-btn payments" title="Payments & GST"><DollarSign size={11} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'gallery'); }} className="table-quick-link-btn gallery" title="Photos & Media"><Image size={11} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'explorer'); }} className="table-quick-link-btn explorer" title="Google Drive Files"><FolderOpen size={11} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'other'); }} className="table-quick-link-btn other" title="Other Info (Settings)"><Info size={11} /></button>
+                                        </div>
+                                    </td>
                                     
                                     {/* Customer */}
                                     <td className="font-medium">{job.customer}</td>
@@ -960,6 +1215,23 @@ export default function JobsDashboard() {
                                         <div style={{ maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={job.description}>
                                             {job.description}
                                         </div>
+                                        {job.jobMajor && (
+                                            <div style={{ marginTop: '4px' }}>
+                                                <span style={{ 
+                                                    display: 'inline-block', 
+                                                    padding: '1px 6px', 
+                                                    borderRadius: '4px', 
+                                                    background: '#eff6ff', 
+                                                    color: '#1d4ed8', 
+                                                    fontWeight: 800,
+                                                    fontSize: '0.7rem',
+                                                    textTransform: 'uppercase',
+                                                    border: '1px solid #bfdbfe'
+                                                }}>
+                                                    {job.jobMajor}
+                                                </span>
+                                            </div>
+                                        )}
                                     </td>
                                     
                                     {/* Customer PO No */}

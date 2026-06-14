@@ -413,3 +413,34 @@ export const resizeImage = (file, maxWidth, maxHeight) => {
   });
 };
 
+// --- Job Major Categories ---
+export const getJobMajorCategories = async (companyId = null) => {
+  let query = supabase.from('job_major_categories').select('*').order('name');
+  if (companyId) {
+    query = query.eq('company_id', companyId);
+  }
+  const { data, error } = await query;
+  if (error) {
+    if (error.code === 'PGRST205' || error.message?.includes('not found') || error.details?.includes('not found')) {
+      return null; // Fallback indicator
+    }
+    console.error('Error fetching job major categories:', error);
+    throw error;
+  }
+  return data || [];
+};
+
+export const saveJobMajorCategory = async (payload) => {
+  const isExisting = !!payload.id;
+  if (isExisting) {
+    const { data, error } = await supabase.from('job_major_categories').update(payload).eq('id', payload.id).select();
+    if (error) throw error;
+    return data[0];
+  } else {
+    const { data, error } = await supabase.from('job_major_categories').insert([payload]).select();
+    if (error) throw error;
+    return data[0];
+  }
+};
+
+

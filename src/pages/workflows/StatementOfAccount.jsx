@@ -2517,6 +2517,134 @@ export default function StatementOfAccount() {
                     onShare={(preview, attachExcel) => handleShareFile('email', preview.body, preview.to, preview.cc, preview.bcc, preview.subject, attachExcel)}
                 />
             )}
+
+            {/* Offscreen compilation container for sequential dispatching */}
+            <div id="soa-offscreen-wrapper" style={{ position: 'absolute', left: '-9999px', top: 0, pointerEvents: 'none', width: '850px', background: '#fff' }}>
+                <div ref={hiddenPrintRef} style={{ background: 'white', padding: '5mm' }}>
+                    <style>{`
+                        @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@300;400;700&display=swap');
+                    `}</style>
+                    {hiddenStatementData && (
+                        <div style={{ background: 'white', color: '#000', fontFamily: "'Roboto Condensed', sans-serif" }}>
+                            {/* Letterhead */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+                                <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+                                    {logoBase64 && <img src={logoBase64} alt="Logo" style={{ height: '50px', objectFit: 'contain' }} />}
+                                    <div>
+                                        <h1 style={{ margin: 0, color: '#1e3a8a', fontSize: '1.4rem', fontWeight: 900, letterSpacing: '-0.03em', textTransform: 'uppercase' }}>Statement of Account</h1>
+                                        <p style={{ margin: '2px 0', fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>Period: {formatDate(dateRange.start)} - {formatDate(dateRange.end)}</p>
+                                    </div>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                    <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#1e3a8a' }}>{profile?.company_name || 'CEL-RON ENTERPRISES PTE LTD'}</h2>
+                                    <div style={{ fontSize: '0.6rem', color: '#64748b', marginTop: '4px', lineHeight: 1.3 }}>
+                                        <div>{settings?.address || '10, Jln, Besar, "Sim Lim Tower", #03-05, Singapore 208787'}</div>
+                                        <div>Tel: {settings?.phone || '+6581962270'} | Email: {settings?.email || 'accounts@celron.net'} | www.celron.net</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Customer details */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', fontSize: '0.75rem' }}>
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ fontWeight: 800, color: '#64748b', textTransform: 'uppercase', fontSize: '0.6rem', marginBottom: '2px' }}>TO:</div>
+                                    <div style={{ fontWeight: 900, fontSize: '0.85rem', color: '#1e3a8a' }}>{hiddenStatementData.partner?.name}</div>
+                                    <div style={{ whiteSpace: 'pre-line', color: '#334155', marginTop: '2px', lineHeight: 1.3 }}>{hiddenStatementData.partner?.billing_address || hiddenStatementData.partner?.address}</div>
+                                </div>
+                                <div style={{ width: '220px', textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Date: </span>{formatDate(new Date())}</div>
+                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Customer Code: </span>{hiddenStatementData.partner?.partner_code || 'N/A'}</div>
+                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Currency: </span>{hiddenStatementData.ledger?.find(d => d.currency)?.currency || 'SGD'}</div>
+                                </div>
+                            </div>
+
+                            {/* Ledger Table */}
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '8.5px', marginBottom: '15px' }}>
+                                <thead>
+                                    <tr style={{ background: '#1e3a8a', color: 'white' }}>
+                                        <th style={{ padding: '6px', textAlign: 'center', color: 'white' }}>Date</th>
+                                        <th style={{ padding: '6px', textAlign: 'left', color: 'white' }}>Ref No / Job No</th>
+                                        <th style={{ padding: '6px', textAlign: 'left', color: 'white' }}>Particulars</th>
+                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Debit (+)</th>
+                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Credit (-)</th>
+                                        <th style={{ padding: '6px', textAlign: 'center', color: 'white' }}>Age</th>
+                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Balance</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr style={{ background: '#f8fafc', fontWeight: 700 }}>
+                                        <td style={{ padding: '4px 6px', textAlign: 'center' }}>{formatDate(dateRange.start)}</td>
+                                        <td style={{ padding: '4px 6px' }}>OPENING BALANCE</td>
+                                        <td style={{ padding: '4px 6px' }}>Balance brought forward</td>
+                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>-</td>
+                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>-</td>
+                                        <td style={{ padding: '4px 6px', textAlign: 'center' }}>-</td>
+                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>{(hiddenStatementData.openingBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                    </tr>
+                                    {(() => {
+                                        let runningBalance = hiddenStatementData.openingBalance || 0;
+                                        return hiddenStatementData.ledger?.map((row, idx) => {
+                                            runningBalance += (row.debit || 0) - (row.credit || 0);
+                                            return (
+                                                <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                    <td style={{ padding: '4px 6px', textAlign: 'center' }}>{formatDate(row.issue_date)}</td>
+                                                    <td style={{ padding: '4px 6px', fontWeight: 600 }}>{row.document_no}</td>
+                                                    <td style={{ padding: '4px 6px', color: '#475569' }}>{row.subject || row.particulars || 'Invoice'}</td>
+                                                    <td style={{ padding: '4px 6px', textAlign: 'right' }}>{row.debit > 0 ? row.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
+                                                    <td style={{ padding: '4px 6px', textAlign: 'right' }}>{row.credit > 0 ? row.credit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
+                                                    <td style={{ padding: '4px 6px', textAlign: 'center', color: '#64748b' }}>
+                                                        {Math.floor((new Date() - new Date(row.issue_date)) / (1000 * 60 * 60 * 24))} Days
+                                                    </td>
+                                                    <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 600 }}>{runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                </tr>
+                                            );
+                                        });
+                                    })()}
+                                    <tr style={{ background: '#0f172a', color: 'white' }}>
+                                        <td style={{ padding: '10px', textAlign: 'center', fontWeight: 700, color: 'white' }}>-</td>
+                                        <td style={{ padding: '10px', fontWeight: 900, textTransform: 'uppercase', color: 'white' }} colSpan={5}>TOTAL OUTSTANDING</td>
+                                        <td style={{ padding: '10px', textAlign: 'right', fontWeight: 900, color: 'white' }}>
+                                            {hiddenStatementData.ledger?.find(d => d.currency)?.currency || 'SGD'} {(hiddenStatementData.closingBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                             </table>
+ 
+                             {/* Aging summary & terms */}
+                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginTop: '10px' }}>
+                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', flex: 1 }}>
+                                     {[
+                                         { label: 'Current', value: hiddenStatementData.aging?.current || 0 },
+                                         { label: '31-60 Days', value: hiddenStatementData.aging?.thirty || 0 },
+                                         { label: '61-90 Days', value: hiddenStatementData.aging?.sixty || 0 },
+                                         { label: '90+ Days', value: hiddenStatementData.aging?.ninety || 0 }
+                                     ].map((bucket, i) => (
+                                         <div key={i} style={{ background: bucket.value > 0 ? '#fff1f2' : '#f8fafc', padding: '8px', borderRadius: '6px', border: `1px solid ${bucket.value > 0 ? '#fecdd3' : '#e2e8f0'}`, textAlign: 'center' }}>
+                                            <div style={{ fontSize: '0.5rem', fontWeight: 800, color: bucket.value > 0 ? '#e11d48' : '#64748b', textTransform: 'uppercase', marginBottom: '2px' }}>{bucket.label}</div>
+                                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: bucket.value > 0 ? '#9f1239' : '#0f172a' }}>SGD {bucket.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                         </div>
+                                     ))}
+                                 </div>
+                                 <div style={{ width: '120px', marginLeft: '15px', padding: '8px', border: '1px dashed #cbd5e1', borderRadius: '8px', textAlign: 'center', background: '#f8fafc' }}>
+                                     <div style={{ fontSize: '0.45rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Delivery / Payment Terms</div>
+                                     <div style={{ fontSize: '0.8rem', fontWeight: 900, color: '#1e3a8a' }}>
+                                         {(() => {
+                                             const t = hiddenStatementData.partner?.terms || hiddenStatementData.partner?.payment_terms || hiddenStatementData.partner?.customerCreditTime;
+                                             if (!t || t === '0') return 'C.O.D';
+                                             if (/^\d+$/.test(String(t).trim())) return `${t} DAYS`;
+                                             return String(t).toUpperCase();
+                                         })()}
+                                     </div>
+                                 </div>
+                             </div>
+ 
+                             <div style={{ marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '10px', fontSize: '0.55rem', color: '#94a3b8', textAlign: 'center' }}>
+                                 This is a computer generated document. No signature is required.
+                              </div>
+                         </div>
+                     )}
+                 </div>
+             </div>
         </div>
     );
 }
@@ -3236,134 +3364,6 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
                     </div>
                 </div>
             )}
-
-            {/* Offscreen compilation container for sequential dispatching */}
-            <div id="soa-offscreen-wrapper" style={{ position: 'absolute', left: '-9999px', top: 0, pointerEvents: 'none', width: '850px', background: '#fff' }}>
-                <div ref={hiddenPrintRef} style={{ background: 'white', padding: '5mm' }}>
-                    <style>{`
-                        @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@300;400;700&display=swap');
-                    `}</style>
-                    {hiddenStatementData && (
-                        <div style={{ background: 'white', color: '#000', fontFamily: "'Roboto Condensed', sans-serif" }}>
-                            {/* Letterhead */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
-                                <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-                                    {logoBase64 && <img src={logoBase64} alt="Logo" style={{ height: '50px', objectFit: 'contain' }} />}
-                                    <div>
-                                        <h1 style={{ margin: 0, color: '#1e3a8a', fontSize: '1.4rem', fontWeight: 900, letterSpacing: '-0.03em', textTransform: 'uppercase' }}>Statement of Account</h1>
-                                        <p style={{ margin: '2px 0', fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>Period: {formatDate(dateRange.start)} - {formatDate(dateRange.end)}</p>
-                                    </div>
-                                </div>
-                                <div style={{ textAlign: 'right' }}>
-                                    <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#1e3a8a' }}>{profile?.company_name || 'CEL-RON ENTERPRISES PTE LTD'}</h2>
-                                    <div style={{ fontSize: '0.6rem', color: '#64748b', marginTop: '4px', lineHeight: 1.3 }}>
-                                        <div>{settings?.address || '10, Jln, Besar, "Sim Lim Tower", #03-05, Singapore 208787'}</div>
-                                        <div>Tel: {settings?.phone || '+6581962270'} | Email: {settings?.email || 'accounts@celron.net'} | www.celron.net</div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Customer details */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', fontSize: '0.75rem' }}>
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ fontWeight: 800, color: '#64748b', textTransform: 'uppercase', fontSize: '0.6rem', marginBottom: '2px' }}>TO:</div>
-                                    <div style={{ fontWeight: 900, fontSize: '0.85rem', color: '#1e3a8a' }}>{hiddenStatementData.partner?.name}</div>
-                                    <div style={{ whiteSpace: 'pre-line', color: '#334155', marginTop: '2px', lineHeight: 1.3 }}>{hiddenStatementData.partner?.billing_address || hiddenStatementData.partner?.address}</div>
-                                </div>
-                                <div style={{ width: '220px', textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Date: </span>{formatDate(new Date())}</div>
-                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Customer Code: </span>{hiddenStatementData.partner?.partner_code || 'N/A'}</div>
-                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Currency: </span>{hiddenStatementData.ledger?.find(d => d.currency)?.currency || 'SGD'}</div>
-                                </div>
-                            </div>
-
-                            {/* Ledger Table */}
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '8.5px', marginBottom: '15px' }}>
-                                <thead>
-                                    <tr style={{ background: '#1e3a8a', color: 'white' }}>
-                                        <th style={{ padding: '6px', textAlign: 'center', color: 'white' }}>Date</th>
-                                        <th style={{ padding: '6px', textAlign: 'left', color: 'white' }}>Ref No / Job No</th>
-                                        <th style={{ padding: '6px', textAlign: 'left', color: 'white' }}>Particulars</th>
-                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Debit (+)</th>
-                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Credit (-)</th>
-                                        <th style={{ padding: '6px', textAlign: 'center', color: 'white' }}>Age</th>
-                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Balance</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr style={{ background: '#f8fafc', fontWeight: 700 }}>
-                                        <td style={{ padding: '4px 6px', textAlign: 'center' }}>{formatDate(dateRange.start)}</td>
-                                        <td style={{ padding: '4px 6px' }}>OPENING BALANCE</td>
-                                        <td style={{ padding: '4px 6px' }}>Balance brought forward</td>
-                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>-</td>
-                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>-</td>
-                                        <td style={{ padding: '4px 6px', textAlign: 'center' }}>-</td>
-                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>{(hiddenStatementData.openingBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                    </tr>
-                                    {(() => {
-                                        let runningBalance = hiddenStatementData.openingBalance || 0;
-                                        return hiddenStatementData.ledger?.map((row, idx) => {
-                                            runningBalance += (row.debit || 0) - (row.credit || 0);
-                                            return (
-                                                <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                                    <td style={{ padding: '4px 6px', textAlign: 'center' }}>{formatDate(row.issue_date)}</td>
-                                                    <td style={{ padding: '4px 6px', fontWeight: 600 }}>{row.document_no}</td>
-                                                    <td style={{ padding: '4px 6px', color: '#475569' }}>{row.subject || row.particulars || 'Invoice'}</td>
-                                                    <td style={{ padding: '4px 6px', textAlign: 'right' }}>{row.debit > 0 ? row.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
-                                                    <td style={{ padding: '4px 6px', textAlign: 'right' }}>{row.credit > 0 ? row.credit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
-                                                    <td style={{ padding: '4px 6px', textAlign: 'center', color: '#64748b' }}>
-                                                        {Math.floor((new Date() - new Date(row.issue_date)) / (1000 * 60 * 60 * 24))} Days
-                                                    </td>
-                                                    <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 600 }}>{runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                                </tr>
-                                            );
-                                        });
-                                    })()}
-                                    <tr style={{ background: '#0f172a', color: 'white' }}>
-                                        <td style={{ padding: '10px', textAlign: 'center', fontWeight: 700, color: 'white' }}>-</td>
-                                        <td style={{ padding: '10px', fontWeight: 900, textTransform: 'uppercase', color: 'white' }} colSpan={5}>TOTAL OUTSTANDING</td>
-                                        <td style={{ padding: '10px', textAlign: 'right', fontWeight: 900, color: 'white' }}>
-                                            {hiddenStatementData.ledger?.find(d => d.currency)?.currency || 'SGD'} {(hiddenStatementData.closingBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                        </td>
-                                    </tr>
-                                </tbody>
-                             </table>
- 
-                             {/* Aging summary & terms */}
-                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginTop: '10px' }}>
-                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', flex: 1 }}>
-                                     {[
-                                         { label: 'Current', value: hiddenStatementData.aging?.current || 0 },
-                                         { label: '31-60 Days', value: hiddenStatementData.aging?.thirty || 0 },
-                                         { label: '61-90 Days', value: hiddenStatementData.aging?.sixty || 0 },
-                                         { label: '90+ Days', value: hiddenStatementData.aging?.ninety || 0 }
-                                     ].map((bucket, i) => (
-                                         <div key={i} style={{ background: bucket.value > 0 ? '#fff1f2' : '#f8fafc', padding: '8px', borderRadius: '6px', border: `1px solid ${bucket.value > 0 ? '#fecdd3' : '#e2e8f0'}`, textAlign: 'center' }}>
-                                            <div style={{ fontSize: '0.5rem', fontWeight: 800, color: bucket.value > 0 ? '#e11d48' : '#64748b', textTransform: 'uppercase', marginBottom: '2px' }}>{bucket.label}</div>
-                                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: bucket.value > 0 ? '#9f1239' : '#0f172a' }}>SGD {bucket.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                                        </div>
-                                    ))}
-                                </div>
-                                <div style={{ width: '120px', marginLeft: '15px', padding: '8px', border: '1px dashed #cbd5e1', borderRadius: '8px', textAlign: 'center', background: '#f8fafc' }}>
-                                    <div style={{ fontSize: '0.45rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Delivery / Payment Terms</div>
-                                    <div style={{ fontSize: '0.8rem', fontWeight: 900, color: '#1e3a8a' }}>
-                                        {(() => {
-                                            const t = hiddenStatementData.partner?.terms || hiddenStatementData.partner?.payment_terms || hiddenStatementData.partner?.customerCreditTime;
-                                            if (!t || t === '0') return 'C.O.D';
-                                            if (/^\d+$/.test(String(t).trim())) return `${t} DAYS`;
-                                            return String(t).toUpperCase();
-                                        })()}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div style={{ marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '10px', fontSize: '0.55rem', color: '#94a3b8', textAlign: 'center' }}>
-                                This is a computer generated document. No signature is required.
-                             </div>
-                        </div>
-                    )}
-                </div>
-            </div>
         </div>
     );
 }

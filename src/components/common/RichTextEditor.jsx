@@ -63,7 +63,7 @@ export default function RichTextEditor({ value, onChange, placeholder, height = 
     }), []);
 
     return (
-        <div className="rich-text-editor-container" style={{ marginBottom: '16px' }}>
+        <div className="rich-text-editor-container" style={{ marginBottom: '16px', '--editor-height': height }}>
             <ReactQuill
                 ref={quillRef}
                 theme="snow"
@@ -71,7 +71,6 @@ export default function RichTextEditor({ value, onChange, placeholder, height = 
                 onChange={onChange}
                 placeholder={placeholder}
                 modules={modules}
-                style={{ height }}
             />
             <style dangerouslySetInnerHTML={{
                 __html: `
@@ -82,6 +81,7 @@ export default function RichTextEditor({ value, onChange, placeholder, height = 
                     border: 1px solid #e2e8f0 !important;
                     border-top: none !important;
                     font-size: 0.95rem;
+                    height: var(--editor-height, 200px);
                 }
                 .rich-text-editor-container .ql-toolbar {
                     border-top-left-radius: 12px;
@@ -91,7 +91,7 @@ export default function RichTextEditor({ value, onChange, placeholder, height = 
                     padding: 8px 12px !important;
                 }
                 .rich-text-editor-container {
-                    margin-bottom: 60px; /* Space for the editor content */
+                    margin-bottom: 16px;
                     filter: drop-shadow(0 1px 2px rgba(0,0,0,0.05));
                 }
                 .rich-text-editor-container .ql-editor {

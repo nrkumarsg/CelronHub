@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Ship, User, Users, MapPin, X, Save, Globe, Mail, Phone, Map, ExternalLink, Plus, Sparkles, Loader2, RefreshCw, Upload, ChevronDown, Paperclip, FileCheck, Calculator, FileText, Search, Check, RotateCcw, Pencil, Camera, Archive, Trash2, Receipt } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { savePartner } from '../../lib/store';
+import { savePartner, saveJobMajorCategory } from '../../lib/store';
 import { saveJobExpense } from '../../lib/jobExpenseService';
 import BusinessCardUpload from '../common/BusinessCardUpload';
 import { COUNTRIES, PARTNER_CATEGORIES } from '../../lib/constants';
@@ -3238,3 +3238,73 @@ const ReviewItem = ({ label, value, fullWidth }) => {
         </div>
     );
 };
+
+export const QuickJobMajorAdd = ({ company_id, onSuccess, onCancel }) => {
+    const [name, setName] = useState('');
+    const [loading, setLoading] = useState(false);
+
+    const handleSave = async (e) => {
+        if (e) e.preventDefault();
+        if (!name.trim()) return alert('Please enter a category name');
+        
+        setLoading(true);
+        try {
+            const data = await saveJobMajorCategory({
+                company_id,
+                name: name.trim()
+            });
+            onSuccess(data);
+        } catch (err) {
+            console.error('Failed to save category:', err);
+            // If it is a table not found error, we alert the user with the SQL schema script
+            if (err.code === 'PGRST205' || err.message?.includes('not found') || err.details?.includes('not found')) {
+                const proceed = confirm(
+                    "Database Table 'job_major_categories' Not Found!\n\n" +
+                    "To enable dynamic categories, you must run the SQL migration script in your Supabase SQL Editor.\n\n" +
+                    "Would you like to fallback to adding this category temporarily in your browser tab for this session?"
+                );
+                if (proceed) {
+                    // Pass a mock object with the name so frontend can use it locally
+                    onSuccess({ id: 'local-' + Date.now(), name: name.trim() });
+                }
+            } else {
+                alert(`Failed to save category: ${err.message || 'Check database connection.'}`);
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                <div style={{ width: '40px', height: '40px', background: 'linear-gradient(135deg, #6366f1, #10b981)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)' }}>
+                    <Plus size={20} />
+                </div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>Add New Job Category</h2>
+            </div>
+            
+            <div className="form-item">
+                <label style={{ fontWeight: 600, fontSize: '0.85rem', color: '#4b5563', marginBottom: '8px', display: 'block' }}>Category Name *</label>
+                <input
+                    className="form-input"
+                    type="text"
+                    required
+                    placeholder="e.g. Marine Engineering, Calibration Service"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1.5px solid #e2e8f0', outline: 'none' }}
+                    autoFocus
+                />
+            </div>
+
+            <div className="quick-form-actions" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
+                <button type="button" className="btn btn-secondary" onClick={onCancel} style={{ padding: '10px 20px', borderRadius: '8px', border: '1px solid #d1d5db', background: '#fff', color: '#374151', cursor: 'pointer' }}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={loading || !name.trim()} style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Save size={18} /> {loading ? 'Saving Category...' : 'Save Category'}
+                </button>
+            </div>
+        </form>
+    );
+};
+

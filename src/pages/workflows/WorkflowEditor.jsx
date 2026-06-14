@@ -38,7 +38,7 @@ import {
     duplicateWorkflowDocument,
     deleteWorkflowDocument
 } from '../../lib/workflowV2Service';
-import { getPartners, getContacts, getDocumentSettings } from '../../lib/store';
+import { getPartners, getContacts, getDocumentSettings, getJobMajorCategories, saveJobMajorCategory } from '../../lib/store';
 import { getCatalogItems } from '../../lib/catalogService';
 import { supabase } from '../../lib/supabase';
 import { getJobExpenses, saveJobExpense, deleteJobExpense } from '../../lib/jobExpenseService';
@@ -50,7 +50,8 @@ import {
     QuickPartnerContactDualAdd,
     QuickVesselAdd,
     QuickWorkLocationAdd,
-    QuickExpenseAdd
+    QuickExpenseAdd,
+    QuickJobMajorAdd
 } from '../../components/workflow/QuickAddForms';
 import FloatingControlHub from '../../components/FloatingControlHub';
 import ReceivePaymentModal from '../../components/workflow/ReceivePaymentModal';
@@ -62,6 +63,14 @@ const NOTES_PRESETS = {
     'Delivery': `Delivery must be made to:<br/>Celron Enterprises Pte Ltd<br/>10, Jln, Besar, "Sim Lim Tower", #03-05, Singapore 208787`,
     'Payment': `Payment will be processed via telegraphic transfer upon receipt of original invoices and delivery orders.`
 };
+
+const DEFAULT_JOB_MAJORS = [
+    "PCB Repair",
+    "Supply Spares",
+    "Automation Services",
+    "Manpower Supply",
+    "Annual Calibration"
+];
 
 const TC_PRESETS = {
     'Enquiry': `1. PLEASE QUOTE YOUR BEST PRICE AND EARLIEST DELIVERY.
@@ -100,6 +109,12 @@ export default function WorkflowEditor() {
     const [saving, setSaving] = useState(false);
     const [activeTab, setActiveTab] = useState('items'); // 'items' | 'other'
     const [modal, setModal] = useState({ isOpen: false, type: null });
+    const [jobMajorCategories, setJobMajorCategories] = useState([]);
+    const getJobMajorOptions = () => {
+        const dbNames = jobMajorCategories.map(c => c.name);
+        const combined = new Set([...DEFAULT_JOB_MAJORS, ...dbNames]);
+        return Array.from(combined);
+    };
     const [whatsappShareModal, setWhatsappShareModal] = useState({ isOpen: false });
     const [emailPreview, setEmailPreview] = useState(null);
     
@@ -580,13 +595,14 @@ export default function WorkflowEditor() {
     };
 
     const fetchMasterData = async () => {
-        const [pRes, vRes, wlRes, cRes, sRes, allContacts] = await Promise.all([
+        const [pRes, vRes, wlRes, cRes, sRes, allContacts, jmRes] = await Promise.all([
             getPartners(profile),
             supabase.from('vessels').select('*').order('vessel_name'),
             supabase.from('work_locations').select('*').order('location_name'),
             getCatalogItems(1, 100),
             getDocumentSettings(profile?.company_id),
-            getContacts(profile)
+            getContacts(profile),
+            getJobMajorCategories(profile?.company_id)
         ]);
 
         if (pRes) setPartners(pRes);
@@ -600,6 +616,7 @@ export default function WorkflowEditor() {
             if (sRes.paynow_url) toBase64(sRes.paynow_url).then(setPaynowBase64).catch(console.error);
         }
         if (allContacts) setContacts(allContacts);
+        if (jmRes) setJobMajorCategories(jmRes);
         
         const { data: staffData } = await supabase.from('staff').select('*').order('full_name');
         if (staffData) setStaff(staffData);
@@ -1489,6 +1506,18 @@ export default function WorkflowEditor() {
             setFormData(prev => ({ ...prev, vessel_id: newItem.id }));
         } else if (typeAdded === 'work_location_id') {
             setFormData(prev => ({ ...prev, work_location_id: newItem.id }));
+        } else if (typeAdded === 'job_major') {
+            setFormData(prev => ({
+                ...prev,
+                delivery_verification: {
+                    ...(prev.delivery_verification || {}),
+                    job_major: newItem.name
+                }
+            }));
+            setJobMajorCategories(prev => {
+                if (prev.some(c => c.name.toLowerCase() === newItem.name.toLowerCase())) return prev;
+                return [...prev, newItem];
+            });
         }
     };
 
@@ -1678,7 +1707,7 @@ export default function WorkflowEditor() {
                                 if (currentName.includes(originalJobNo)) {
                                     newFolderName = currentName.replace(originalJobNo, formData.assigned_job_no);
                                 } else {
-                                    newFolderName = currentName.replace(/CEL-\d{4}-\d{4}/, formData.assigned_job_no);
+                                    newFolderName = currentName.replace(/(CEL|ARKIS|AIS)-\d{4}-\d{4}/, formData.assigned_job_no);
                                 }
                             }
                             
@@ -1854,7 +1883,9 @@ export default function WorkflowEditor() {
         try {
             const activeId = currentIdRef.current;
             // 1. Generate Next Number for Target Type based on Job Number
-            const jobNoPart = formData.assigned_job_no.split('-').slice(1).join('-');
+            const parts = formData.assigned_job_no.split('-');
+            const jobPrefix = parts[0];
+            const jobNoPart = parts.slice(1).join('-');
             const prefixMap = {
                 'Order Acknowledgment': 'ORA',
                 'Delivery Order': 'DO',
@@ -1864,7 +1895,9 @@ export default function WorkflowEditor() {
                 'Certificate': 'CERT',
                 'Service Report': 'SR'
             };
-            const prefix = prefixMap[targetType] || 'DOC';
+            const basePrefix = prefixMap[targetType] || 'DOC';
+            const docPrefix = (jobPrefix !== 'CEL') ? `${jobPrefix}-` : '';
+            const prefix = `${docPrefix}${basePrefix}`;
             const nextNo = `${prefix}-${jobNoPart}`;
 
             // 2. Check if already exists
@@ -2519,7 +2552,7 @@ export default function WorkflowEditor() {
         const initialData = modal.initialData;
         switch (modal.type) {
             case 'partner_id':
-            case 'contact_id':
+            case 'contact_id': {
                 // For either partner or contact, we now show both side-by-side
                 const partner = partners.find(p => p.id === formData.partner_id) || (modal.type === 'partner_id' ? initialData : null);
                 const contact = contacts.find(c => c.id === formData.contact_id) || (modal.type === 'contact_id' ? initialData : null);
@@ -2534,10 +2567,13 @@ export default function WorkflowEditor() {
                         onCancel={() => setModal({ isOpen: false, type: null })} 
                     />
                 );
+            }
             case 'vessel_id':
                 return <QuickVesselAdd company_id={profile.company_id} initialData={initialData} onSuccess={handleQuickAddSuccess} onCancel={() => setModal({ isOpen: false, type: null })} />;
             case 'work_location_id':
                 return <QuickWorkLocationAdd company_id={profile.company_id} initialData={initialData} onSuccess={handleQuickAddSuccess} onCancel={() => setModal({ isOpen: false, type: null })} />;
+            case 'job_major':
+                return <QuickJobMajorAdd company_id={profile.company_id} onSuccess={handleQuickAddSuccess} onCancel={() => setModal({ isOpen: false, type: null })} />;
             default:
                 return null;
         }
@@ -2549,6 +2585,7 @@ export default function WorkflowEditor() {
             case 'contact_id': return 'Customer & Contact Management';
             case 'vessel_id': return 'Add New Vessel';
             case 'work_location_id': return 'Add New Location';
+            case 'job_major': return 'Add New Job Category';
             default: return '';
         }
     };
@@ -2559,6 +2596,7 @@ export default function WorkflowEditor() {
             case 'contact_id': return Users;
             case 'vessel_id': return Ship;
             case 'work_location_id': return MapPin;
+            case 'job_major': return Plus;
             default: return Settings;
         }
     };
@@ -2978,6 +3016,70 @@ export default function WorkflowEditor() {
                                     ))}
                                 </select>
                             </div>
+
+                            {(formData.document_type === 'Job' || formData.is_job) && (
+                                <>
+                                    <div className="form-item" style={{ marginTop: '16px' }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
+                                            Job Major Category
+                                        </label>
+                                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                            <select 
+                                                className="form-select" 
+                                                value={formData.delivery_verification?.job_major || ''} 
+                                                onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    setFormData(prev => ({
+                                                        ...prev,
+                                                        delivery_verification: {
+                                                            ...(prev.delivery_verification || {}),
+                                                            job_major: val
+                                                        }
+                                                    }));
+                                                }}
+                                                style={{ flex: 1 }}
+                                            >
+                                                <option value="">-- Choose Job Major --</option>
+                                                {getJobMajorOptions().map(opt => (
+                                                    <option key={opt} value={opt}>{opt}</option>
+                                                ))}
+                                                <option value="Other">Other / Custom...</option>
+                                            </select>
+                                            <button 
+                                                type="button"
+                                                className="icon-btn" 
+                                                onClick={() => setModal({ isOpen: true, type: 'job_major' })}
+                                                style={{ padding: '8px', background: '#f8fafc' }}
+                                                title="Add New Job Major Category"
+                                            >
+                                                <Plus size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {formData.delivery_verification?.job_major === 'Other' && (
+                                        <div className="form-item" style={{ marginTop: '12px' }}>
+                                            <label style={{ fontWeight: 600 }}>Custom Job Major</label>
+                                            <input 
+                                                type="text" 
+                                                className="form-input" 
+                                                value={formData.delivery_verification?.job_major_custom || ''} 
+                                                onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    setFormData(prev => ({
+                                                        ...prev,
+                                                        delivery_verification: {
+                                                            ...(prev.delivery_verification || {}),
+                                                            job_major_custom: val
+                                                        }
+                                                    }));
+                                                }}
+                                                placeholder="Enter custom job major category"
+                                            />
+                                        </div>
+                                    )}
+                                </>
+                            )}
                         </div>
 
                         <div className="col-right">
@@ -3257,6 +3359,31 @@ export default function WorkflowEditor() {
                                 )}
                             </div>
                         </div>
+
+                        {/* Job Description spans both columns */}
+                        {(formData.document_type === 'Job' || formData.is_job) && (
+                            <div className="form-item" style={{ gridColumn: 'span 2', marginTop: '16px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
+                                    Job Description (for search)
+                                </label>
+                                <div style={{ background: '#fff', borderRadius: '12px', padding: '8px', border: '1px solid #e2e8f0' }}>
+                                    <RichTextEditor 
+                                        value={formData.delivery_verification?.job_description || ''} 
+                                        onChange={(val) => {
+                                            setFormData(prev => ({
+                                                ...prev,
+                                                delivery_verification: {
+                                                    ...(prev.delivery_verification || {}),
+                                                    job_description: val
+                                                }
+                                            }));
+                                        }}
+                                        placeholder="Detailed description of the job for future search"
+                                        height="120px"
+                                    />
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -3264,14 +3391,12 @@ export default function WorkflowEditor() {
                 <div className="tab-container">
                     <button className={`tab ${activeTab === 'items' ? 'active' : ''}`} onClick={() => setActiveTab('items')}>Order Lines</button>
                     <button className={`tab ${activeTab === 'other' ? 'active' : ''}`} onClick={() => setActiveTab('other')}>Other Info</button>
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                        {formData.assigned_job_no && <button className={`tab ${activeTab === 'workflow' ? 'active' : ''}`} onClick={() => setActiveTab('workflow')}>Workflow Suite</button>}
-                        {formData.customer_po_no && <button className={`tab ${activeTab === 'po' ? 'active' : ''}`} onClick={() => setActiveTab('po')}>PO Details</button>}
-                        {formData.assigned_job_no && <button className={`tab ${activeTab === 'costing' ? 'active' : ''}`} onClick={() => setActiveTab('costing')}>Project Costing</button>}
-                        {formData.assigned_job_no && <button className={`tab ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}>Payments & GST</button>}
-                        <button className={`tab ${activeTab === 'gallery' ? 'active' : ''}`} onClick={() => setActiveTab('gallery')}>Photos & Media</button>
-                        <button className={`tab ${activeTab === 'explorer' ? 'active' : ''}`} onClick={() => setActiveTab('explorer')}>Explorer</button>
-                    </div>
+                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && <button className={`tab ${activeTab === 'workflow' ? 'active' : ''}`} onClick={() => setActiveTab('workflow')}>Workflow Suite</button>}
+                    {(formData.customer_po_no || formData.is_job || formData.document_type === 'Job') && <button className={`tab ${activeTab === 'po' ? 'active' : ''}`} onClick={() => setActiveTab('po')}>PO Details</button>}
+                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && <button className={`tab ${activeTab === 'costing' ? 'active' : ''}`} onClick={() => setActiveTab('costing')}>Project Costing</button>}
+                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && <button className={`tab ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}>Payments & GST</button>}
+                    <button className={`tab ${activeTab === 'gallery' ? 'active' : ''}`} onClick={() => setActiveTab('gallery')}>Photos & Media</button>
+                    <button className={`tab ${activeTab === 'explorer' ? 'active' : ''}`} onClick={() => setActiveTab('explorer')}>Explorer</button>
                 </div>
 
                 {activeTab === 'gallery' && (
@@ -5672,10 +5797,11 @@ export default function WorkflowEditor() {
                 }
             .tab-container {
                 display: flex;
-            gap: 4px;
-            margin: 30px 0 20px 0;
-            border-bottom: 1px solid var(--border-color);
-                }
+                flex-wrap: wrap;
+                gap: 4px;
+                margin: 30px 0 20px 0;
+                border-bottom: 1px solid var(--border-color);
+            }
             .tab {
                 padding: 10px 24px;
             background: transparent;
