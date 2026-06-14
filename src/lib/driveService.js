@@ -247,17 +247,28 @@ export const createFolderStructure = async (accessToken, path, parentId = null) 
  * Path: [CELRON]/01. TIME_BASED/JOBS/[Year]/[Project Name]
  */
 export const provisionFullProjectStructure = async (accessToken, celronRootId, year, projectFolderName) => {
-    // 1. Navigate to 01. TIME_BASED
-    const timeBasedId = await getOrCreateFolder(accessToken, '01. TIME_BASED', celronRootId);
+    const customJobsRootId = '1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-';
     
-    // 2. Navigate to Year
-    const yearId = await getOrCreateFolder(accessToken, year, timeBasedId);
+    // Check if the root matches the custom Jobs root folder ID (directly or as part of a link)
+    const isCustomJobsRoot = celronRootId === customJobsRootId || 
+                             (celronRootId && celronRootId.includes(customJobsRootId));
+    
+    let jobsRootId;
+    if (isCustomJobsRoot) {
+        jobsRootId = customJobsRootId;
+    } else {
+        // 1. Navigate to 01. TIME_BASED
+        const timeBasedId = await getOrCreateFolder(accessToken, '01. TIME_BASED', celronRootId);
+        
+        // 2. Navigate to Year
+        const yearId = await getOrCreateFolder(accessToken, year, timeBasedId);
 
-    // 3. Navigate to JOBS
-    const jobsRootId = await getOrCreateFolder(accessToken, 'JOBS', yearId);
+        // 3. Navigate to JOBS
+        jobsRootId = await getOrCreateFolder(accessToken, 'JOBS', yearId);
 
-    // 3b. Also ensure AccountPayable folder exists under yearId
-    await getOrCreateFolder(accessToken, 'AccountPayable', yearId);
+        // 3b. Also ensure AccountPayable folder exists under yearId
+        await getOrCreateFolder(accessToken, 'AccountPayable', yearId);
+    }
 
     // 4. Create/Find the specific Project folder (using prefix-contains query to avoid duplication)
     const jobNoPrefix = projectFolderName.split(' ')[0]; // E.g., 'CEL-2605-6063'
@@ -282,8 +293,9 @@ export const provisionFullProjectStructure = async (accessToken, celronRootId, y
         projectFolderId = await getOrCreateFolder(accessToken, projectFolderName, jobsRootId);
     }
 
-    // 5. In Option B, we only provision one sub-folder specifically for photos
+    // 5. Provision sub-folders inside the Job folder
     await getOrCreateFolder(accessToken, 'Photos & Gallery', projectFolderId);
+    await getOrCreateFolder(accessToken, 'Worksuite', projectFolderId);
 
     return projectFolderId;
 };

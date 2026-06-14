@@ -1158,7 +1158,8 @@ export default function WorkflowEditor() {
             const projName = getProjectFolderName();
             const rootId = await provisionFullProjectStructure(token, settings?.gdrive_celron_root_id, year, projName);
             
-            const targetFolderId = rootId;
+            // Route auto-generated PDFs to the 'Worksuite' subfolder
+            const targetFolderId = await getOrCreateFolder(token, 'Worksuite', rootId);
             
             const filename = `${getDocumentDisplayName(docData)}.pdf`;
             await uploadFileToDrive(token, new File([pdfBlob], filename, { type: 'application/pdf' }), { folderId: targetFolderId });
@@ -2001,7 +2002,7 @@ export default function WorkflowEditor() {
                     }, settings, 'blob');
 
                     const rootId = await ensureJobFolder();
-                    const stageFolder = rootId;
+                    const stageFolder = await getOrCreateFolder(token, 'Worksuite', rootId);
                     
                     const filename = `${getDocumentDisplayName(savedDoc)}.pdf`;
                     await uploadFileToDrive(token, new File([pdfBlob], filename, { type: 'application/pdf' }), { folderId: stageFolder });
@@ -2121,7 +2122,7 @@ export default function WorkflowEditor() {
                     }, settings, 'blob');
 
                     const rootId = await ensureJobFolder();
-                    const stageFolder = rootId;
+                    const stageFolder = await getOrCreateFolder(token, 'Worksuite', rootId);
                     
                     const filename = `${getDocumentDisplayName(data)}.pdf`;
                     await uploadFileToDrive(token, new File([pdfBlob], filename, { type: 'application/pdf' }), { folderId: stageFolder });

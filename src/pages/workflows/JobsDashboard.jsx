@@ -273,6 +273,12 @@ export default function JobsDashboard() {
             if (match) celronRootId = match[1];
         }
 
+        const customJobsRootId = '1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-';
+        if (celronRootId === customJobsRootId) {
+            window.open(`https://drive.google.com/drive/folders/${celronRootId}`, '_blank');
+            return;
+        }
+
         if (!isTokenValid()) {
             if (window.confirm('Your Google connection has expired or is not connected. Would you like to connect now?')) {
                 sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
