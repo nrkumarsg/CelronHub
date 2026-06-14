@@ -169,6 +169,20 @@ export default function WorkflowEditor() {
     const [paynowBase64, setPaynowBase64] = useState('');
     const printRef = useRef();
 
+    // Open General Celron Jobs Folder in Google Drive
+    const handleOpenRootDrive = () => {
+        let celronRootId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
+        if (!celronRootId) {
+            toast.error('Google Drive Root Folder ID is not configured in Settings.');
+            return;
+        }
+        if (celronRootId.includes('drive.google.com')) {
+            window.open(celronRootId, '_blank');
+        } else {
+            window.open(`https://drive.google.com/drive/folders/${celronRootId}`, '_blank');
+        }
+    };
+
     // Inline Contact Editing States
     const [editingContact, setEditingContact] = useState(null);
     const [isAddingContact, setIsAddingContact] = useState(false);
@@ -2890,6 +2904,28 @@ export default function WorkflowEditor() {
             </div>
 
             <div className="editor-content">
+                {/* Google Drive Integration card */}
+                <div className="glass-panel animate-fade-in" style={{ padding: '20px', borderRadius: '16px', border: '1px solid var(--border-color)', marginBottom: '24px', background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.04) 0%, rgba(16, 185, 129, 0.04) 100%)', backdropFilter: 'blur(8px)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            <div style={{ background: '#fef3c7', padding: '12px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <FolderOpen size={28} color="#f59e0b" fill="#f59e0b" fillOpacity={0.1} />
+                            </div>
+                            <div>
+                                <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Google Drive Workspace Folder</h3>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '2px', margin: 0 }}>Access the centralized repository containing all job files and related documentation.</p>
+                            </div>
+                        </div>
+                        <button 
+                            onClick={handleOpenRootDrive} 
+                            className="btn btn-secondary" 
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#f59e0b', color: '#b45309', background: '#fffbeb', fontWeight: 700, padding: '10px 20px', transition: 'all 0.2s', borderRadius: '8px' }}
+                        >
+                            <ExternalLink size={16} /> Open Drive Root
+                        </button>
+                    </div>
+                </div>
+
                 {/* Header Info Panel */}
                 <div className="glass-panel header-panel">
                     <div className="input-grid">
