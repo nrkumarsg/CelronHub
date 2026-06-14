@@ -32,7 +32,27 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
     const companySignature = settings?.signature_url || '/nrkumarsign.png';
     const companyPaynow = settings?.paynow_url;
 
-    const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) : '-';
+    const formatDate = (d) => {
+        if (!d) return '-';
+        const date = new Date(d);
+        if (isNaN(date.getTime())) return '-';
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = String(date.getFullYear()).slice(-2);
+        return `${day}/${month}/${year}`;
+    };
+
+    const getDocNoPrefix = (type) => {
+        const t = type?.toUpperCase() || '';
+        if (t.includes('DELIVERY')) return 'DO.NO';
+        if (t.includes('PACKING')) return 'PKL.NO';
+        if (t.includes('TAX INVOICE') || t.includes('PROFORMA INVOICE') || t.includes('INVOICE')) return 'INV.NO';
+        if (t.includes('QUOTE') || t.includes('QUOTATION')) return 'QT.NO';
+        if (t.includes('PURCHASE')) return 'PO.NO';
+        if (t.includes('STATEMENT')) return 'SOA.NO';
+        if (t.includes('ACKNOWLEDG')) return 'ACK.NO';
+        return 'DOC.NO';
+    };
     
     // Check if we should hide prices (for DO and PKL)
     const isDeliveryDoc = document_type?.toUpperCase().includes('DELIVERY') || document_type?.toUpperCase().includes('PACKING');
@@ -100,197 +120,288 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
     }));
 
     const htmlContent = `
-        <div style="padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b !important; width: 800px; min-height: 1060px; background: #ffffff !important; position: relative; padding-bottom: 60px; box-sizing: border-box; margin: 0 auto; color-scheme: light !important;">
+        <div style="padding: 40px; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #000 !important; width: 800px; min-height: 1060px; background: #ffffff !important; position: relative; padding-bottom: 80px; box-sizing: border-box; margin: 0 auto; color-scheme: light !important;">
             <style>
                 * { color-scheme: light !important; -webkit-print-color-adjust: exact !important; }
-                p { margin: 0 0 4px 0; color: #1e293b !important; }
-                b, strong { font-weight: 700; color: #1e293b !important; }
+                p { margin: 0 0 4px 0; color: #000 !important; }
+                b, strong { font-weight: 700; color: #000 !important; }
                 ul, ol { margin: 4px 0; padding-left: 20px; }
                 li { margin-bottom: 2px; }
+                .total-row-cell { color: #ffffff !important; }
             </style>
             
-            <!-- Company Header -->
-            <div style="padding: 30px 50px 10px 50px; display: flex; justify-content: space-between; align-items: flex-start;">
-                <div style="flex: 1;">
-                   <img src="${logoB64}" style="height: 70px; object-fit: contain; margin-bottom: 10px;" />
-                   <div style="font-size: 15px; font-weight: 700; color: #1e293b;">${companyName}</div>
-                   <div style="font-size: 11px; color: #1e3a8a; font-weight: 600; margin-top: 2px;">CR, GST & UEN : ${companyUen}</div>
-                   ${paynowB64 ? `<div style="margin-top:10px;"><img src="${paynowB64}" style="width: 100px; height: 100px;" /></div>` : ''}
+            <!-- Company Header Block -->
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                <div style="flex: 0.8;">
+                   <img src="${logoB64}" style="height: 65px; object-fit: contain; margin-bottom: 5px;" />
                 </div>
-                <div style="text-align: right; color: #475569; font-size: 11px; flex: 1; line-height: 1.5;">
-                    <div style="white-space: pre-wrap;">${companyAddress}</div>
+                <div style="text-align: right; color: #000; font-size: 10.5px; flex: 1.2; line-height: 1.4; font-family: 'Segoe UI', Arial, sans-serif;">
+                    <div style="font-size: 16px; font-weight: 800; color: #d92727; letter-spacing: 0.5px;">CEL-RON ENTERPRISES PTE LTD</div>
+                    <div style="font-weight: 700; margin-top: 2px;">UEN NO. 201436227C</div>
+                    <div style="font-weight: 700; font-style: italic; font-size: 9.5px; margin-top: 1px; color: #334155;">&ldquo;Sim Lim Tower&rdquo;</div>
+                    <div style="margin-top: 2px; color: #475569; font-weight: 500;">
+                        10, Jln, Besar, "Sim Lim Tower" #03-05, Singapore 208787<br>
+                        Phone: +65 81962270 &nbsp; Email: sales@celron.net<br>
+                        www.celron.net
+                    </div>
                 </div>
             </div>
 
-            <!-- Title & Vessel Banner -->
-            <div style="margin-top: 5px; display: flex; justify-content: flex-end; position: relative;">
-                <div style="background: #f1f5f9; padding: 12px 40px; border-radius: 40px 0 0 40px; min-width: 400px; text-align: right;">
-                    <h1 style="margin: 0; font-size: 24px; color: #1e3a8a; font-weight: 700; letter-spacing: -0.5px;">${document_type} # ${document_no}</h1>
-                    ${vessels ? `<div style="margin-top: 4px; font-size: 13px; font-weight: 600; color: #1e293b;">Vessel Name : <span style="font-weight: 400;">${vessels.vessel_name}</span></div>` : ''}
-                    ${assigned_job_no ? `<div style="margin-top: 4px; font-size: 13px; font-weight: 700; color: #10b981;">Job No: <span style="font-weight: 700;">${assigned_job_no}</span></div>` : ''}
-                    ${customer_ref ? `<div style="margin-top: 4px; font-size: 11px; font-weight: 600; color: #475569;">Reference: <span style="font-weight: 400;">${customer_ref}</span></div>` : ''}
+            <!-- Document Metadata row -->
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 15px; font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; font-weight: 700; color: #1e3a8a;">
+                <div style="width: 30%; text-align: left; text-transform: uppercase;">
+                    ${getDocNoPrefix(document_type)}: <span style="color: #000;">${document_no}</span>
+                </div>
+                <div style="width: 40%; text-align: center; font-size: 20px; font-weight: 800; color: #1e3a8a; text-transform: uppercase; letter-spacing: 1px;">
+                    ${document_type}
+                </div>
+                <div style="width: 30%; text-align: right; text-transform: uppercase;">
+                    DATE: <span style="color: #000;">${formatDate(issue_date)}</span>
                 </div>
             </div>
+
+            <!-- Solid blue line separator -->
+            <div style="border-bottom: 2px solid #1e3a8a; margin-top: 10px; margin-bottom: 20px;"></div>
 
             <!-- Customer & Metadata Grid -->
-            <div style="padding: 20px 50px 10px 50px;">
-                <div style="margin-bottom: 20px;">
-                    <div style="font-size: 14px; font-weight: 700; color: #1e293b; margin-bottom: 4px;">${partners?.name || 'Walk-in Customer'}</div>
-                    <div style="font-size: 11px; color: #475569; line-height: 1.5; max-width: 450px; white-space: pre-wrap;">
-                        ${partners?.address || ''}
-                        ${(partners?.city || partners?.country || partners?.pincode) ? `\n${[partners?.city, partners?.country, partners?.pincode].filter(Boolean).join(', ')}` : ''}
-                        ${(partners?.phone1 || partners?.phone) ? `\nTel: ${partners?.phone1 || partners?.phone}` : ''}
-                        ${(partners?.email1 || partners?.email) ? `\nEmail: ${partners?.email1 || partners?.email}` : ''}
-                        ${partners?.weblink ? `\n${partners.weblink}` : ''}
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; font-family: 'Segoe UI', Arial, sans-serif;">
+                
+                <!-- TO Box (Left) -->
+                <div style="border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; min-height: 180px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; background: white;">
+                    <div>
+                        <div style="color: #1e3a8a; font-weight: 700; font-size: 12px; margin-bottom: 6px; text-transform: uppercase;">TO:</div>
+                        <div style="font-weight: 800; font-size: 12px; color: #000; text-transform: uppercase; margin-bottom: 2px;">
+                            MASTER AND OWNER OF ${vessels?.vessel_name || 'N.A'}
+                        </div>
+                        <div style="font-weight: 700; font-size: 11px; color: #000; margin-bottom: 4px;">
+                            C/O ${partners?.name || 'Walk-in Customer'}
+                        </div>
+                        <div style="font-size: 10.5px; color: #1e293b; line-height: 1.4; white-space: pre-wrap;">${partners?.address || ''}</div>
+                        <div style="font-size: 10.5px; color: #1e293b; margin-top: 4px;">
+                            Phone: ${partners?.phone1 || partners?.phone || 'N/A'} &nbsp; Email: ${partners?.email1 || partners?.email || 'N/A'}
+                        </div>
                     </div>
-                    ${partners?.registration_no ? `<div style="font-size: 11px; color: #475569; margin-top: 2px;">GST No.: ${partners.registration_no}</div>` : ''}
+                    <div>
+                        <div style="border-top: 1px solid #cbd5e1; margin: 8px 0 6px 0;"></div>
+                        <div style="font-weight: 700; font-size: 11px; color: #000;">
+                            ATTN: ${contacts?.contact_name || partners?.contact_person || 'N/A'}
+                        </div>
+                        <div style="font-size: 10px; color: #475569; margin-top: 1px;">
+                            HP: ${contacts?.mobile_phone || partners?.phone1 || partners?.phone || 'N/A'} &nbsp; Email: ${contacts?.email || partners?.email1 || partners?.email || 'N/A'}
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Horizontal Context Bar -->
-                <div style="background: #f8fafc; border-radius: 10px; display: flex; padding: 12px 0; border: 1px solid #e2e8f0;">
-                    <div style="flex: 1; padding: 0 15px; border-right: 1px solid #e2e8f0;">
-                        <div style="font-size: 9px; color: #94a3b8; font-weight: 700; text-transform: uppercase;">Date</div>
-                        <div style="font-size: 11px; font-weight: 600; color: #1e293b; margin-top: 3px;">${formatDate(issue_date)}</div>
-                    </div>
-                    <div style="flex: 1; padding: 0 15px; border-right: 1px solid #e2e8f0;">
-                        <div style="font-size: 9px; color: #94a3b8; font-weight: 700; text-transform: uppercase;">Due Date</div>
-                        <div style="font-size: 11px; font-weight: 600; color: #1e293b; margin-top: 3px;">${formatDate(expiry_date)}</div>
-                    </div>
-                    ${payment_terms ? `
-                    <div style="flex: 1.2; padding: 0 15px; border-right: 1px solid #e2e8f0;">
-                        <div style="font-size: 9px; color: #94a3b8; font-weight: 700; text-transform: uppercase;">Payment Terms</div>
-                        <div style="font-size: 11px; font-weight: 700; color: #1e3a8a; margin-top: 3px;">${payment_terms.toUpperCase()}</div>
-                    </div>
-                    ` : ''}
-                    <div style="flex: 1.5; padding: 0 15px;">
-                        <div style="font-size: 9px; color: #94a3b8; font-weight: 700; text-transform: uppercase;">Salesperson</div>
-                        <div style="font-size: 11px; font-weight: 700; color: #1e293b; margin-top: 3px;">${effectiveSalesperson.toUpperCase()}</div>
-                        <div style="font-size: 8px; color: #64748b; margin-top: 1px;">${effectiveEmail} | ${effectivePhone}</div>
-                    </div>
+                <!-- Key-Value metadata box (Right) -->
+                <div style="border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; min-height: 180px; box-sizing: border-box; background: white;">
+                    <table style="width: 100%; height: 100%; border-collapse: collapse; font-size: 10.5px; table-layout: fixed; font-family: 'Segoe UI', Arial, sans-serif;">
+                        <tr style="border-bottom: 1px solid #cbd5e1;">
+                            <td style="width: 35%; padding: 6px 10px; font-weight: 700; color: #1e3a8a; border-right: 1px solid #cbd5e1; background: #f8fafc; text-transform: uppercase;">VESSEL</td>
+                            <td style="width: 65%; padding: 6px 10px; font-weight: 700; color: #000; text-transform: uppercase; word-wrap: break-word;">${vessels?.vessel_name || 'N.A'}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #cbd5e1;">
+                            <td style="padding: 6px 10px; font-weight: 700; color: #1e3a8a; border-right: 1px solid #cbd5e1; background: #f8fafc; text-transform: uppercase;">PAYMENT TERMS</td>
+                            <td style="padding: 6px 10px; font-weight: 700; color: #000; text-transform: uppercase; word-wrap: break-word;">${payment_terms || 'COD'}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #cbd5e1;">
+                            <td style="padding: 6px 10px; font-weight: 700; color: #1e3a8a; border-right: 1px solid #cbd5e1; background: #f8fafc; text-transform: uppercase;">REFERENCE</td>
+                            <td style="padding: 6px 10px; font-weight: 700; color: #000; text-transform: uppercase; word-wrap: break-word;">${customer_ref || 'WALK IN'}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #cbd5e1;">
+                            <td style="padding: 6px 10px; font-weight: 700; color: #1e3a8a; border-right: 1px solid #cbd5e1; background: #f8fafc; text-transform: uppercase;">JOB NO</td>
+                            <td style="padding: 6px 10px; font-weight: 700; color: #10b981; text-transform: uppercase; word-wrap: break-word;">${assigned_job_no || 'Draft'}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 6px 10px; font-weight: 700; color: #1e3a8a; border-right: 1px solid #cbd5e1; background: #f8fafc; text-transform: uppercase;">SALESPERSON</td>
+                            <td style="padding: 6px 10px; font-weight: 700; color: #000; word-wrap: break-word; line-height: 1.3;">
+                                ${effectiveSalesperson.toUpperCase()}
+                                <div style="font-size: 9px; font-weight: normal; color: #475569; margin-top: 2px;">
+                                    ${effectivePhone} | ${effectiveEmail}
+                                </div>
+                            </td>
+                        </tr>
+                    </table>
                 </div>
+
             </div>
 
-            <!-- Subject -->
-            ${subject ? `
-            <div style="padding: 0 50px 10px 50px;">
-                <div style="font-size: 12px; font-weight: 700; color: #1e3a8a; border-left: 3px solid #1e3a8a; padding-left: 10px;">
-                    SUBJECT: <span style="text-decoration: underline;">${subject.toUpperCase()}</span>
-                </div>
+            <!-- Subject Line -->
+            <div style="text-align: center; margin: 20px 0; font-weight: 700; font-size: 12.5px; color: #000; font-family: 'Segoe UI', Arial, sans-serif;">
+                SUBJECT: <span style="text-decoration: underline;">${subject?.toUpperCase() || ''}</span>
             </div>
-            ` : ''}
 
             <!-- Items Table -->
-            <div style="padding: 10px 50px;">
-                <table style="width: 100%; border-collapse: collapse; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; table-layout: fixed;">
+            <div style="margin-bottom: 20px; font-family: 'Segoe UI', Arial, sans-serif;">
+                <table style="width: 100%; border-collapse: collapse; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; font-size: 10.5px; table-layout: fixed;">
                     <thead>
-                        <tr style="background: #1e3a8a; color: #fff;">
-                            <th style="padding: 10px 15px; text-align: left; font-size: 11px; font-weight: 700; width: ${isDeliveryDoc ? '80%' : '50%'};">Description</th>
-                            <th style="padding: 10px 15px; text-align: center; font-size: 11px; font-weight: 700; width: 15%;">Qty</th>
+                        <tr style="background: #f1f5f9; border-bottom: 1px solid #cbd5e1;">
+                            <th style="padding: 10px; border-right: 1px solid #cbd5e1; text-align: center; width: 8%; color: #000; font-weight: 700;">S/N</th>
+                            <th style="padding: 10px; border-right: 1px solid #cbd5e1; text-align: left; width: ${isDeliveryDoc ? '77%' : '52%'}; color: #000; font-weight: 700;">DESCRIPTION</th>
+                            <th style="padding: 10px; ${!isDeliveryDoc ? 'border-right: 1px solid #cbd5e1;' : ''} text-align: center; width: 15%; color: #000; font-weight: 700;">QTY</th>
                             ${!isDeliveryDoc ? `
-                                <th style="padding: 10px 15px; text-align: right; font-size: 11px; font-weight: 700; width: 17%;">Price</th>
-                                <th style="padding: 10px 15px; text-align: right; font-size: 11px; font-weight: 700; width: 18%;">Total (${currency})</th>
+                            <th style="padding: 10px; border-right: 1px solid #cbd5e1; text-align: right; width: 12%; color: #000; font-weight: 700;">PRICE</th>
+                            <th style="padding: 10px; text-align: right; width: 13%; color: #000; font-weight: 700;">TOTAL</th>
                             ` : ''}
                         </tr>
                     </thead>
                     <tbody>
-                        ${processedItems.length > 0 ? processedItems.map((item) => {
-        if (item.is_section) {
-            return `
-                                    <tr style="background: #f1f5f9;">
-                                        <td colspan="${isDeliveryDoc ? '2' : '4'}" style="padding: 8px 15px; font-size: 11px; font-weight: 700; color: #1e3a8a; border-bottom: 1px solid #e2e8f0;">${item.description.toUpperCase()}</td>
-                                    </tr>
-                                `;
-        }
-        if (item.is_note) {
-            return `
-                                    <tr>
-                                        <td colspan="${isDeliveryDoc ? '2' : '4'}" style="padding: 6px 15px; font-size: 10px; color: #64748b; font-style: italic; border-bottom: 1px solid #e2e8f0; white-space: pre-wrap;">${item.description}</td>
-                                    </tr>
-                                `;
-        }
-        if (item.is_image) {
-            return `
-                                    <tr>
-                                        <td colspan="${isDeliveryDoc ? '2' : '4'}" style="padding: 15px; text-align: center; border-bottom: 1px solid #e2e8f0;">
-                                            <div style="font-weight: 700; text-align: left; margin-bottom: 10px; color: #1e3a8a;">${item.description}</div>
-                                            <img src="${item._base64_image}" style="max-width: 100%; max-height: 500px; object-fit: contain; border-radius: 8px;" />
+                        ${(() => {
+                            let sn = 0;
+                            return processedItems.length > 0 ? processedItems.map((item) => {
+                                if (item.is_section) {
+                                    return `
+                                        <tr style="background: #f8fafc; border-bottom: 1px solid #cbd5e1;">
+                                            <td colspan="${isDeliveryDoc ? '3' : '5'}" style="padding: 8px 10px; font-weight: 700; color: #1e3a8a; border-right: none;">${item.description.toUpperCase()}</td>
+                                        </tr>
+                                    `;
+                                }
+                                if (item.is_note) {
+                                    return `
+                                        <tr style="border-bottom: 1px solid #cbd5e1;">
+                                            <td colspan="${isDeliveryDoc ? '3' : '5'}" style="padding: 6px 10px; font-size: 9.5px; color: #475569; font-style: italic; white-space: pre-wrap; border-right: none;">${item.description}</td>
+                                        </tr>
+                                    `;
+                                }
+                                if (item.is_image) {
+                                    return `
+                                        <tr style="border-bottom: 1px solid #cbd5e1;">
+                                            <td colspan="${isDeliveryDoc ? '3' : '5'}" style="padding: 12px; text-align: center; border-right: none;">
+                                                <div style="font-weight: 700; text-align: left; margin-bottom: 8px; color: #1e3a8a;">${item.description}</div>
+                                                <img src="${item._base64_image}" style="max-width: 100%; max-height: 400px; object-fit: contain; border-radius: 4px;" />
+                                            </td>
+                                        </tr>
+                                    `;
+                                }
+                                sn++;
+                                return `
+                                    <tr style="border-bottom: 1px solid #cbd5e1;">
+                                        <td style="padding: 10px; border-right: 1px solid #cbd5e1; text-align: center; color: #000; font-weight: bold; vertical-align: top;">${sn}</td>
+                                        <td style="padding: 10px; border-right: 1px solid #cbd5e1; color: #000; word-wrap: break-word; vertical-align: top;">
+                                            <div style="font-weight: 700; text-transform: uppercase;">${item.description || ''}</div>
+                                            ${item.details ? `<div style="font-size: 9px; color: #475569; margin-top: 3px; line-height: 1.3; white-space: pre-wrap;">${item.details}</div>` : ''}
                                         </td>
+                                        <td style="padding: 10px; ${!isDeliveryDoc ? 'border-right: 1px solid #cbd5e1;' : ''} text-align: center; color: #000; font-weight: 700; vertical-align: top;">
+                                            ${(item.quantity ?? 0).toLocaleString()} ${item.uom || 'PC(S)'}
+                                        </td>
+                                        ${!isDeliveryDoc ? `
+                                        <td style="padding: 10px; border-right: 1px solid #cbd5e1; text-align: right; color: #000; vertical-align: top;">
+                                            ${(item.unit_price ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </td>
+                                        <td style="padding: 10px; text-align: right; color: #000; font-weight: 700; vertical-align: top;">
+                                            ${(item.amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </td>
+                                        ` : ''}
                                     </tr>
                                 `;
-        }
-        return `
+                            }).join('') : `
                                 <tr>
-                                    <td style="padding: 12px 15px; font-size: 11px; color: #1e293b; border-bottom: 1px solid #e2e8f0; word-wrap: break-word;">
-                                        <div style="font-weight: 700;">${item.description}</div>
-                                        ${item.details ? `<div style="font-size: 10px; color: #64748b; margin-top: 3px; line-height: 1.4; white-space: pre-wrap;">${item.details}</div>` : ''}
-                                    </td>
-                                    <td style="padding: 12px 15px; text-align: center; font-size: 11px; color: #475569; border-bottom: 1px solid #e2e8f0; border-left: 1px solid #e2e8f0;">${(item.quantity ?? 0).toLocaleString()} ${item.uom || 'PC(S)'}</td>
-                                    ${!isDeliveryDoc ? `
-                                        <td style="padding: 12px 15px; text-align: right; font-size: 11px; color: #475569; border-bottom: 1px solid #e2e8f0; border-left: 1px solid #e2e8f0;">${(item.unit_price ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                        <td style="padding: 12px 15px; text-align: right; font-size: 11px; font-weight: 700; color: #1e293b; border-bottom: 1px solid #e2e8f0; border-left: 1px solid #e2e8f0;">${(item.amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                    ` : ''}
+                                    <td colspan="${isDeliveryDoc ? '3' : '5'}" style="padding: 30px; text-align: center; color: #94a3b8; font-style: italic;">No items listed</td>
                                 </tr>
                             `;
-    }).join('') : `
-                            <tr>
-                                <td colspan="${isDeliveryDoc ? '2' : '4'}" style="padding: 40px; text-align: center; color: #94a3b8; font-style: italic; border-bottom: 1px solid #e2e8f0;">No items listed</td>
-                            </tr>
-                        `}
+                        })()}
                     </tbody>
                 </table>
+            </div>
 
-                <!-- Totals -->
-                ${!isDeliveryDoc ? `
-                    <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
-                        <table style="width: 280px; border-collapse: collapse; font-size: 11px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
-                            <tr>
-                                <td style="padding: 8px 15px; color: #64748b;">Subtotal</td>
-                                <td style="padding: 8px 15px; text-align: right; font-weight: 700;">${currency} ${(subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                            </tr>
-                            ${documentData.discount_amount > 0 ? `
-                                <tr>
-                                    <td style="padding: 8px 15px; color: #ef4444;">Discount (${documentData.discount_percent}%)</td>
-                                    <td style="padding: 8px 15px; text-align: right; font-weight: 700; color: #ef4444;">- ${currency} ${(documentData.discount_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                </tr>
+            <!-- Notes & Totals Grid -->
+            <div style="display: flex; gap: 20px; align-items: flex-start; margin-bottom: 20px; font-family: 'Segoe UI', Arial, sans-serif;">
+                
+                <!-- NOTES & COMMENTS Box -->
+                <div style="border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; flex: 1.2; box-sizing: border-box; min-height: 145px; background: white;">
+                    <div style="color: #1e3a8a; font-weight: 700; font-size: 11px; margin-bottom: 6px; text-transform: uppercase;">NOTES & COMMENTS:</div>
+                    ${isDeliveryDoc ? `
+                        <div style="font-weight: 700; font-size: 9.5px; margin-bottom: 4px; color: #000;">Package Details</div>
+                        <ul style="list-style-type: square; padding-left: 15px; margin: 0; color: #000; font-size: 9.5px; line-height: 1.4;">
+                            <li>Size of the Package : &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mm (L) x &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mm (B) x &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mm (H)</li>
+                            <li>Weight of the Package : &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Kgs</li>
+                            <li>Origin of spares : Singapore</li>
+                            <li>Total No. of Packages:</li>
+                            <li>Package Type (Carton / Wooden Crate / Pallet / Drum):</li>
+                            <li>Package Qty:</li>
+                            <li>Description of Contents:</li>
+                        </ul>
+                        ${notes ? `<div style="margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 6px; white-space: pre-wrap; font-size: 9.5px; font-weight: 500; color: #000;">${notes}</div>` : ''}
+                    ` : `
+                        <div style="display: flex; gap: 10px; align-items: flex-start;">
+                            ${paynowB64 ? `
+                            <div style="text-align: center; border: 1px solid #cbd5e1; padding: 4px; border-radius: 4px; background: white; flex-shrink: 0;">
+                                <img src="${paynowB64}" style="width: 80px; height: 80px; object-fit: contain;" />
+                                <div style="font-size: 8px; font-weight: bold; margin-top: 2px; color: #1e3a8a;">PAYNOW UEN</div>
+                            </div>
                             ` : ''}
-                            <tr>
-                                <td style="padding: 8px 15px; color: #64748b;">GST (9%)</td>
-                                <td style="padding: 8px 15px; text-align: right; font-weight: 700;">${currency} ${(tax_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                            </tr>
-                            <tr style="background: #1e3a8a; color: #fff;">
-                                <td style="padding: 10px 15px; font-weight: 700; font-size: 13px; border-radius: 0 0 0 8px;">TOTAL</td>
-                                <td style="padding: 10px 15px; text-align: right; font-weight: 800; font-size: 14px; border-radius: 0 0 8px 0;">${currency} ${(total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                            </tr>
-                        </table>
-                    </div>
-                ` : ''}
-            </div>
-
-            <!-- Notes & Terms -->
-            <div style="padding: 10px 50px;">
-                <div style="font-size: 10px; color: #1e293b; line-height: 1.6;">
-                    ${notes ? `<div style="margin-bottom: 10px; white-space: pre-wrap; font-weight: 500; border-top: 1px solid #f1f5f9; padding-top: 10px;">${notes}</div>` : ''}
-                    ${terms_conditions ? `<div style="margin-top: 10px; color: #475569;">Payment terms: ${terms_conditions}</div>` : ''}
+                            <div style="flex: 1; color: #000; font-size: 9.5px; line-height: 1.45;">
+                                <div style="font-weight: 700; color: #1e3a8a; font-size: 10px; margin-bottom: 2px;">Bank Transfer Details:</div>
+                                <div>Bank: <strong>DBS Bank Ltd</strong></div>
+                                <div>Account Name: <strong>CEL-RON ENTERPRISES PTE LTD</strong></div>
+                                <div>Account No: <strong>123-456789-0</strong></div>
+                                <div>Swift Code: <strong>DBSSGSG</strong></div>
+                                ${notes ? `<div style="margin-top: 6px; border-top: 1px solid #e2e8f0; padding-top: 4px; white-space: pre-wrap; font-style: italic; color: #475569;">${notes}</div>` : ''}
+                            </div>
+                        </div>
+                    `}
                 </div>
+
+                <!-- Totals Box (Only for financial docs) -->
+                ${!isDeliveryDoc ? `
+                <div style="flex: 0.8; display: flex; justify-content: flex-end;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 10.5px; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif;">
+                        <tr style="border-bottom: 1px solid #cbd5e1;">
+                            <td style="padding: 6px 10px; color: #475569; background: #f8fafc; font-weight: 600;">Subtotal</td>
+                            <td style="padding: 6px 10px; text-align: right; font-weight: 700; color: #000;">${currency} ${(subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        </tr>
+                        ${documentData.discount_amount > 0 ? `
+                        <tr style="border-bottom: 1px solid #cbd5e1;">
+                            <td style="padding: 6px 10px; color: #ef4444; background: #f8fafc; font-weight: 600;">Discount (${documentData.discount_percent}%)</td>
+                            <td style="padding: 6px 10px; text-align: right; font-weight: 700; color: #ef4444;">- ${currency} ${(documentData.discount_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        </tr>
+                        ` : ''}
+                        <tr style="border-bottom: 1px solid #cbd5e1;">
+                            <td style="padding: 6px 10px; color: #475569; background: #f8fafc; font-weight: 600;">GST (9%)</td>
+                            <td style="padding: 6px 10px; text-align: right; font-weight: 700; color: #000;">${currency} ${(tax_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        </tr>
+                        <tr style="background: #1e3a8a; color: #ffffff;">
+                            <td class="total-row-cell" style="padding: 8px 10px; font-weight: 700; font-size: 11px; color: #ffffff;">TOTAL</td>
+                            <td class="total-row-cell" style="padding: 8px 10px; text-align: right; font-weight: 800; font-size: 12.5px; color: #ffffff;">${currency} ${(total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        </tr>
+                    </table>
+                </div>
+                ` : `
+                <div style="flex: 0.8;"></div>
+                `}
+
             </div>
 
-            <!-- Signatures -->
-            <div style="margin-top: 40px; padding: 0 50px; display: flex; justify-content: space-between; align-items: flex-end;">
-                 <div style="text-align: center;">
-                    ${signatureB64 ? `<img src="${signatureB64}" style="max-height: 80px; max-width: 180px; object-fit: contain; margin-bottom: 5px;" />` : `<div style="height: 60px;"></div>`}
-                    <div style="border-top: 1.5px solid #1e293b; padding-top: 8px; font-size: 10px; color: #1e293b; font-weight: 700; min-width: 200px;">Authorized Signature</div>
-                    <div style="font-size: 9px; color: #64748b; margin-top: 2px;">${companyName}</div>
-                 </div>
-                 
-                 <div style="text-align: center;">
-                    <div style="height: 60px;"></div>
-                    <div style="border-top: 1.5px solid #cbd5e1; padding-top: 8px; font-size: 10px; color: #475569; font-weight: 600; min-width: 200px;">Customer Acknowledgment</div>
-                 </div>
+            <!-- Signatures Section -->
+            <div style="display: flex; gap: 20px; margin-top: 30px; font-family: 'Segoe UI', Arial, sans-serif;">
+                
+                <!-- Authorized Signature -->
+                <div style="border: 1px solid #cbd5e1; border-radius: 8px; flex: 1; padding: 12px; text-align: center; min-height: 125px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; background: white;">
+                    <div style="height: 60px; display: flex; align-items: center; justify-content: center;">
+                        ${signatureB64 ? `<img src="${signatureB64}" style="max-height: 55px; max-width: 100%; object-fit: contain;" />` : `<div style="color: #cbd5e1; font-size: 10px; font-style: italic;">[ AUTHORISED SIGNATURE ]</div>`}
+                    </div>
+                    <div>
+                        <div style="border-top: 1px solid #cbd5e1; padding-top: 5px; font-weight: 700; font-size: 9.5px; color: #000; text-transform: uppercase;">AUTHORIZED SIGNATURE</div>
+                        <div style="font-size: 8.5px; color: #475569; margin-top: 2px; font-weight: 600;">${companyName}</div>
+                    </div>
+                </div>
+
+                <!-- Customer Acknowledgment -->
+                <div style="border: 1px solid #cbd5e1; border-radius: 8px; flex: 1; padding: 12px; text-align: center; min-height: 125px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; background: white;">
+                    <div style="height: 60px; display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 8.5px; font-style: italic; font-weight: 700; text-transform: uppercase;">
+                        RECEIVED IN GOOD ORDER
+                    </div>
+                    <div>
+                        <div style="border-top: 1px solid #cbd5e1; padding-top: 5px; font-weight: 700; font-size: 9.5px; color: #000; text-transform: uppercase;">CUSTOMER ACKNOWLEDGMENT</div>
+                        <div style="font-size: 8.5px; color: #475569; margin-top: 2px; font-weight: 600; text-transform: uppercase;">${partners?.name || 'Customer Name'}</div>
+                    </div>
+                </div>
+
             </div>
 
-            <!-- Footer -->
-            <div style="position: absolute; bottom: 15px; left: 0; width: 100%; padding: 0 50px; box-sizing: border-box;">
-                <div style="border-top: 1px solid #1e293b; display: flex; justify-content: center; padding-top: 10px; font-size: 12px; color: #1e293b; font-weight: 700; letter-spacing: 3px;">
+            <!-- Footer Centered WWW.CELRON.NET -->
+            <div style="position: absolute; bottom: 20px; left: 40px; right: 40px; font-family: 'Segoe UI', Arial, sans-serif;">
+                <div style="border-top: 1px solid #cbd5e1; margin-bottom: 8px;"></div>
+                <div style="text-align: center; font-weight: 800; font-size: 12px; color: #1e3a8a; letter-spacing: 5px;">
                     WWW.CELRON.NET
                 </div>
             </div>
@@ -298,13 +409,21 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
         </div>
     `;
 
+    const parent = document.createElement('div');
+    parent.id = 'pdf-parent-wrapper';
+    Object.assign(parent.style, {
+        position: 'fixed',
+        left: '-9999px',
+        top: '-9999px',
+        width: '0',
+        height: '0',
+        overflow: 'hidden'
+    });
+
     const container = document.createElement('div');
     container.id = 'pdf-render-container';
     container.innerHTML = htmlContent;
     Object.assign(container.style, {
-        position: 'absolute',
-        left: '-9999px',
-        top: '0',
         width: '800px',
         backgroundColor: 'white',
         visibility: 'visible',
@@ -314,7 +433,8 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
         colorScheme: 'light'
     });
     
-    document.body.appendChild(container);
+    parent.appendChild(container);
+    document.body.appendChild(parent);
 
     const opt = {
         margin: 0,
@@ -372,9 +492,9 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
             throw new Error("Generated PDF is too small, likely empty.");
         }
 
-        // Remove container immediately after capture
-        if (document.body.contains(container)) {
-            document.body.removeChild(container);
+        // Remove parent immediately after capture
+        if (document.body.contains(parent)) {
+            document.body.removeChild(parent);
         }
 
         if (action === 'download') {
@@ -397,8 +517,8 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
         console.error("CRITICAL PDF ERROR:", err);
         throw err;
     } finally {
-        if (document.body.contains(container)) {
-            document.body.removeChild(container);
+        if (document.body.contains(parent)) {
+            document.body.removeChild(parent);
         }
     }
 };
