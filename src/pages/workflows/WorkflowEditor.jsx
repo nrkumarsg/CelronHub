@@ -3445,6 +3445,27 @@ export default function WorkflowEditor() {
                                         <FileCheck size={18} /> Upload Success!
                                     </div>
                                 )}
+                                {(formData.drive_folder_id || formData.gdrive_folder_id) && (
+                                    <a 
+                                        href={`https://drive.google.com/drive/folders/${formData.drive_folder_id || formData.gdrive_folder_id}`} 
+                                        target="_blank" 
+                                        rel="noreferrer"
+                                        className="btn btn-secondary"
+                                        style={{ 
+                                            background: 'linear-gradient(135deg, #ecfeff 0%, #cffafe 100%)', 
+                                            border: '1px solid #a5f3fc', 
+                                            color: '#0891b2', 
+                                            display: 'inline-flex', 
+                                            alignItems: 'center', 
+                                            gap: '8px', 
+                                            textDecoration: 'none',
+                                            fontWeight: 600,
+                                            fontSize: '0.9rem'
+                                        }}
+                                    >
+                                        <FolderOpen size={16} /> Explorer (Drive)
+                                    </a>
+                                )}
                                 <button 
                                     className="btn btn-secondary" 
                                     onClick={() => setShowOCRModal(true)}
