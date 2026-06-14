@@ -672,6 +672,15 @@ export default function WorkflowEditor() {
         if (staffData) setStaff(staffData);
     };
 
+    const fetchJobMajorCategoriesList = async () => {
+        try {
+            const data = await getJobMajorCategories(profile?.company_id);
+            if (data) setJobMajorCategories(data);
+        } catch (err) {
+            console.error('Error fetching categories:', err);
+        }
+    };
+
     const checkGoogleAuth = async () => {
         const token = getStoredToken();
         if (!token) {
@@ -2625,7 +2634,7 @@ export default function WorkflowEditor() {
             case 'work_location_id':
                 return <QuickWorkLocationAdd company_id={profile.company_id} initialData={initialData} onSuccess={handleQuickAddSuccess} onCancel={() => setModal({ isOpen: false, type: null })} />;
             case 'job_major':
-                return <QuickJobMajorAdd company_id={profile.company_id} onSuccess={handleQuickAddSuccess} onCancel={() => setModal({ isOpen: false, type: null })} />;
+                return <QuickJobMajorAdd company_id={profile.company_id} onSuccess={handleQuickAddSuccess} onCancel={() => setModal({ isOpen: false, type: null })} onRefresh={fetchJobMajorCategoriesList} />;
             default:
                 return null;
         }

@@ -443,4 +443,12 @@ export const saveJobMajorCategory = async (payload) => {
   }
 };
 
+export const deleteJobMajorCategory = async (id) => {
+  const { error } = await supabase.from('job_major_categories').delete().eq('id', id);
+  if (error) {
+    console.error('Error deleting job major category:', error);
+    throw error;
+  }
+};
+
 
