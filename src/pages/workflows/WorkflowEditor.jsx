@@ -16,7 +16,8 @@ import {
     Eye,
     EyeOff,
     Info,
-    Image, FolderOpen, DollarSign
+    Image, FolderOpen, DollarSign,
+    List
 } from 'lucide-react';
 import SearchableSelect from '../../components/common/SearchableSelect';
 import { getExchangeRateWithGemini } from '../../lib/geminiService';
@@ -181,6 +182,16 @@ export default function WorkflowEditor() {
         } else {
             window.open(`https://drive.google.com/drive/folders/${celronRootId}`, '_blank');
         }
+    };
+
+    // Open Specific Job Google Drive Folder
+    const handleOpenJobDrive = () => {
+        const folderId = formData.drive_folder_id || formData.gdrive_folder_id;
+        if (!folderId) {
+            toast.error('No Google Drive folder linked for this Job.');
+            return;
+        }
+        window.open(`https://drive.google.com/drive/folders/${folderId}`, '_blank');
     };
 
     // Inline Contact Editing States
@@ -2916,13 +2927,31 @@ export default function WorkflowEditor() {
                                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '2px', margin: 0 }}>Access the centralized repository containing all job files and related documentation.</p>
                             </div>
                         </div>
-                        <button 
-                            onClick={handleOpenRootDrive} 
-                            className="btn btn-secondary" 
-                            style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#f59e0b', color: '#b45309', background: '#fffbeb', fontWeight: 700, padding: '10px 20px', transition: 'all 0.2s', borderRadius: '8px' }}
-                        >
-                            <ExternalLink size={16} /> Open Drive Root
-                        </button>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <button 
+                                onClick={() => navigate('/workflows?type=Job')}
+                                className="btn btn-secondary" 
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, padding: '10px 16px', borderRadius: '8px' }}
+                            >
+                                <List size={16} /> View Job List Table
+                            </button>
+                            {(formData.drive_folder_id || formData.gdrive_folder_id) && (
+                                <button 
+                                    onClick={handleOpenJobDrive} 
+                                    className="btn btn-secondary" 
+                                    style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#3b82f6', color: '#1d4ed8', background: '#eff6ff', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
+                                >
+                                    <Folder size={16} fill="#3b82f6" fillOpacity={0.15} /> Open Job Folder
+                                </button>
+                            )}
+                            <button 
+                                onClick={handleOpenRootDrive} 
+                                className="btn btn-secondary" 
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#f59e0b', color: '#b45309', background: '#fffbeb', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
+                            >
+                                <ExternalLink size={16} /> Open Drive Root
+                            </button>
+                        </div>
                     </div>
                 </div>
 
