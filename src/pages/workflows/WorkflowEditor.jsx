@@ -15,7 +15,8 @@ import {
     Users2,
     Eye,
     EyeOff,
-    Info
+    Info,
+    Image, FolderOpen, DollarSign
 } from 'lucide-react';
 import SearchableSelect from '../../components/common/SearchableSelect';
 import { getExchangeRateWithGemini } from '../../lib/geminiService';
@@ -3394,13 +3395,33 @@ export default function WorkflowEditor() {
 
                 {/* Main Action Tabs */}
                 <div className="tab-container">
-                    <button className={`tab ${activeTab === 'items' ? 'active' : ''}`} onClick={() => setActiveTab('items')}>Order Lines</button>
-                    <button className={`tab ${activeTab === 'other' ? 'active' : ''}`} onClick={() => setActiveTab('other')}>PO & Reference Info</button>
-                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && <button className={`tab ${activeTab === 'workflow' ? 'active' : ''}`} onClick={() => setActiveTab('workflow')}>Workflow Suite</button>}
-                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && <button className={`tab ${activeTab === 'costing' ? 'active' : ''}`} onClick={() => setActiveTab('costing')}>Project Costing</button>}
-                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && <button className={`tab ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}>Payments & GST</button>}
-                    <button className={`tab ${activeTab === 'gallery' ? 'active' : ''}`} onClick={() => setActiveTab('gallery')}>Photos & Media</button>
-                    <button className={`tab ${activeTab === 'explorer' ? 'active' : ''}`} onClick={() => setActiveTab('explorer')}>Explorer</button>
+                    <button className={`tab tab-items ${activeTab === 'items' ? 'active' : ''}`} onClick={() => setActiveTab('items')}>
+                        <Package size={16} /> Order Lines
+                    </button>
+                    <button className={`tab tab-other ${activeTab === 'other' ? 'active' : ''}`} onClick={() => setActiveTab('other')}>
+                        <CreditCard size={16} /> PO & Reference Info
+                    </button>
+                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && (
+                        <button className={`tab tab-workflow ${activeTab === 'workflow' ? 'active' : ''}`} onClick={() => setActiveTab('workflow')}>
+                            <FileText size={16} /> Workflow Suite
+                        </button>
+                    )}
+                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && (
+                        <button className={`tab tab-costing ${activeTab === 'costing' ? 'active' : ''}`} onClick={() => setActiveTab('costing')}>
+                            <Calculator size={16} /> Project Costing
+                        </button>
+                    )}
+                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && (
+                        <button className={`tab tab-payments ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}>
+                            <DollarSign size={16} /> Payments & GST
+                        </button>
+                    )}
+                    <button className={`tab tab-gallery ${activeTab === 'gallery' ? 'active' : ''}`} onClick={() => setActiveTab('gallery')}>
+                        <Image size={16} /> Photos & Media
+                    </button>
+                    <button className={`tab tab-explorer ${activeTab === 'explorer' ? 'active' : ''}`} onClick={() => setActiveTab('explorer')}>
+                        <FolderOpen size={16} /> Explorer
+                    </button>
                 </div>
 
                 {activeTab === 'gallery' && (
@@ -5802,23 +5823,119 @@ export default function WorkflowEditor() {
             .tab-container {
                 display: flex;
                 flex-wrap: wrap;
-                gap: 4px;
+                gap: 10px;
                 margin: 30px 0 20px 0;
-                border-bottom: 1px solid var(--border-color);
+                padding: 8px;
+                background: #f8fafc;
+                border-radius: 16px;
+                border: 1px solid #e2e8f0;
             }
             .tab {
-                padding: 10px 24px;
-            background: transparent;
-            border: none;
-            color: var(--text-secondary);
-            font-weight: 600;
-            cursor: pointer;
-            border-bottom: 2px solid transparent;
-                }
-            .tab.active {
-                color: var(--accent);
-            border-bottom-color: var(--accent);
-                }
+                padding: 10px 20px;
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                color: #64748b;
+                font-weight: 700;
+                font-size: 0.88rem;
+                cursor: pointer;
+                border-radius: 12px;
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+            }
+            
+            /* Order Lines - Indigo */
+            .tab.tab-items:hover {
+                background: rgba(99, 102, 241, 0.05);
+                color: #4f46e5;
+                border-color: rgba(99, 102, 241, 0.25);
+            }
+            .tab.tab-items.active {
+                background: #4f46e5;
+                color: #ffffff;
+                border-color: #4f46e5;
+                box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+            }
+            
+            /* PO & Ref Info - Amber */
+            .tab.tab-other:hover {
+                background: rgba(217, 119, 6, 0.05);
+                color: #d97706;
+                border-color: rgba(217, 119, 6, 0.25);
+            }
+            .tab.tab-other.active {
+                background: #d97706;
+                color: #ffffff;
+                border-color: #d97706;
+                box-shadow: 0 4px 12px rgba(217, 119, 6, 0.25);
+            }
+            
+            /* Workflow Suite - Violet */
+            .tab.tab-workflow:hover {
+                background: rgba(124, 58, 237, 0.05);
+                color: #7c3aed;
+                border-color: rgba(124, 58, 237, 0.25);
+            }
+            .tab.tab-workflow.active {
+                background: #7c3aed;
+                color: #ffffff;
+                border-color: #7c3aed;
+                box-shadow: 0 4px 12px rgba(124, 58, 237, 0.25);
+            }
+            
+            /* Project Costing - Blue */
+            .tab.tab-costing:hover {
+                background: rgba(37, 99, 235, 0.05);
+                color: #2563eb;
+                border-color: rgba(37, 99, 235, 0.25);
+            }
+            .tab.tab-costing.active {
+                background: #2563eb;
+                color: #ffffff;
+                border-color: #2563eb;
+                box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+            }
+            
+            /* Payments & GST - Emerald */
+            .tab.tab-payments:hover {
+                background: rgba(5, 150, 105, 0.05);
+                color: #059669;
+                border-color: rgba(5, 150, 105, 0.25);
+            }
+            .tab.tab-payments.active {
+                background: #059669;
+                color: #ffffff;
+                border-color: #059669;
+                box-shadow: 0 4px 12px rgba(5, 150, 105, 0.25);
+            }
+            
+            /* Photos & Media - Rose */
+            .tab.tab-gallery:hover {
+                background: rgba(225, 29, 72, 0.05);
+                color: #e11d48;
+                border-color: rgba(225, 29, 72, 0.25);
+            }
+            .tab.tab-gallery.active {
+                background: #e11d48;
+                color: #ffffff;
+                border-color: #e11d48;
+                box-shadow: 0 4px 12px rgba(225, 29, 72, 0.25);
+            }
+            
+            /* Explorer - Cyan */
+            .tab.tab-explorer:hover {
+                background: rgba(8, 145, 178, 0.05);
+                color: #0891b2;
+                border-color: rgba(8, 145, 178, 0.25);
+            }
+            .tab.tab-explorer.active {
+                background: #0891b2;
+                color: #ffffff;
+                border-color: #0891b2;
+                box-shadow: 0 4px 12px rgba(8, 145, 178, 0.25);
+            }
             .editor-table {
                 width: 100%;
             border-collapse: collapse;
