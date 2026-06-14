@@ -700,6 +700,22 @@ export default function WorkflowEditor() {
         connectGoogleAPI(`job_${id}`);
     };
 
+    const getExplorerFileIcon = (mimeType) => {
+        if (mimeType === 'application/vnd.google-apps.folder' || mimeType?.includes('folder')) {
+            return <Folder size={24} color="#f59e0b" fill="#f59e0b" fillOpacity={0.15} />;
+        }
+        if (mimeType?.startsWith('image/')) {
+            return <Image size={24} color="#ec4899" />;
+        }
+        if (mimeType?.includes('pdf')) {
+            return <FileText size={24} color="#ef4444" />;
+        }
+        if (mimeType?.includes('spreadsheet') || mimeType?.includes('excel') || mimeType?.includes('csv')) {
+            return <FileText size={24} color="#10b981" />;
+        }
+        return <FileIcon size={24} color="#64748b" />;
+    };
+
     const fetchExplorerFiles = async (folderId = null, forceRoot = false) => {
         const targetId = folderId || explorerFolderId;
         if (!targetId) return;
@@ -4775,7 +4791,7 @@ export default function WorkflowEditor() {
                                                 style={{ display: 'flex', gap: '10px', alignItems: 'center', cursor: file.mimeType.includes('folder') ? 'pointer' : 'default', flex: 1, overflow: 'hidden' }}
                                                 onClick={() => file.mimeType.includes('folder') && handleExplorerNavigate(file)}
                                             >
-                                                {file.mimeType.includes('folder') ? <Folder size={24} color="#6366f1" /> : <FileIcon size={24} color="#64748b" />}
+                                                {getExplorerFileIcon(file.mimeType)}
                                                 <div style={{ overflow: 'hidden' }}>
                                                     <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={file.name}>
                                                         {file.name}
