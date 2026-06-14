@@ -62,6 +62,7 @@ import SearchResults from './pages/SearchResults';
 import ApkManagement from './pages/admin/ApkManagement';
 import ActivityLogs from './pages/admin/ActivityLogs';
 import BillsPortal from './pages/accounts/BillsPortal';
+import UploadMediaGateway from './pages/workflows/UploadMediaGateway';
 
 
 // Authentication & RBAC Components
@@ -113,6 +114,7 @@ function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/unauthorized" element={<Unauthorized />} />
         <Route path="/oauth-callback" element={<OAuthCallback />} />
+        <Route path="/upload-media" element={<UploadMediaGateway />} />
 
         {/* Protected Application Layout and Routes */}
         <Route path="*" element={

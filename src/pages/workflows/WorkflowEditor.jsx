@@ -8,7 +8,7 @@ import {
     MoreHorizontal, Search, Settings,
     ChevronDown, CreditCard, User, Users, MapPin, Paperclip, Pencil, Sparkles, Edit2,
     FileCheck, Play, RefreshCw, AlertCircle, Loader2,
-    ExternalLink, Folder, File as FileIcon, HardDrive, Upload, MessageSquare,
+    ExternalLink, Folder, File as FileIcon, HardDrive, Upload, UploadCloud, MessageSquare, Smartphone,
     ArrowRightLeft,
     CheckCircle,
     Copy,
@@ -138,6 +138,8 @@ export default function WorkflowEditor() {
     const [galleryUploadSuccess, setGalleryUploadSuccess] = useState(false);
     const [showOCRModal, setShowOCRModal] = useState(false);
     const [showDocumentParserModal, setShowDocumentParserModal] = useState(false);
+    const [galleryFolderId, setGalleryFolderId] = useState(null);
+    const [showQRModal, setShowQRModal] = useState(false);
 
     // Payments State
     const [customerPayments, setCustomerPayments] = useState([]);
@@ -825,6 +827,12 @@ export default function WorkflowEditor() {
         }
     }, [activeTab, formData.assigned_job_no]);
 
+    useEffect(() => {
+        if (showQRModal && !galleryFolderId) {
+            fetchGallery();
+        }
+    }, [showQRModal, galleryFolderId]);
+
     const fetchSignedProofs = async () => {
         if (!formData.assigned_job_no) return;
         setLoadingSignedProofs(true);
@@ -922,6 +930,7 @@ export default function WorkflowEditor() {
             const token = getStoredToken();
             const rootId = await ensureJobFolder();
             const mediaFolderId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+            setGalleryFolderId(mediaFolderId);
             const files = await listFolderContent(token, mediaFolderId);
             setGalleryFiles(files.filter(f => f.mimeType.startsWith('image/')));
         } catch (err) {
@@ -955,6 +964,67 @@ export default function WorkflowEditor() {
         } finally {
             setLoadingGallery(false);
             setGalleryUploadProgress(0);
+        }
+    };
+
+    const [isDragging, setIsDragging] = useState(false);
+
+    useEffect(() => {
+        if (activeTab !== 'gallery') return;
+        
+        const handleGlobalPaste = (e) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+            
+            const files = [];
+            for (const item of items) {
+                if (item.type.indexOf('image') !== -1) {
+                    const file = item.getAsFile();
+                    if (file) files.push(file);
+                }
+            }
+            
+            if (files.length > 0) {
+                e.preventDefault();
+                const uploadSequence = async () => {
+                    for (const f of files) {
+                        const extension = f.name?.split('.').pop() || 'png';
+                        const name = `pasted_image_${Date.now()}.${extension}`;
+                        const renamedFile = new File([f], name, { type: f.type });
+                        await handleGalleryUpload(renamedFile);
+                    }
+                };
+                uploadSequence();
+            }
+        };
+
+        window.addEventListener('paste', handleGlobalPaste);
+        return () => window.removeEventListener('paste', handleGlobalPaste);
+    }, [activeTab, id]);
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        setIsDragging(true);
+    };
+
+    const handleDragLeave = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+    };
+
+    const handleDrop = async (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length > 0) {
+            const imageFiles = files.filter(f => f.type.startsWith('image/'));
+            if (imageFiles.length === 0) {
+                alert('Only image files are supported in the Photos & Media tab.');
+                return;
+            }
+            for (const f of imageFiles) {
+                await handleGalleryUpload(f);
+            }
         }
     };
 
@@ -3536,7 +3606,34 @@ export default function WorkflowEditor() {
                 </div>
 
                 {activeTab === 'gallery' && (
-                    <div className="glass-panel job-gallery animate-fade-in">
+                    <div 
+                        className="glass-panel job-gallery animate-fade-in"
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        style={{ position: 'relative' }}
+                    >
+                        {isDragging && (
+                            <div style={{
+                                position: 'absolute',
+                                inset: 0,
+                                background: 'rgba(99, 102, 241, 0.95)',
+                                backdropFilter: 'blur(4px)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '16px',
+                                zIndex: 50,
+                                borderRadius: '16px',
+                                color: '#fff',
+                                border: '3px dashed #fff',
+                                margin: '8px'
+                            }}>
+                                <UploadCloud size={48} className="animate-bounce" />
+                                <span style={{ fontSize: '1.25rem', fontWeight: 800 }}>Drop Photos Here to Upload</span>
+                            </div>
+                        )}
                         <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 <Ship size={20} className="text-accent" />
@@ -3584,6 +3681,13 @@ export default function WorkflowEditor() {
                                 >
                                     <Sparkles size={16} /> Smart OCR
                                 </button>
+                                <button 
+                                    className="btn btn-secondary" 
+                                    onClick={() => setShowQRModal(true)}
+                                    style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid #bbf7d0', color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}
+                                >
+                                    <Smartphone size={16} /> Mobile Upload (QR)
+                                </button>
                                 <label className="btn btn-primary" style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
                                     <Upload size={16} /> Upload Photo
                                     {loadingGallery && <div className="btn-loading-overlay" />}
@@ -3616,6 +3720,62 @@ export default function WorkflowEditor() {
                                 }
                             }}
                         />
+
+                        {showQRModal && (
+                            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
+                                <div className="glass-panel animate-scale-up" style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
+                                    <button 
+                                        onClick={() => setShowQRModal(false)}
+                                        style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                                        onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                                        onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
+                                    >
+                                        <X size={24} />
+                                    </button>
+
+                                    <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                                        <Smartphone size={24} />
+                                    </div>
+
+                                    <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Mobile Upload Gateway</h3>
+                                    <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: '1.4' }}>
+                                        Scan this QR code with your smartphone camera to upload photos directly from your phone.
+                                    </p>
+
+                                    {!galleryFolderId ? (
+                                        <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                            <Loader2 size={36} className="animate-spin text-primary" />
+                                            <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
+                                        </div>
+                                    ) : (
+                                        <div>
+                                            <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block', marginBottom: '24px' }}>
+                                                <img 
+                                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
+                                                        `${window.location.origin}/upload-media?jobId=${id}&folderId=${galleryFolderId}&token=${localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent(formData.assigned_job_no || formData.document_no || 'Job')}`
+                                                    )}`}
+                                                    alt="Upload QR Code"
+                                                    style={{ width: '200px', height: '200px', display: 'block' }}
+                                                />
+                                            </div>
+
+                                            <div style={{ fontSize: '0.8rem', color: '#94a3b8', background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+                                                <Info size={14} style={{ flexShrink: 0 }} />
+                                                <span>Session active. QR code is valid for temporary uploading.</span>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <button 
+                                        className="btn btn-primary" 
+                                        style={{ width: '100%', marginTop: '24px', padding: '12px', borderRadius: '12px', fontWeight: 700 }}
+                                        onClick={() => setShowQRModal(false)}
+                                    >
+                                        Done
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
                         {loadingGallery && galleryFiles.length === 0 ? (
                             <div style={{ padding: '80px', textAlign: 'center', color: 'var(--text-secondary)' }}>
