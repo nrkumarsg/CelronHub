@@ -3688,6 +3688,15 @@ export default function WorkflowEditor() {
                                 >
                                     <Smartphone size={16} /> Mobile Upload (QR)
                                 </button>
+                                <button 
+                                    className="btn btn-secondary" 
+                                    onClick={() => fetchGallery()}
+                                    title="Synchronize photos with Google Drive"
+                                    style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                                >
+                                    <RefreshCw size={16} className={loadingGallery ? 'animate-spin' : ''} />
+                                    Synchronize
+                                </button>
                                 <label className="btn btn-primary" style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
                                     <Upload size={16} /> Upload Photo
                                     {loadingGallery && <div className="btn-loading-overlay" />}
