@@ -74,7 +74,6 @@ export const uploadFileResumable = async (accessToken, file, metadata = {}, onPr
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('PUT', uploadUrl);
-        xhr.setRequestHeader('Authorization', 'Bearer ' + accessToken);
         xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
 
         if (progressCallback) {
