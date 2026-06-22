@@ -92,7 +92,7 @@ export const AuthProvider = ({ children }) => {
                 );
                 setActiveCompanyId(storedCompany && c.some(comp => comp.id === storedCompany)
                     ? storedCompany 
-                    : (celron?.id || p.company_id)
+                    : (celron?.id || p.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe')
                 );
                 
                 hasCache = true;
@@ -215,7 +215,7 @@ export const AuthProvider = ({ children }) => {
             );
             const defaultCompany = (storedCompany && myComps.some(c => c.id === storedCompany))
                 ? storedCompany 
-                : (celronCompany?.id || myComps[0]?.id || profileData?.company_id);
+                : (celronCompany?.id || myComps[0]?.id || profileData?.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe');
 
             const activeComp = myComps?.find(c => c.id === defaultCompany);
             if (activeComp?.enabled_modules && profileData.role !== 'superadmin') {
@@ -259,60 +259,77 @@ export const AuthProvider = ({ children }) => {
         initializeAuth();
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-            console.log('Auth: onAuthStateChange event:', event);
-
-            const sessionUserId = session?.user?.id || null;
-
-            if (sessionUserId !== currentUserIdRef.current) {
-                console.log(`Auth: Session transition ${currentUserIdRef.current} -> ${sessionUserId}`);
-                currentUserIdRef.current = sessionUserId;
-                
-                if (sessionUserId) {
-                    setUser(session.user);
-                    await refreshProfileData(session.user);
-                    logUserActivity('LOGIN', null, null, { email: session.user.email });
-                } else {
-                    setUser(null);
-                    setProfile(null);
-                    setCompanies([]);
-                    setActiveCompanyId(null);
-                    localStorage.removeItem('auth_cached_profile');
-                    localStorage.removeItem('auth_cached_companies');
-                    setLoading(false);
-                    logUserActivity('LOGOUT', null, null, { message: 'User logged out' });
-                }
-            } else if (!sessionUserId && event === 'SIGNED_OUT') {
-                // Force cleanup on sign out even if ID was already null
+            console.log('Auth: onAuthStateChange event:', event, session?.user?.email);
+            if (session?.user) {
+                currentUserIdRef.current = session.user.id;
+                setUser(session.user);
+                await refreshProfileData(session.user, true); // Silent refresh so loader doesn't flash if already showing dashboard
+            } else {
+                currentUserIdRef.current = null;
                 setUser(null);
                 setProfile(null);
                 setCompanies([]);
-                setActiveCompanyId(null);
+                localStorage.removeItem('active_company_id');
                 localStorage.removeItem('auth_cached_profile');
                 localStorage.removeItem('auth_cached_companies');
-                setLoading(false);
-                logUserActivity('LOGOUT', null, null, { message: 'Session signed out' });
-            } else if (!session) {
-                setLoading(false);
             }
         });
 
-        // Realtime subscription for companies (makes it truly dynamic)
-        const companySubscription = supabase
-            .channel('companies-realtime')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'companies' }, () => {
-                console.log('Auth: Company change detected, refreshing...');
-                const currentUser = supabase.auth.getUser();
-                currentUser.then(({ data: { user: u } }) => {
-                    if (u) refreshProfileData(u, true); // Pass silent=true if I add it, or just call it
-                });
-            })
-            .subscribe();
-
         return () => {
-            subscription?.unsubscribe();
-            companySubscription?.unsubscribe();
+            subscription.unsubscribe();
         };
     }, []);
+
+    // Listen for document settings updates (e.g., logo changed) and refresh in-memory state + cache
+    useEffect(() => {
+        const handler = (e) => {
+            try {
+                const { companyId, settings } = e?.detail || {};
+                if (!settings) return;
+
+                // If this update is for the active company or matches the profile's company, apply it
+                const applies = companyId && (activeCompanyId === companyId || profile?.company_id === companyId);
+                if (!applies) return;
+
+                const logoUrl = settings.logo_url;
+                if (!logoUrl) return;
+
+                // Update profile state
+                setProfile(prev => {
+                    if (!prev) return prev;
+                    const updated = { ...prev, company_logo_url: logoUrl };
+                    // Keep company object in profile in sync if present
+                    if (updated.company) updated.company = { ...updated.company, logo_url: logoUrl };
+                    // Refresh cached profile in localStorage
+                    try {
+                        const cached = localStorage.getItem('auth_cached_profile');
+                        if (cached) {
+                            const p = JSON.parse(cached);
+                            p.company_logo_url = logoUrl;
+                            if (p.company) p.company.logo_url = logoUrl;
+                            localStorage.setItem('auth_cached_profile', JSON.stringify(p));
+                        }
+                    } catch (_) {}
+                    return updated;
+                });
+
+                // Update companies list
+                setCompanies(prev => {
+                    if (!prev) return prev;
+                    const next = prev.map(c => c.id === companyId ? { ...c, logo_url: logoUrl } : c);
+                    try {
+                        localStorage.setItem('auth_cached_companies', JSON.stringify(next));
+                    } catch (_) {}
+                    return next;
+                });
+            } catch (err) {
+                console.warn('Auth: documentSettingsUpdated handler error', err);
+            }
+        };
+
+        window.addEventListener('documentSettingsUpdated', handler);
+        return () => window.removeEventListener('documentSettingsUpdated', handler);
+    }, [activeCompanyId, profile?.company_id]);
 
     let activeCompany = companies.find(c => c.id === activeCompanyId) ||
         profile?.company ||
@@ -336,20 +353,34 @@ export const AuthProvider = ({ children }) => {
         },
         signUp: (data) => supabase.auth.signUp(data),
         signIn: (data) => supabase.auth.signInWithPassword(data),
-        signOut: () => {
+        signOut: async () => {
             localStorage.removeItem('active_company_id');
+            localStorage.removeItem('auth_cached_profile');
+            localStorage.removeItem('auth_cached_companies');
+            setUser(null);
+            setProfile(null);
+            setCompanies([]);
+            setActiveCompanyId(null);
+            setLoading(false);
             return supabase.auth.signOut();
         },
         resetPassword: (email) => supabase.auth.resetPasswordForEmail(email, {
             redirectTo: `${window.location.origin}/reset-password`,
         }),
         updatePassword: (newPassword) => supabase.auth.updateUser({ password: newPassword }),
-        signInWithGoogle: () => supabase.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-                redirectTo: `${window.location.origin}/oauth-callback`
-            }
-        }),
+        signInWithGoogle: () => {
+            const siteUrl = import.meta.env.VITE_SITE_URL || window.location.origin;
+            return supabase.auth.signInWithOAuth({
+                provider: 'google',
+                options: {
+                    redirectTo: `${siteUrl}/oauth-callback`,
+                    queryParams: {
+                        access_type: 'offline',
+                        prompt: 'consent',
+                    }
+                }
+            });
+        },
         refreshProfile: async () => {
             if (user) {
                 const { data } = await getProfile(user.id);

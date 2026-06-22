@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Plus, Search, MapPin, Globe, Building2, Mail, Phone, Star, Filter, ChevronDown, CheckCircle2, Circle, X, UploadCloud, Upload, Download, Printer, MoreVertical, Edit, Trash2, Loader2, ExternalLink, Settings, Paperclip, FileX, HardDrive, User, Users, ArrowRight, Sparkles, ArrowUpDown } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import Papa from 'papaparse';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
@@ -18,12 +17,14 @@ import PartnerDocuments from '../components/partners/PartnerDocuments';
 
 export default function Partners() {
     const { profile } = useAuth();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const typeParam = searchParams.get('type');
     const [partners, setPartners] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedCountry, setSelectedCountry] = useState('');
     const [selectedCountryNot, setSelectedCountryNot] = useState('');
-    const [selectedCategory, setSelectedCategory] = useState('');
+    const [selectedCategory, setSelectedCategory] = useState(typeParam || '');
     const [currentPage, setCurrentPage] = useState(1);
     const [dbCategories, setDbCategories] = useState([]);
     const [sortKey, setSortKey] = useState('name');
@@ -99,6 +100,14 @@ export default function Partners() {
         loadPartners();
     }, [loadPartners]);
 
+    useEffect(() => {
+        const type = searchParams.get('type');
+        setSelectedCategory(type || '');
+        setSelectedCountry('');
+        setSelectedCountryNot('');
+        setCurrentPage(1);
+    }, [searchParams]);
+
     const handleSearchChange = (e) => {
         setSearchTerm(e.target.value);
         setCurrentPage(1);
@@ -111,8 +120,14 @@ export default function Partners() {
     };
 
     const handleCategoryChange = (e) => {
-        setSelectedCategory(e.target.value);
+        const cat = e.target.value;
+        setSelectedCategory(cat);
         setCurrentPage(1);
+        if (cat) {
+            setSearchParams({ type: cat });
+        } else {
+            setSearchParams({});
+        }
     };
 
     const handleDelete = async (e, id) => {
@@ -491,12 +506,17 @@ export default function Partners() {
                     return (
                         <button
                             key={chip.label}
-                            onClick={() => {
-                                setSelectedCategory(chip.cat);
-                                setSelectedCountry(chip.country);
-                                setSelectedCountryNot(chip.countryNot);
-                                setCurrentPage(1);
-                            }}
+                             onClick={() => {
+                                 setSelectedCategory(chip.cat);
+                                 setSelectedCountry(chip.country);
+                                 setSelectedCountryNot(chip.countryNot);
+                                 setCurrentPage(1);
+                                 if (chip.cat) {
+                                     setSearchParams({ type: chip.cat });
+                                 } else {
+                                     setSearchParams({});
+                                 }
+                             }}
                             className="filter-chip"
                             style={{
                                 padding: '8px 20px',
@@ -519,7 +539,7 @@ export default function Partners() {
                 })}
                 {(selectedCategory || selectedCountry || selectedCountryNot || searchTerm) && (
                     <button 
-                        onClick={() => { setSelectedCategory(''); setSelectedCountry(''); setSelectedCountryNot(''); setSearchTerm(''); }}
+                        onClick={() => { setSelectedCategory(''); setSelectedCountry(''); setSelectedCountryNot(''); setSearchTerm(''); setSearchParams({}); }}
                         style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', marginLeft: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}
                     >
                         <X size={14} /> Clear All

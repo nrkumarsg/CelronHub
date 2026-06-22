@@ -119,6 +119,11 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
         return item;
     }));
 
+    const cleanVesselName = vessels?.vessel_name?.trim();
+    const hasVessel = !!cleanVesselName && 
+        !['', 'N/A', 'N.A', 'N.A.', 'N/A.', 'NONE', 'NIL', '[VESSEL]', 'NOT APPLICABLE'].includes(cleanVesselName.toUpperCase());
+    const vesselNameVal = hasVessel ? cleanVesselName.toUpperCase() : 'N/A';
+
     const htmlContent = `
         <div style="padding: 40px; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #000 !important; width: 800px; min-height: 1060px; background: #ffffff !important; position: relative; padding-bottom: 80px; box-sizing: border-box; margin: 0 auto; color-scheme: light !important;">
             <style>
@@ -170,12 +175,18 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
                 <div style="border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; min-height: 180px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; background: white;">
                     <div>
                         <div style="color: #1e3a8a; font-weight: 700; font-size: 12px; margin-bottom: 6px; text-transform: uppercase;">TO:</div>
-                        <div style="font-weight: 800; font-size: 12px; color: #000; text-transform: uppercase; margin-bottom: 2px;">
-                            MASTER AND OWNER OF ${vessels?.vessel_name || 'N.A'}
-                        </div>
-                        <div style="font-weight: 700; font-size: 11px; color: #000; margin-bottom: 4px;">
-                            C/O ${partners?.name || 'Walk-in Customer'}
-                        </div>
+                        ${hasVessel ? `
+                            <div style="font-weight: 800; font-size: 12px; color: #000; text-transform: uppercase; margin-bottom: 2px;">
+                                MASTER AND OWNER OF ${vesselNameVal}
+                            </div>
+                            <div style="font-weight: 700; font-size: 11px; color: #000; margin-bottom: 4px;">
+                                C/O ${partners?.name || 'Walk-in Customer'}
+                            </div>
+                        ` : `
+                            <div style="font-weight: 800; font-size: 12px; color: #000; text-transform: uppercase; margin-bottom: 2px;">
+                                ${partners?.name || 'Walk-in Customer'}
+                            </div>
+                        `}
                         <div style="font-size: 10.5px; color: #1e293b; line-height: 1.4; white-space: pre-wrap;">${partners?.address || ''}</div>
                         <div style="font-size: 10.5px; color: #1e293b; margin-top: 4px;">
                             Phone: ${partners?.phone1 || partners?.phone || 'N/A'} &nbsp; Email: ${partners?.email1 || partners?.email || 'N/A'}
@@ -197,7 +208,7 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
                     <table style="width: 100%; height: 100%; border-collapse: collapse; font-size: 10.5px; table-layout: fixed; font-family: 'Segoe UI', Arial, sans-serif;">
                         <tr style="border-bottom: 1px solid #cbd5e1;">
                             <td style="width: 35%; padding: 6px 10px; font-weight: 700; color: #1e3a8a; border-right: 1px solid #cbd5e1; background: #f8fafc; text-transform: uppercase;">VESSEL</td>
-                            <td style="width: 65%; padding: 6px 10px; font-weight: 700; color: #000; text-transform: uppercase; word-wrap: break-word;">${vessels?.vessel_name || 'N.A'}</td>
+                            <td style="width: 65%; padding: 6px 10px; font-weight: 700; color: #000; text-transform: uppercase; word-wrap: break-word;">${vesselNameVal}</td>
                         </tr>
                         <tr style="border-bottom: 1px solid #cbd5e1;">
                             <td style="padding: 6px 10px; font-weight: 700; color: #1e3a8a; border-right: 1px solid #cbd5e1; background: #f8fafc; text-transform: uppercase;">PAYMENT TERMS</td>

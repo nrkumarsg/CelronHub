@@ -18,7 +18,7 @@ import {
     FileCheck, Play, Briefcase, X, Loader2, PlayCircle, Folder, Upload,
     ArrowRightLeft, Filter, Eye, Printer, Search, Trash2, Plus, FileText, Copy, Clock,
     ArrowUp, ArrowDown, RefreshCw, Download, CreditCard, Calendar, ArrowUpDown, LayoutDashboard,
-    ArrowLeft
+    ArrowLeft, Sparkles, HardDrive, Hexagon, MessageSquare, Globe, ShieldCheck, Users, Smartphone, History
 } from 'lucide-react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import CustomerEnquiryForm from '../../components/CustomerEnquiryForm';
@@ -97,6 +97,26 @@ export default function WorkflowV2Board() {
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [activeType, setActiveType] = useState('All');
+    const [viewMode, setViewMode] = useState('board'); // 'board' | 'tools'
+
+    const workflowTools = [
+        { title: 'Universal Finder', description: 'Deep file search and text matching across all documents.', icon: <Search size={24} />, color: '#3b82f6', path: '/workflows/universal-finder' },
+        { title: 'AI Document Assistant', description: 'Chat with uploaded project files, logs, and sheets using LLMs.', icon: <Sparkles size={24} />, color: '#a855f7', path: '/workflows/ai-assistant' },
+        { title: 'Storage Explorer', description: 'Browse and manage company drive and local project workspace files.', icon: <Folder size={24} />, color: '#3b82f6', path: '/storage?tab=explorer' },
+        { title: 'Corporate Vault', description: 'Secure corporate storage for regulatory, IRAS, GST, and audit files.', icon: <HardDrive size={24} />, color: '#22c55e', path: '/vault' },
+        { title: 'Google Drive Sync', description: 'Manage cloud authorization, credentials, and folder connections.', icon: <RefreshCw size={24} />, color: '#f59e0b', path: '/settings?tab=communications' },
+        { title: 'Messaging Hub', description: 'Centralized channels and threads for team communications.', icon: <Hexagon size={24} />, color: '#8b5cf6', path: '/messaging' },
+        { title: 'Commercial Wall', description: 'Company announcement bulletin board and communication feed.', icon: <MessageSquare size={24} />, color: '#6366f1', path: '/commercial-wall' },
+        { title: 'Global Finder', description: 'Query external part directories and international inventory systems.', icon: <Globe size={24} />, color: '#10b981', path: 'https://global-parts-find.base44.app/Finder', isExternal: true }
+    ];
+
+    const adminTools = [
+        { title: 'User Control', description: 'Manage system users, accessible modules, and roles.', icon: <ShieldCheck size={24} />, color: '#3b82f6', path: '/admin/users' },
+        { title: 'Staff Directory', description: 'Access and update staff profiles, details, and permissions.', icon: <Users size={24} />, color: '#f59e0b', path: '/admin/staff' },
+        { title: 'APK Manager', description: 'Upload and distribute Android application packages.', icon: <Smartphone size={24} />, color: '#10b981', path: '/admin/apks' },
+        { title: 'Activity Logs', description: 'Security audit trail and superadmin logs.', icon: <History size={24} />, color: '#a855f7', path: '/admin/logs' }
+    ];
+
     const [showDropdown, setShowDropdown] = useState(false);
     const [showEnquiryForm, setShowEnquiryForm] = useState(false);
     
@@ -406,12 +426,20 @@ export default function WorkflowV2Board() {
                     // 1. Fetch all docs in the job
                     const { data: jobDocs } = await getWorkflowDocumentsByJob(doc.job_id || doc.id);
                     if (jobDocs && jobDocs.length > 0) {
-                        for (const jd of jobDocs) {
-                            await deleteWorkflowDocument(jd.id);
-                        }
+                        // Filter out dependent/revision documents whose parents are also being deleted in this batch
+                        const docIds = new Set(jobDocs.map(d => d.id));
+                        const rootDocs = jobDocs.filter(jd => !jd.original_document_id || !docIds.has(jd.original_document_id));
+
+                        // Run deletions in parallel
+                        const deletePromises = rootDocs.map(async (jd) => {
+                            const { error } = await deleteWorkflowDocument(jd.id);
+                            if (error) throw error;
+                        });
+                        await Promise.all(deletePromises);
                     } else {
                         // Fallback to just this doc if no job_id link found
-                        await deleteWorkflowDocument(id);
+                        const { error } = await deleteWorkflowDocument(id);
+                        if (error) throw error;
                     }
                 } else {
                     const { error } = await deleteWorkflowDocument(id);
@@ -761,8 +789,66 @@ export default function WorkflowV2Board() {
             valB = b.delivery_verification?.po_description || b.partners?.name || '';
             return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
         }
-        return 0;
     });
+
+    const getGroupedFlatRows = (docs) => {
+        const groups = {};
+        const result = [];
+        
+        // Scan docs and group the ones with assigned_job_no
+        docs.forEach(doc => {
+            const jobNo = doc.assigned_job_no?.trim();
+            if (jobNo) {
+                if (!groups[jobNo]) {
+                    groups[jobNo] = {
+                        jobNo,
+                        docs: [],
+                        customerName: doc.partners?.name || 'Walk-in'
+                    };
+                }
+                groups[jobNo].docs.push(doc);
+                if (doc.partners?.name) {
+                    groups[jobNo].customerName = doc.partners.name;
+                }
+            }
+        });
+        
+        // Now build the list preserving the order of sortedDocs (which is `docs` passed in)
+        const groupKeysSeen = new Set();
+        
+        docs.forEach(doc => {
+            const jobNo = doc.assigned_job_no?.trim();
+            if (jobNo) {
+                if (!groupKeysSeen.has(jobNo)) {
+                    groupKeysSeen.add(jobNo);
+                    const group = groups[jobNo];
+                    result.push({ 
+                        isHeader: true, 
+                        jobNo: group.jobNo, 
+                        customerName: group.customerName, 
+                        key: `header-${group.jobNo}` 
+                    });
+                    
+                    // The docs in group.docs are already in their relative sorted order from docs
+                    group.docs.forEach(gDoc => {
+                        result.push({ 
+                            isHeader: false, 
+                            doc: gDoc, 
+                            key: gDoc.id 
+                        });
+                    });
+                }
+            } else {
+                result.push({ 
+                    isHeader: false, 
+                    doc, 
+                    key: doc.id 
+                });
+            }
+        });
+        
+        return result;
+    };
 
     const handleOpenDocument = (type, id) => {
         let url = `/workflows/editor/${type.toLowerCase().replace(/\s+/g, '-')}/${id}`;
@@ -883,7 +969,7 @@ export default function WorkflowV2Board() {
     };
 
     return (
-        <div className="animate-fade-in">
+        <div className="animate-fade-in" style={{ maxWidth: '1600px', margin: '0 auto', padding: '0 8px' }}>
             <header className="page-header">
                 <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -1012,7 +1098,174 @@ export default function WorkflowV2Board() {
                 </div>
             </header>
 
-            <div style={{
+            {activeType === 'All' && (
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', background: '#f1f5f9', padding: '6px', borderRadius: '14px', width: 'fit-content' }}>
+                    <button
+                        onClick={() => setViewMode('board')}
+                        style={{
+                            padding: '10px 20px',
+                            borderRadius: '10px',
+                            border: 'none',
+                            background: viewMode === 'board' ? '#fff' : 'transparent',
+                            color: viewMode === 'board' ? 'var(--accent)' : '#64748b',
+                            fontWeight: 700,
+                            fontSize: '0.9rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            boxShadow: viewMode === 'board' ? '0 4px 6px -1px rgba(0,0,0,0.1)' : 'none',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        <LayoutDashboard size={18} />
+                        Workflow Master Board
+                    </button>
+                    <button
+                        onClick={() => setViewMode('tools')}
+                        style={{
+                            padding: '10px 20px',
+                            borderRadius: '10px',
+                            border: 'none',
+                            background: viewMode === 'tools' ? '#fff' : 'transparent',
+                            color: viewMode === 'tools' ? 'var(--accent)' : '#64748b',
+                            fontWeight: 700,
+                            fontSize: '0.9rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            boxShadow: viewMode === 'tools' ? '0 4px 6px -1px rgba(0,0,0,0.1)' : 'none',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        <Briefcase size={18} />
+                        Workflow Tools &amp; Files
+                    </button>
+                </div>
+            )}
+
+            {activeType === 'All' && viewMode === 'tools' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '32px', marginTop: '8px', marginBottom: '40px' }}>
+                    <div>
+                        <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '16px' }}>Workflow Tools &amp; Files</h2>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '24px', width: '100%' }}>
+                            {workflowTools.map((tool, idx) => (
+                                <div 
+                                    key={idx}
+                                    onClick={() => {
+                                        if (tool.isExternal) window.open(tool.path, '_blank');
+                                        else navigate(tool.path);
+                                    }}
+                                    style={{
+                                        background: '#ffffff',
+                                        border: '1px solid #e2e8f0',
+                                        borderRadius: '20px',
+                                        padding: '24px',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: '16px',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                                    }}
+                                    onMouseOver={(e) => {
+                                        e.currentTarget.style.transform = 'translateY(-4px)';
+                                        e.currentTarget.style.boxShadow = '0 12px 20px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+                                        e.currentTarget.style.borderColor = tool.color + '44';
+                                    }}
+                                    onMouseOut={(e) => {
+                                        e.currentTarget.style.transform = 'none';
+                                        e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.05)';
+                                        e.currentTarget.style.borderColor = '#e2e8f0';
+                                    }}
+                                >
+                                    <div style={{
+                                        width: '48px',
+                                        height: '48px',
+                                        borderRadius: '12px',
+                                        background: `${tool.color}15`,
+                                        color: tool.color,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                    }}>
+                                        {tool.icon}
+                                    </div>
+                                    <div>
+                                        <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 6px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            {tool.title}
+                                            {tool.isExternal && <ExternalLink size={14} style={{ opacity: 0.6 }} />}
+                                        </h3>
+                                        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                                            {tool.description}
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {canAdmin && (
+                        <div>
+                            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '16px' }}>System Admin Control Panel</h2>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '24px', width: '100%' }}>
+                                {adminTools.map((tool, idx) => (
+                                    <div 
+                                        key={idx}
+                                        onClick={() => navigate(tool.path)}
+                                        style={{
+                                            background: '#ffffff',
+                                            border: '1px solid #e2e8f0',
+                                            borderRadius: '20px',
+                                            padding: '24px',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '16px',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                                        }}
+                                        onMouseOver={(e) => {
+                                            e.currentTarget.style.transform = 'translateY(-4px)';
+                                            e.currentTarget.style.boxShadow = '0 12px 20px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+                                            e.currentTarget.style.borderColor = tool.color + '44';
+                                        }}
+                                        onMouseOut={(e) => {
+                                            e.currentTarget.style.transform = 'none';
+                                            e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.05)';
+                                            e.currentTarget.style.borderColor = '#e2e8f0';
+                                        }}
+                                    >
+                                        <div style={{
+                                            width: '48px',
+                                            height: '48px',
+                                            borderRadius: '12px',
+                                            background: `${tool.color}15`,
+                                            color: tool.color,
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}>
+                                            {tool.icon}
+                                        </div>
+                                        <div>
+                                            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 6px 0' }}>
+                                                {tool.title}
+                                            </h3>
+                                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                                                {tool.description}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            ) : (
+                <>
+                <div style={{
                 display: 'flex',
                 gap: '12px',
                 marginBottom: '24px',
@@ -1349,36 +1602,34 @@ export default function WorkflowV2Board() {
                                 </tr>
                             ) : activeType === 'Job' ? (
                                 <tr>
-                                    <th>CEL Job No</th>
-                                    <th>Customer</th>
-                                    <th>Purchase Order Info</th>
-                                    <th>Description</th>
-                                    <th style={{ textAlign: 'right' }}>Value (SGD)</th>
-                                    <th>Attachment</th>
-                                    <th style={{ textAlign: 'center' }}>Folder</th>
-                                    <th style={{ textAlign: 'right' }}>Actions</th>
+                                    <th style={{ width: '130px' }}>CEL Job No</th>
+                                    <th style={{ width: '25%', minWidth: '220px' }}>Customer</th>
+                                    <th style={{ width: '180px' }}>Purchase Order Info</th>
+                                    <th style={{ width: '30%', minWidth: '250px' }}>Description</th>
+                                    <th style={{ width: '120px', textAlign: 'right' }}>Value (SGD)</th>
+                                    <th style={{ width: '110px' }}>Attachment</th>
+                                    <th style={{ width: '80px', textAlign: 'center' }}>Folder</th>
+                                    <th style={{ width: '280px', textAlign: 'right' }}>Actions</th>
                                 </tr>
                             ) : (
                                 <tr>
-                                    <th>Type</th>
-                                    <th>Document No</th>
-                                    <th>{activeType === 'Order Acknowledgment' ? 'Delivery / Service Date' : 'Issue Date'}</th>
-                                    <th>Customer</th>
-                                    <th>Cust. Ref</th>
-                                    <th>Vessel / Work Location</th>
-                                    <th style={{ textAlign: 'right' }}>Total</th>
-                                    <th>Status</th>
-                                    <th style={{ textAlign: 'center' }}>Folder</th>
-                                    <th style={{ textAlign: 'right' }}>Actions</th>
+                                    <th style={{ width: '110px' }}>Type</th>
+                                    <th style={{ width: '110px' }}>Document No</th>
+                                    <th style={{ width: '100px' }}>{activeType === 'Order Acknowledgment' ? 'Del / Svc Date' : 'Issue Date'}</th>
+                                    <th style={{ minWidth: '200px' }}>Customer</th>
+                                    <th style={{ width: '100px', textAlign: 'right' }}>Total</th>
+                                    <th style={{ width: '80px' }}>Status</th>
+                                    <th style={{ width: '60px', textAlign: 'center' }}>Folder</th>
+                                    <th style={{ width: '230px', textAlign: 'right' }}>Actions</th>
                                 </tr>
                             )}
                         </thead>
                         <tbody>
                             {loading ? (
-                                <tr><td colSpan="11" className="text-center py-12">Loading documents...</td></tr>
+                                <tr><td colSpan="9" className="text-center py-12">Loading documents...</td></tr>
                             ) : (activeType === 'Statement of Account' ? soaGroups : sortedDocs).length === 0 ? (
                                 <tr>
-                                    <td colSpan={activeType === 'Job' ? "8" : "10"}>
+                                    <td colSpan={activeType === 'Job' ? "8" : "8"}>
                                         <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-secondary)' }}>
                                             <FileText size={48} style={{ margin: '0 auto 16px', opacity: 0.5 }} />
                                             <p>No documents found matching your criteria.</p>
@@ -1424,8 +1675,8 @@ export default function WorkflowV2Board() {
                                         </tr>
                                     ))
                             ) : (
-                                sortedDocs.map((doc) => (
-                                    activeType === 'Job' ? (
+                                activeType === 'Job' ? (
+                                    sortedDocs.map((doc) => (
                                         <tr key={doc.id} className="table-row">
                                             <td className="font-bold" style={{ color: '#1e3a8a' }}>{doc.assigned_job_no || 'TBD'}</td>
                                             <td>
@@ -1607,8 +1858,26 @@ export default function WorkflowV2Board() {
                                                 </div>
                                             </td>
                                         </tr>
-                                    ) : (
-                                        <tr key={doc.id} className="table-row">
+                                    ))
+                                ) : (
+                                    (() => {
+                                        const itemsToRender = activeType === 'All' 
+                                            ? getGroupedFlatRows(sortedDocs)
+                                            : sortedDocs.map(doc => ({ isHeader: false, doc }));
+                                        return itemsToRender.map((item) => {
+                                            if (item.isHeader) {
+                                                return (
+                                                    <tr key={item.key} style={{ background: 'linear-gradient(90deg, #f0fdf4 0%, #ffffff 100%)', borderLeft: '4px solid #22c55e' }}>
+                                                        <td colSpan="8" style={{ padding: '12px 16px', fontWeight: 800, color: '#166534', fontSize: '0.95rem', textAlign: 'left' }}>
+                                                            <span style={{ background: '#22c55e', color: '#fff', padding: '3px 8px', borderRadius: '4px', marginRight: '8px', fontSize: '0.75rem', textTransform: 'uppercase' }}>Job Suite</span>
+                                                            <strong>{item.jobNo}</strong> &ndash; {item.customerName}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            }
+                                            const doc = item.doc;
+                                            return (
+                                                <tr key={doc.id} className="table-row" style={activeType === 'All' ? { borderLeft: '4px solid #86efac' } : undefined}>
                                             <td>
                                                 <span style={{
                                                     display: 'flex',
@@ -1648,73 +1917,13 @@ export default function WorkflowV2Board() {
                                             </td>
                                             <td>
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                                    <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>{doc.partners?.name || 'Walk-in'}</div>
-                                                    <div style={{ fontSize: '0.8rem', color: 'var(--accent)', fontWeight: 600 }}>
-                                                        {doc.contacts?.name || 'N/A'}
+                                                    <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.85rem' }}>{doc.partners?.name || 'Walk-in'}</div>
+                                                    <div style={{ fontSize: '0.78rem', color: 'var(--accent)', fontWeight: 600 }}>
+                                                        {doc.contacts?.name || ''}
                                                     </div>
-                                                    
-                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px', opacity: 0.8 }}>
-                                                        {doc.subject || '-'}
-                                                    </div>
-
-                                                    {(() => {
-                                                        const imgSrc = extractFirstImageSrc(doc.notes);
-                                                        if (!imgSrc) return null;
-                                                        return (
-                                                            <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                <img 
-                                                                    src={imgSrc} 
-                                                                    alt="Proof thumbnail" 
-                                                                    style={{ 
-                                                                        width: '38px', 
-                                                                        height: '38px', 
-                                                                        objectFit: 'cover', 
-                                                                        borderRadius: '4px', 
-                                                                        border: '1px solid var(--border-color)', 
-                                                                        cursor: 'pointer',
-                                                                        transition: 'transform 0.2s',
-                                                                        boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-                                                                    }} 
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        const win = window.open();
-                                                                        win.document.write(`<iframe src="${imgSrc}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
-                                                                    }}
-                                                                    onMouseOver={(e) => { e.currentTarget.style.transform = 'scale(1.1)'; }}
-                                                                    onMouseOut={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
-                                                                    title="Click to view full payment proof"
-                                                                />
-                                                                <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
-                                                                    Paid Proof Attached
-                                                                </span>
-                                                            </div>
-                                                        );
-                                                    })()}
                                                 </div>
                                             </td>
-                                            <td>
-                                                {doc.customer_ref ? (
-                                                    <span style={{ 
-                                                        background: 'rgba(99, 102, 241, 0.1)', 
-                                                        color: '#4f46e5', 
-                                                        padding: '4px 10px', 
-                                                        borderRadius: '8px', 
-                                                        fontSize: '0.75rem', 
-                                                        fontWeight: 700,
-                                                        display: 'inline-block',
-                                                        border: '1px solid rgba(99, 102, 241, 0.2)'
-                                                    }}>
-                                                        {doc.customer_ref}
-                                                    </span>
-                                                ) : (
-                                                    <span style={{ color: 'var(--text-secondary)', opacity: 0.5 }}>-</span>
-                                                )}
-                                            </td>
-                                            <td>
-                                                {doc.vessels?.vessel_name || doc.work_locations?.location_name || '-'}
-                                            </td>
-                                            <td className="font-bold" style={{ textAlign: 'right' }}>
+                                            <td className="font-bold" style={{ textAlign: 'right', fontSize: '0.85rem' }}>
                                                 {doc.currency} {doc.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                                 {doc.total_paid > 0 && (
                                                     <div style={{ fontSize: '0.75rem', color: doc.balance > 0 ? '#f59e0b' : '#10b981', marginTop: '4px' }}>
@@ -2034,8 +2243,11 @@ export default function WorkflowV2Board() {
                                                 </div>
                                             </td>
                                         </tr>
-                                    ))))
-                                }
+                                    );
+                                });
+                                    })()
+                                )
+                            )}
                             </tbody>
                             {activeType !== 'Statement of Account' && filteredDocs.length > 0 && (
                                 <tfoot style={{ background: '#f8fafc', fontWeight: 'bold', borderTop: '2px solid var(--border-color)' }}>
@@ -2426,6 +2638,8 @@ export default function WorkflowV2Board() {
                         </div>
                     </div>
                 </div>
+            )}
+            </>
             )}
             {showPaymentModal && (
                 <ReceivePaymentModal 

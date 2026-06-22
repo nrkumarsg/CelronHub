@@ -45,7 +45,7 @@ export default function GstReporting() {
             fetchPartners();
             fetchSettings();
         }
-    }, [profile, selectedYear, selectedQuarter]);
+    }, [profile?.company_id, selectedYear, selectedQuarter]);
 
     const fetchSettings = async () => {
         const data = await getDocumentSettings(profile.company_id);
@@ -53,7 +53,7 @@ export default function GstReporting() {
     };
 
     const fetchPartners = async () => {
-        const { data } = await getPartners(profile.company_id);
+        const data = await getPartners(profile);
         if (data) setPartners(data);
     };
 
@@ -75,7 +75,7 @@ export default function GstReporting() {
                     .order('invoice_date', { ascending: false }),
                 supabase
                     .from('workflow_documents')
-                    .select('id, document_no')
+                    .select('id, document_no, drive_folder_id, gdrive_folder_id')
                     .eq('company_id', profile.company_id)
                     .eq('document_type', 'Job')
             ]);

@@ -11,7 +11,9 @@
     "server": "node server/index.js",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "inspect": "node scratch/inspect_purchase_history.mjs",
+    "confirm-user": "node scratch/confirm_user.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",

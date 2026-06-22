@@ -19,6 +19,54 @@ export const getJobExpenses = async (jobId) => {
     }
 };
 
+const ensureLegacyJobRecord = async (jobId, companyId) => {
+    if (!jobId) return;
+    try {
+        // 1. Check if job already exists in legacy jobs table
+        const { data: existingJob } = await supabase
+            .from('jobs')
+            .select('id')
+            .eq('id', jobId)
+            .maybeSingle();
+            
+        if (existingJob) return; // Already exists
+        
+        // 2. Fetch the job details from workflow_documents
+        const { data: doc, error: docErr } = await supabase
+            .from('workflow_documents')
+            .select('document_no, document_type, company_id')
+            .eq('id', jobId)
+            .single();
+            
+        if (docErr || !doc) {
+            console.error('Failed to fetch job document for legacy jobs table sync:', docErr);
+            return;
+        }
+        
+        // Determine type (default to 'Service' if not matching CHECK constraint)
+        const jobType = doc.document_type === 'Supply' ? 'Supply' : 'Service';
+        
+        // 3. Insert into legacy jobs table
+        const { error: insertErr } = await supabase
+            .from('jobs')
+            .insert([{
+                id: jobId,
+                job_no: doc.document_no,
+                company_id: doc.company_id || companyId,
+                type: jobType,
+                status: 'Active'
+            }]);
+            
+        if (insertErr) {
+            console.error('Failed to insert legacy job sync record:', insertErr);
+        } else {
+            console.log(`Successfully synchronized job ${doc.document_no} to legacy jobs table`);
+        }
+    } catch (err) {
+        console.error('Error in ensureLegacyJobRecord:', err);
+    }
+};
+
 export const saveJobExpense = async (expense) => {
     try {
         const payload = { ...expense };
@@ -32,6 +80,10 @@ export const saveJobExpense = async (expense) => {
         if (payload.supplier_id === '') payload.supplier_id = null;
         if (payload.job_id === '') payload.job_id = null;
         if (payload.company_id === '') payload.company_id = null;
+
+        if (payload.job_id) {
+            await ensureLegacyJobRecord(payload.job_id, payload.company_id);
+        }
 
         let result;
         if (id && !id.startsWith('temp_')) {

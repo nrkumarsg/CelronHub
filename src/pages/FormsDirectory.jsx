@@ -220,6 +220,27 @@ export default function FormsDirectory() {
                         Sync from Drive
                     </button>
                     <button
+                        onClick={() => navigate('/forms/calibration-lab')}
+                        style={{ 
+                            background: 'linear-gradient(135deg, #10b981, #059669)', 
+                            color: '#fff', 
+                            border: 'none', 
+                            padding: '12px 24px', 
+                            borderRadius: '14px', 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: '10px', 
+                            fontWeight: 700, 
+                            cursor: 'pointer', 
+                            boxShadow: '0 4px 14px rgba(16, 185, 129, 0.4)',
+                            transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                        onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+                    >
+                        <FileCheck size={20} /> Calibration Lab
+                    </button>
+                    <button
                         onClick={() => setIsAddModalOpen(true)}
                         style={{ 
                             background: 'linear-gradient(135deg, #6366f1, #4f46e5)', 

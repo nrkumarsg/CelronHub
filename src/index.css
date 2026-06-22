@@ -229,6 +229,26 @@ body {
   font-weight: 600;
 }
 
+.nav-sub-link {
+  padding-left: 36px !important;
+  font-size: 0.875rem !important;
+  margin-top: -2px;
+}
+
+.nav-sub-link svg {
+  margin-left: 4px;
+  transition: margin-left 0.2s ease;
+}
+
+.sidebar.collapsed:not(:hover) .nav-sub-link {
+  padding-left: 14px !important;
+}
+
+.sidebar.collapsed:not(:hover) .nav-sub-link svg {
+  margin-left: 0;
+}
+
+
 .nav-group-header {
   font-size: 0.65rem;
   font-weight: 700;

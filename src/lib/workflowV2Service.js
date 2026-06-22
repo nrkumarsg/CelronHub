@@ -183,12 +183,22 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
 /**
  * Fetch Documents by Type
  */
-export const getWorkflowDocuments = async (companyId, type = null) => {
+export const getWorkflowDocuments = async (companyId, type = null, onlyJobs = false) => {
     let query = supabase
         .from('workflow_documents')
-        .select(`*`)
+        .select(`
+            *,
+            partners!partner_id(*),
+            vessels!vessel_id(id, vessel_name),
+            work_locations!work_location_id(id, location_name),
+            contacts!contact_id(id, name, email, handphone)
+        `)
         .eq('company_id', companyId)
         .order('created_at', { ascending: false });
+
+    if (onlyJobs) {
+        query = query.not('assigned_job_no', 'is', null);
+    }
 
     if (type) {
         if (Array.isArray(type)) {
@@ -199,45 +209,6 @@ export const getWorkflowDocuments = async (companyId, type = null) => {
     }
 
     const { data, error } = await query;
-    if (error) return { data: null, error };
-
-    // Fetch related names manually if needed to avoid relationship join errors
-    if (data && data.length > 0) {
-        // Fetch partners
-        const partnerIds = [...new Set(data.map(d => d.partner_id).filter(Boolean))];
-        if (partnerIds.length > 0) {
-            // Updated to select * or correct columns to avoid "Walk-in" errors due to schema mismatches (e.g., registration_no vs uen)
-            const { data: partners, error: pError } = await supabase.from('partners').select('*').in('id', partnerIds);
-            if (pError) console.error("Error fetching partners in getWorkflowDocuments:", pError);
-            const partnerMap = Object.fromEntries(partners?.map(p => [p.id, p]) || []);
-            data.forEach(d => { d.partners = partnerMap[d.partner_id]; });
-        }
-
-        // Fetch vessels
-        const vesselIds = [...new Set(data.map(d => d.vessel_id).filter(Boolean))];
-        if (vesselIds.length > 0) {
-            const { data: vessels } = await supabase.from('vessels').select('id, vessel_name').in('id', vesselIds);
-            const vesselMap = Object.fromEntries(vessels?.map(v => [v.id, v]) || []);
-            data.forEach(d => { d.vessels = vesselMap[d.vessel_id]; });
-        }
-
-        // Fetch work locations
-        const locationIds = [...new Set(data.map(d => d.work_location_id).filter(Boolean))];
-        if (locationIds.length > 0) {
-            const { data: locations } = await supabase.from('work_locations').select('id, location_name').in('id', locationIds);
-            const locationMap = Object.fromEntries(locations?.map(l => [l.id, l]) || []);
-            data.forEach(d => { d.work_locations = locationMap[d.work_location_id]; });
-        }
-
-        // Fetch contacts
-        const contactIds = [...new Set(data.map(d => d.contact_id).filter(Boolean))];
-        if (contactIds.length > 0) {
-            const { data: contacts } = await supabase.from('contacts').select('id, name, email, handphone').in('id', contactIds);
-            const contactMap = Object.fromEntries(contacts?.map(c => [c.id, c]) || []);
-            data.forEach(d => { d.contacts = contactMap[d.contact_id]; });
-        }
-    }
-    
     return { data, error };
 };
 
@@ -414,10 +385,110 @@ export const getWorkflowDocumentById = async (id) => {
 };
 
 /**
+ * Adjust stock for catalog items when workflow line items are modified/deleted.
+ * Stock is reduced for Job documents and standalone Tax Invoices.
+ */
+const adjustStockForWorkflowDocument = async (docData, newLineItems, isDelete = false) => {
+    try {
+        // Skip client-side stock adjustment if database trigger is active to prevent double adjusting
+        const isMigrationSuccessful = typeof window !== 'undefined' && window.localStorage && window.localStorage.getItem('purchase_history_migration_v5') === 'done';
+        if (isMigrationSuccessful) {
+            return;
+        }
+
+        const docId = docData.id;
+        if (!docId) return;
+
+        const docType = docData.document_type;
+        const jobId = docData.job_id;
+        const assignedJobNo = docData.assigned_job_no;
+        
+        let isStockReducing = false;
+        if (docType === 'Job') {
+            isStockReducing = true;
+        } else if (docType === 'Tax Invoice' && !jobId && !assignedJobNo) {
+            isStockReducing = true;
+        }
+
+        if (!isStockReducing) return;
+
+        // Fetch old line items from database
+        const { data: oldItems } = await supabase
+            .from('workflow_line_items')
+            .select('item_id, quantity')
+            .eq('document_id', docId);
+
+        const stockChanges = {};
+
+        // For delete, all old items are removed (quantity goes to 0, so change is -oldQty)
+        if (isDelete) {
+            if (oldItems) {
+                oldItems.forEach(item => {
+                    if (item.item_id) {
+                        stockChanges[item.item_id] = (stockChanges[item.item_id] || 0) - (parseFloat(item.quantity) || 0);
+                    }
+                });
+            }
+        } else {
+            // Old items subtract from net change (since we are replacing them)
+            if (oldItems) {
+                oldItems.forEach(item => {
+                    if (item.item_id) {
+                        stockChanges[item.item_id] = (stockChanges[item.item_id] || 0) - (parseFloat(item.quantity) || 0);
+                    }
+                });
+            }
+            // New items add to net change
+            if (newLineItems) {
+                newLineItems.forEach(item => {
+                    if (item.item_id) {
+                        stockChanges[item.item_id] = (stockChanges[item.item_id] || 0) + (parseFloat(item.quantity) || 0);
+                    }
+                });
+            }
+        }
+
+        // Apply changes to catalog_items
+        for (const itemId of Object.keys(stockChanges)) {
+            const change = stockChanges[itemId];
+            if (change !== 0) {
+                const { data: catItem } = await supabase
+                    .from('catalog_items')
+                    .select('quantity')
+                    .eq('id', itemId)
+                    .single();
+                
+                if (catItem) {
+                    const currentQty = parseFloat(catItem.quantity) || 0;
+                    const newQty = currentQty - change; // subtract change because stock-reducing
+                    await supabase
+                        .from('catalog_items')
+                        .update({ quantity: newQty })
+                        .eq('id', itemId);
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Error adjusting stock for workflow document:', e);
+    }
+};
+
+/**
  * Delete Document and its Line Items
  */
 export const deleteWorkflowDocument = async (id) => {
     try {
+        // Fetch document details first for stock adjustment
+        const { data: docData } = await supabase
+            .from('workflow_documents')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+        if (docData) {
+            await adjustStockForWorkflowDocument(docData, [], true);
+        }
+
         // 1. Check for dependent documents (revisions that point to this as original)
         const { data: dependents } = await supabase
             .from('workflow_documents')
@@ -435,7 +506,6 @@ export const deleteWorkflowDocument = async (id) => {
         const { error: itemError } = await supabase.from('workflow_line_items').delete().eq('document_id', id);
         if (itemError) {
             console.error("Error deleting items for document:", id, itemError);
-            // We continue as it might be a partial delete or empty items
         }
 
         // 3. Delete the document itself
@@ -460,6 +530,11 @@ export const saveWorkflowDocument = async (docData, lineItems) => {
     const { items, partners, contacts, vessels, work_locations, ...headerData } = docData;
     const isNew = !headerData.id;
 
+    // Map gdrive_folder_id to drive_folder_id if only the former is provided
+    if (headerData.gdrive_folder_id && !headerData.drive_folder_id) {
+        headerData.drive_folder_id = headerData.gdrive_folder_id;
+    }
+
     // Sanitize Document Header
     const validDocKeys = [
         'id', 'company_id', 'document_type', 'document_no', 'issue_date', 'expiry_date',
@@ -471,7 +546,7 @@ export const saveWorkflowDocument = async (docData, lineItems) => {
         'customer_po_no', 'customer_po_date', 'customer_po_by_id', 'customer_po_attachment_url',
         'is_job', 'assigned_job_no', 'payment_terms',
         'original_document_id', 'revision_no', 'enquiry_id', 'job_id',
-        'attachment_urls', 'delivery_verification', 'gdrive_folder_id', 'drive_folder_id',
+        'attachment_urls', 'delivery_verification', 'drive_folder_id',
         'signature_url', 'signed_by', 'is_signed'
     ];
 
@@ -600,6 +675,9 @@ export const saveWorkflowDocument = async (docData, lineItems) => {
 
     // Handle Line Items
     if (lineItems && lineItems.length >= 0) {
+        // Run stock adjustment before we delete the old line items
+        await adjustStockForWorkflowDocument(savedDoc, lineItems, false);
+
         if (!isNew) {
             await supabase.from('workflow_line_items').delete().eq('document_id', savedDoc.id);
         }
@@ -949,7 +1027,6 @@ export const duplicateWorkflowDocument = async (docId, overrides = {}) => {
         customer_po_by_id: null,
         customer_po_attachment_url: null,
         drive_folder_id: null,
-        gdrive_folder_id: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         ...overrides
@@ -1184,6 +1261,7 @@ export const convertInvoiceToJob = async (invoiceId, poData = {}) => {
         assigned_job_no: jobNo,
         is_job: true,
         status: 'Draft',
+        issue_date: new Date().toISOString().split('T')[0],
         customer_po_no: invUpdate.customer_po_no,
         customer_po_date: invUpdate.customer_po_date
     };

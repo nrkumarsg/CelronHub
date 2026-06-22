@@ -60,7 +60,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
         detectSessionInUrl: typeof window !== 'undefined',
         storage: storage,
         lockManager: {
-            acquire: async () => {
+            acquire: async (name, callback) => {
+                if (typeof callback === 'function') {
+                    return await callback();
+                }
+                if (typeof name === 'function') {
+                    return await name();
+                }
                 return { release: () => {} };
             }
         },
@@ -69,3 +75,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
         headers: { 'x-my-custom-header': 'celronhub' }
     }
 })
+
+if (typeof window !== 'undefined') {
+    window.supabase = supabase;
+}

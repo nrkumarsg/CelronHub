@@ -123,9 +123,11 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
         ? (isQuotation ? DEFAULT_QUOTATION_NOTES : (isDeliveryDoc ? DEFAULT_DELIVERY_NOTES : doc.notes))
         : doc.notes;
 
-    const vesselName = doc.vessels?.vessel_name;
+    const cleanVesselName = doc.vessels?.vessel_name?.trim();
+    const hasVessel = !!cleanVesselName && 
+        !['', 'N/A', 'N.A', 'N.A.', 'N/A.', 'NONE', 'NIL', '[VESSEL]', 'NOT APPLICABLE'].includes(cleanVesselName.toUpperCase());
+    const vesselName = hasVessel ? cleanVesselName : '';
     const locationName = doc.work_locations?.location_name;
-    const hasVessel = !!vesselName && vesselName !== 'N/A';
     const hasLocation = !!locationName && locationName !== 'N/A';
 
     let vesselLabel = "VESSEL";
@@ -182,13 +184,14 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
             <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', alignItems: 'stretch' }}>
                 <div style={{ flex: 1, border: styles.border, borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column' }}>
                     <div style={{ ...styles.h3, marginBottom: '4px' }}>{isPayment ? 'RECEIVED FROM:' : 'TO:'}</div>
-                    {hasVessel && !hasLocation && ['Tax Invoice', 'Proforma Invoice', 'Delivery Order', 'Packing List'].includes(doc.document_type) && (
-                        <div style={styles.bodyBold}>MASTER AND OWNER OF {vesselName.toUpperCase()}</div>
+                    {hasVessel ? (
+                        <>
+                            <div style={styles.bodyBold}>MASTER AND OWNER OF {vesselName.toUpperCase()}</div>
+                            <div style={styles.bodyBold}>C/O {doc.partners?.name || 'Walk-in Customer'}</div>
+                        </>
+                    ) : (
+                        <div style={styles.bodyBold}>{doc.partners?.name || 'Walk-in Customer'}</div>
                     )}
-                    <div style={styles.bodyBold}>
-                        {hasVessel && !hasLocation && ['Tax Invoice', 'Proforma Invoice', 'Delivery Order', 'Packing List'].includes(doc.document_type) ? 'C/O ' : ''}
-                        {doc.partners?.name || 'Walk-in Customer'}
-                    </div>
                     <div style={{ ...styles.small, marginTop: '2px', whiteSpace: 'pre-line' }}>
                         {doc.partners?.address || ''}
                         {(doc.partners?.city || doc.partners?.pincode || doc.partners?.country) && (

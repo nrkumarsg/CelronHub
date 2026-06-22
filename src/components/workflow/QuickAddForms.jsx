@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Ship, User, Users, MapPin, X, Save, Globe, Mail, Phone, Map, ExternalLink, Plus, Sparkles, Loader2, RefreshCw, Upload, ChevronDown, Paperclip, FileCheck, Calculator, FileText, Search, Check, RotateCcw, Pencil, Camera, Archive, Trash2, Receipt } from 'lucide-react';
+import { Ship, User, Users, MapPin, X, Save, Globe, Mail, Phone, Map, ExternalLink, Plus, Sparkles, Loader2, RefreshCw, Upload, ChevronDown, Paperclip, FileCheck, Calculator, FileText, Search, Check, RotateCcw, Pencil, Camera, Archive, Trash2, Receipt, Smartphone, Image, HardDrive, Info } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { savePartner, saveJobMajorCategory, getJobMajorCategories, deleteJobMajorCategory } from '../../lib/store';
 import { saveJobExpense } from '../../lib/jobExpenseService';
@@ -16,7 +16,7 @@ import SmartOCRModal from '../common/SmartOCRModal';
 import DriveScannerLinker from '../workflows/DriveScannerLinker';
 import GDriveConnectionModal from '../common/GDriveConnectionModal';
 import { listFolderContent, getOrCreateFolder } from '../../lib/driveService';
-import { isTokenValid } from '../../lib/googleAuthService';
+import { isTokenValid, getStoredToken } from '../../lib/googleAuthService';
 
 
 // Generic Modal Base
@@ -2280,7 +2280,7 @@ export const QuickWorkLocationAdd = ({ company_id, initialData, onSuccess, onCan
 };
 
 // Quick Expense Add
-export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, onCancel, onUploadBill, company_id }) => {
+export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, onCancel, onUploadBill, company_id, onOpenQRModal, galleryFiles }) => {
     const [formData, setFormData] = useState(expense || {
         job_id: job_id || '',
         job_no: '',
@@ -2315,6 +2315,322 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
     const [isAiProcessing, setIsAiProcessing] = useState(false);
     const [aiStatus, setAiStatus] = useState('');
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+    const [showPhotoPicker, setShowPhotoPicker] = useState(false);
+
+    const [localQrModal, setLocalQrModal] = useState({ isOpen: false, folderId: null, folderName: '', isLoading: false });
+    const pollingIntervalRef = React.useRef(null);
+
+    React.useEffect(() => {
+        return () => {
+            if (pollingIntervalRef.current) {
+                clearInterval(pollingIntervalRef.current);
+            }
+        };
+    }, []);
+
+    const handleOpenLocalQR = async () => {
+        const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
+        if (!token || !isTokenValid()) {
+            setIsAuthModalOpen(true);
+            return;
+        }
+
+        setLocalQrModal({ isOpen: true, folderId: null, folderName: '', isLoading: true });
+
+        try {
+            let targetFolderId = null;
+            let folderName = 'General_Expenses';
+
+            if (formData.job_id) {
+                const selectedJob = jobs?.find(j => j.id === formData.job_id);
+                const jobNo = selectedJob?.document_no || 'Job';
+                const parentFolderId = selectedJob?.drive_folder_id || selectedJob?.gdrive_folder_id;
+
+                if (parentFolderId) {
+                    targetFolderId = await getOrCreateFolder(token, 'Expenses & Bills', parentFolderId);
+                    folderName = `${jobNo} - Expenses & Bills`;
+                } else {
+                    const scansFolderId = await getOrCreateFolder(token, 'Celron_Scans');
+                    const jobFolderId = await getOrCreateFolder(token, `Job_${jobNo}`, scansFolderId);
+                    targetFolderId = await getOrCreateFolder(token, 'Expenses & Bills', jobFolderId);
+                    folderName = `Job_${jobNo} - Expenses & Bills`;
+                }
+            } else {
+                const scansFolderId = await getOrCreateFolder(token, 'Celron_Scans');
+                targetFolderId = await getOrCreateFolder(token, 'General_Expenses', scansFolderId);
+                folderName = 'General_Expenses';
+            }
+
+            setLocalQrModal({ isOpen: true, folderId: targetFolderId, folderName: folderName, isLoading: false });
+
+            // Start Polling for new files
+            const initialFiles = await listFolderContent(token, targetFolderId);
+            const initialIds = new Set(initialFiles.map(f => f.id));
+
+            if (pollingIntervalRef.current) {
+                clearInterval(pollingIntervalRef.current);
+            }
+
+            pollingIntervalRef.current = setInterval(async () => {
+                try {
+                    const currentFiles = await listFolderContent(token, targetFolderId);
+                    const newFile = currentFiles.find(f => !initialIds.has(f.id) && f.mimeType !== 'application/vnd.google-apps.folder');
+
+                    if (newFile) {
+                        // Success! A new file was detected.
+                        clearInterval(pollingIntervalRef.current);
+                        pollingIntervalRef.current = null;
+
+                        setFormData(prev => ({
+                            ...prev,
+                            bill_url: newFile.webViewLink,
+                            notes: (prev.notes || '') + `\n[Linked via Mobile QR Upload: ${newFile.name}]`
+                        }));
+
+                        setIsAiProcessing(true);
+                        setAiStatus('🤖 Reading mobile upload...');
+
+                        try {
+                            const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${newFile.id}?alt=media`, {
+                                headers: { 'Authorization': `Bearer ${token}` }
+                            });
+                            if (fileRes.ok) {
+                                const blob = await fileRes.blob();
+                                const extractedText = await performOCR(blob);
+                                if (extractedText) {
+                                    setAiStatus('🤖 Gemini AI is parsing details...');
+                                    const result = await parseSupplierBillWithAi('', extractedText);
+                                    if (result) {
+                                        let supplierId = formData.supplier_id;
+                                        if (!supplierId && result.supplier_name) {
+                                            const matched = partners.find(p => 
+                                                p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
+                                                (result.uen && p.registration_no === result.uen)
+                                            );
+                                            if (matched) {
+                                                supplierId = matched.id;
+                                                setSupplierSearch(matched.name);
+                                            }
+                                        }
+                                        setFormData(prev => calculateTotals({
+                                            ...prev,
+                                            supplier_id: supplierId,
+                                            invoice_no: result.invoice_no || prev.invoice_no,
+                                            invoice_date: result.invoice_date || prev.invoice_date,
+                                            description: result.supplier_name ? `Bill from ${result.supplier_name}` : prev.description,
+                                            unit_price: result.subtotal || prev.unit_price,
+                                            quantity: 1,
+                                            gst_amount: result.gst_amount || prev.gst_amount,
+                                            grand_total: result.total_amount || prev.grand_total,
+                                            notes: (prev.notes || '') + `\nAI Extraction: ${result.supplier_name || 'Unknown'}. UEN: ${result.uen || 'N/A'}`
+                                        }));
+                                        setAiStatus('✅ Mobile upload parsed successfully!');
+                                    }
+                                }
+                            }
+                        } catch (ocrErr) {
+                            console.error('Mobile upload OCR failed:', ocrErr);
+                            setAiStatus('⚠️ Mobile upload linked, but AI extraction failed.');
+                        } finally {
+                            setIsAiProcessing(false);
+                            setTimeout(() => setAiStatus(''), 4000);
+                        }
+
+                        setLocalQrModal(prev => ({ ...prev, isOpen: false }));
+                    }
+                } catch (pollErr) {
+                    console.error("Polling error in local QR:", pollErr);
+                }
+            }, 2500);
+
+        } catch (err) {
+            console.error("Failed to set up local QR modal:", err);
+            alert("Failed to initialize QR Modal: " + err.message);
+            setLocalQrModal(prev => ({ ...prev, isOpen: false, isLoading: false }));
+        }
+    };
+
+    const handleCloseLocalQR = () => {
+        if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+        }
+        setLocalQrModal({ isOpen: false, folderId: null, folderName: '', isLoading: false });
+    };
+
+    const handlePickFromAccountPayable = async () => {
+        const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
+        if (!token || !isTokenValid()) {
+            setIsAuthModalOpen(true);
+            return;
+        }
+        setIsAiProcessing(true);
+        setAiStatus('📂 Opening Account Payable Folder...');
+        try {
+            const folderId = '1MVrJO3j9xc9Ls9JpovmduW62i2YtfrRq';
+            const files = await listFolderContent(token, folderId);
+            const onlyFiles = files.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
+            
+            if (onlyFiles.length === 0) {
+                alert("No scanned bills found in Account Payable folder.");
+                setIsAiProcessing(false);
+                setAiStatus('');
+                return;
+            }
+            
+            const fileNames = onlyFiles.map((f, i) => `${i + 1}. ${f.name}`).join('\n');
+            const selection = window.prompt(`Enter the NUMBER of the scanned document to attach from Account Payable:\n\n${fileNames}`);
+            
+            if (selection && !isNaN(selection)) {
+                const idx = parseInt(selection) - 1;
+                const selectedFile = onlyFiles[idx];
+                if (selectedFile) {
+                    setFormData(prev => ({ 
+                        ...prev, 
+                        bill_url: selectedFile.webViewLink,
+                        notes: (prev.notes || '') + `\n[Linked from Account Payable: ${selectedFile.name}]`
+                    }));
+                    
+                    try {
+                        setAiStatus('🤖 Reading document...');
+                        const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${selectedFile.id}?alt=media`, {
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        
+                        if (!fileRes.ok) {
+                            throw new Error('Failed to retrieve file contents from Google Drive');
+                        }
+                        
+                        const blob = await fileRes.blob();
+                        const extractedText = await performOCR(blob);
+                        
+                        if (extractedText) {
+                            setAiStatus('🤖 Organizing extracted text with AI...');
+                            const result = await parseSupplierBillWithAi('', extractedText);
+                            
+                            if (result) {
+                                let supplierId = formData.supplier_id;
+                                if (!supplierId && result.supplier_name) {
+                                    const matched = partners.find(p => 
+                                        p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
+                                        (result.uen && p.registration_no === result.uen)
+                                    );
+                                    if (matched) {
+                                        supplierId = matched.id;
+                                        setSupplierSearch(matched.name);
+                                    }
+                                }
+
+                                setFormData(prev => calculateTotals({
+                                    ...prev,
+                                    supplier_id: supplierId,
+                                    invoice_no: result.invoice_no || prev.invoice_no,
+                                    invoice_date: result.invoice_date || prev.invoice_date,
+                                    description: result.supplier_name ? `Bill from ${result.supplier_name}` : prev.description,
+                                    unit_price: result.subtotal || prev.unit_price,
+                                    quantity: 1,
+                                    gst_amount: result.gst_amount || prev.gst_amount,
+                                    grand_total: result.total_amount || prev.grand_total,
+                                    notes: (prev.notes || '') + `\nAI Extraction: ${result.supplier_name || 'Unknown'}. UEN: ${result.uen || 'N/A'}`
+                                }));
+                                setAiStatus('✅ Account Payable bill parsed successfully!');
+                            }
+                        } else {
+                            setAiStatus('⚠️ No text detected in document.');
+                        }
+                    } catch (aiErr) {
+                        console.error('Account Payable OCR failed:', aiErr);
+                        setAiStatus('⚠️ Document linked, but AI extraction failed.');
+                    }
+                    setTimeout(() => setAiStatus(''), 4000);
+                }
+            }
+        } catch (err) {
+            console.error("Failed to load Account Payable folder:", err);
+            alert("Failed to load Account Payable folder: " + err.message);
+        } finally {
+            setIsAiProcessing(false);
+        }
+    };
+
+    const handlePickFromJobPhotos = () => {
+        if (!galleryFiles || galleryFiles.length === 0) {
+            alert('No photos found in this job\'s gallery. Please upload photos under the "Photos & Media" tab first.');
+            return;
+        }
+        setShowPhotoPicker(true);
+    };
+
+    const handleSelectPhoto = async (file) => {
+        setShowPhotoPicker(false);
+        setFormData(prev => ({ 
+            ...prev, 
+            bill_url: file.webViewLink,
+            notes: (prev.notes || '') + `\n[Linked from Job Photos & Gallery: ${file.name}]`
+        }));
+        
+        // Also trigger AI OCR if possible
+        const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
+        if (!token || !isTokenValid()) {
+            return;
+        }
+        
+        setIsAiProcessing(true);
+        setAiStatus('🤖 Reading photo with AI...');
+        try {
+            const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (!fileRes.ok) {
+                throw new Error('Failed to retrieve file contents from Google Drive');
+            }
+            
+            const blob = await fileRes.blob();
+            const extractedText = await performOCR(blob);
+            
+            if (extractedText) {
+                setAiStatus('🤖 Gemini AI is parsing details...');
+                const result = await parseSupplierBillWithAi('', extractedText);
+                
+                if (result) {
+                    let supplierId = formData.supplier_id;
+                    if (!supplierId && result.supplier_name) {
+                        const matched = partners.find(p => 
+                            p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
+                            (result.uen && p.registration_no === result.uen)
+                        );
+                        if (matched) {
+                            supplierId = matched.id;
+                            setSupplierSearch(matched.name);
+                        }
+                    }
+
+                    setFormData(prev => calculateTotals({
+                        ...prev,
+                        supplier_id: supplierId,
+                        invoice_no: result.invoice_no || prev.invoice_no,
+                        invoice_date: result.invoice_date || prev.invoice_date,
+                        description: result.supplier_name ? `Bill from ${result.supplier_name}` : prev.description,
+                        unit_price: result.subtotal || prev.unit_price,
+                        quantity: 1,
+                        gst_amount: result.gst_amount || prev.gst_amount,
+                        grand_total: result.total_amount || prev.grand_total,
+                        notes: (prev.notes || '') + `\nAI Extraction: ${result.supplier_name || 'Unknown'}. UEN: ${result.uen || 'N/A'}`
+                    }));
+                    setAiStatus('✅ Photo details parsed successfully!');
+                }
+            } else {
+                setAiStatus('⚠️ No text detected in the photo.');
+            }
+        } catch (err) {
+            console.error('Photo OCR failed:', err);
+            setAiStatus('⚠️ AI extraction from photo failed.');
+        } finally {
+            setIsAiProcessing(false);
+            setTimeout(() => setAiStatus(''), 4000);
+        }
+    };
 
     // Initial supplier name if editing
     React.useEffect(() => {
@@ -2499,9 +2815,8 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                             notes: (prev.notes || '') + `\n[Linked from Celron Scanner: ${selectedFile.name}]`
                         }));
                         
-                        setAiStatus('🤖 Gemini AI is downloading and reading scanner document...');
                         try {
-                            // Download from Google Drive
+                            setAiStatus('🤖 Reading document...');
                             const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${selectedFile.id}?alt=media`, {
                                 headers: { 'Authorization': `Bearer ${token}` }
                             });
@@ -2667,6 +2982,68 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
 
     return (
         <div style={{ display: 'flex', gap: '28px', flexDirection: 'row', alignItems: 'stretch', width: '100%' }}>
+            <style dangerouslySetInnerHTML={{
+                __html: `
+                .premium-form-label {
+                    font-size: 0.85rem;
+                    font-weight: 700;
+                    color: #475569;
+                    margin-bottom: 6px;
+                    display: block;
+                    transition: color 0.2s ease;
+                }
+                .premium-form-item:focus-within .premium-form-label {
+                    color: #6366f1;
+                }
+                .premium-form-input, .premium-form-select, .premium-form-textarea {
+                    padding: 12px 16px;
+                    font-size: 0.95rem;
+                    font-weight: 500;
+                    border-radius: 10px;
+                    border: 1.5px solid #cbd5e1;
+                    width: 100%;
+                    outline: none;
+                    transition: all 0.2s ease-in-out;
+                    background: #fff;
+                    color: #1e293b;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                    font-family: inherit;
+                    box-sizing: border-box;
+                }
+                .premium-form-input:focus, .premium-form-select:focus, .premium-form-textarea:focus {
+                    border-color: #6366f1;
+                    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.12), 0 1px 2px rgba(0,0,0,0.05);
+                    background: #fff;
+                }
+                .premium-form-input:hover, .premium-form-select:hover, .premium-form-textarea:hover {
+                    border-color: #94a3b8;
+                }
+                .premium-form-input:hover:focus, .premium-form-select:hover:focus, .premium-form-textarea:hover:focus {
+                    border-color: #6366f1;
+                }
+                .premium-form-input:disabled, .premium-form-input[readonly] {
+                    background: #f8fafc;
+                    color: #64748b;
+                    cursor: not-allowed;
+                    border-color: #e2e8f0;
+                    box-shadow: none;
+                }
+                .premium-form-select {
+                    appearance: none;
+                    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+                    background-repeat: no-repeat;
+                    background-position: right 16px center;
+                    background-size: 16px;
+                    padding-right: 40px;
+                    cursor: pointer;
+                }
+                .premium-form-textarea {
+                    min-height: 90px;
+                    resize: vertical;
+                    line-height: 1.5;
+                }
+                `
+            }} />
             
             {/* LEFT COLUMN: Extracted Info Form (Width 45%) */}
             <div style={{ flex: '1', minWidth: '45%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -2678,8 +3055,8 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                 </div>
 
                 <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                    <div className="form-item full-width" style={{ gridColumn: 'span 2', position: 'relative' }}>
-                        <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                    <div className="premium-form-item full-width" style={{ gridColumn: 'span 2', position: 'relative' }}>
+                        <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>
                             <span>Supplier *</span>
                             {formData.supplier_id && (
                                 <button 
@@ -2694,7 +3071,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                         <div style={{ display: 'flex', gap: '8px' }}>
                             <div style={{ flex: 1, position: 'relative' }}>
                                 <input
-                                    className="form-input"
+                                    className="premium-form-input"
                                     placeholder="Search supplier from database..."
                                     value={supplierSearch}
                                     onChange={(e) => {
@@ -2702,7 +3079,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                                         setShowSupplierDropdown(true);
                                     }}
                                     onFocus={() => setShowSupplierDropdown(true)}
-                                    style={{ paddingRight: '32px' }}
+                                    style={{ paddingRight: '40px' }}
                                 />
                                 {showSupplierDropdown && (
                                     <div className="dropdown-content" style={{ 
@@ -2748,10 +3125,10 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                         </div>
                     </div>
 
-                    <div className="form-item" style={{ gridColumn: 'span 2' }}>
-                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Job No (Optional)</label>
+                    <div className="premium-form-item" style={{ gridColumn: 'span 2' }}>
+                        <label className="premium-form-label">Job No (Optional)</label>
                         <select 
-                            className="form-select"
+                            className="premium-form-select"
                             value={formData.job_id}
                             onChange={(e) => {
                                 const selected = jobs?.find(j => j.id === e.target.value);
@@ -2759,77 +3136,86 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                             }}
                         >
                             <option value="">No Job Linked</option>
-                            {jobs?.map(j => <option key={j.id} value={j.id}>{j.document_no}</option>)}
+                            {jobs?.map(j => {
+                                const customer = j.partners?.name || j.customer_name || '';
+                                const vesselOrLoc = j.vessels?.vessel_name || j.vessel_name || j.location_name || '';
+                                const labelParts = [j.document_no];
+                                if (customer) labelParts.push(customer);
+                                if (vesselOrLoc) labelParts.push(vesselOrLoc);
+                                return (
+                                    <option key={j.id} value={j.id}>
+                                        {labelParts.join(' - ')}
+                                    </option>
+                                );
+                            })}
                         </select>
                     </div>
 
-                    <div className="form-item">
-                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Invoice / Reference No</label>
+                    <div className="premium-form-item">
+                        <label className="premium-form-label">Invoice / Reference No</label>
                         <input 
-                            className="form-input" 
-                            value={formData.invoice_no} 
+                            className="premium-form-input" 
+                            value={formData.invoice_no || ''} 
                             onChange={(e) => handleChange('invoice_no', e.target.value)} 
                             placeholder="e.g. INV-2024-001" 
                         />
                     </div>
-                    <div className="form-item">
-                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Invoice Date</label>
+                    <div className="premium-form-item">
+                        <label className="premium-form-label">Invoice Date</label>
                         <input 
-                            className="form-input" 
+                            className="premium-form-input" 
                             type="date" 
-                            value={formData.invoice_date} 
+                            value={formData.invoice_date || ''} 
                             onChange={(e) => handleChange('invoice_date', e.target.value)} 
                         />
                     </div>
 
-                    <div className="form-item full-width" style={{ gridColumn: 'span 2' }}>
-                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Expense Description *</label>
+                    <div className="premium-form-item full-width" style={{ gridColumn: 'span 2' }}>
+                        <label className="premium-form-label">Expense Description *</label>
                         <textarea 
-                            className="form-textarea" 
-                            value={formData.description} 
+                            className="premium-form-textarea" 
+                            value={formData.description || ''} 
                             onChange={(e) => handleChange('description', e.target.value)} 
                             placeholder="Describe the material, service, or cost item..." 
-                            rows={2} 
-                            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
                         />
                     </div>
 
-                    <div className="form-item">
-                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Unit Price</label>
+                    <div className="premium-form-item">
+                        <label className="premium-form-label">Unit Price (SGD)</label>
                         <input 
-                            className="form-input" 
+                            className="premium-form-input" 
                             type="number" 
+                            step="0.01"
                             value={formData.unit_price} 
                             onChange={(e) => handleChange('unit_price', e.target.value)} 
                         />
                     </div>
-                    <div className="form-item">
-                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>Quantity / Units</label>
+                    <div className="premium-form-item">
+                        <label className="premium-form-label">Quantity / Units</label>
                         <input 
-                            className="form-input" 
+                            className="premium-form-input" 
                             type="number" 
                             value={formData.quantity} 
                             onChange={(e) => handleChange('quantity', e.target.value)} 
                         />
                     </div>
 
-                    <div className="form-item">
-                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>GST Rate (%)</label>
+                    <div className="premium-form-item">
+                        <label className="premium-form-label">GST Rate (%)</label>
                         <input 
-                            className="form-input" 
+                            className="premium-form-input" 
                             type="number" 
                             value={formData.gst_rate} 
                             onChange={(e) => handleChange('gst_rate', e.target.value)} 
                         />
                     </div>
-                    <div className="form-item">
-                        <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>GST Amount</label>
+                    <div className="premium-form-item">
+                        <label className="premium-form-label">GST Amount (SGD)</label>
                         <input 
-                            className="form-input" 
+                            className="premium-form-input" 
                             type="number" 
-                            value={parseFloat(formData.gst_amount).toFixed(2)} 
+                            value={parseFloat(formData.gst_amount || 0).toFixed(2)} 
                             readOnly 
-                            style={{ background: '#f8fafc', fontWeight: 600 }} 
                         />
                     </div>
                 </div>
@@ -3079,6 +3465,29 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                                 <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
                             </label>
 
+                            {/* Mobile Upload QR Code Button */}
+                            <button 
+                                type="button"
+                                onClick={handleOpenLocalQR}
+                                className="btn btn-secondary" 
+                                style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    justifyContent: 'center', 
+                                    gap: '8px', 
+                                    height: '44px',
+                                    borderRadius: '10px',
+                                    fontWeight: 700,
+                                    background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                                    border: '1px solid #bbf7d0',
+                                    color: '#166534',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                <Smartphone size={16} />
+                                <span>Mobile Upload (QR)</span>
+                            </button>
+
                             <div style={{ display: 'flex', alignItems: 'center', margin: '8px 0', gap: '10px' }}>
                                 <div style={{ flex: 1, height: '1px', background: '#cbd5e1' }} />
                                 <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Google Scans Repository</span>
@@ -3103,6 +3512,50 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                             >
                                 <Archive size={16} />
                                 <span>Link from Celron Scanner Folder</span>
+                            </button>
+
+                            {/* Link from Account Payable Folder */}
+                            <button 
+                                type="button" 
+                                onClick={handlePickFromAccountPayable}
+                                className="btn btn-outline"
+                                style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    justifyContent: 'center', 
+                                    gap: '8px', 
+                                    height: '44px', 
+                                    borderRadius: '10px', 
+                                    fontWeight: 700,
+                                    borderColor: '#f59e0b',
+                                    color: '#d97706',
+                                    background: '#fffbeb'
+                                }}
+                            >
+                                <HardDrive size={16} />
+                                <span>Link from Account Payable Folder</span>
+                            </button>
+
+                            {/* Link from Job Photos & Gallery */}
+                            <button 
+                                type="button" 
+                                onClick={handlePickFromJobPhotos}
+                                className="btn btn-outline"
+                                style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    justifyContent: 'center', 
+                                    gap: '8px', 
+                                    height: '44px', 
+                                    borderRadius: '10px', 
+                                    fontWeight: 700,
+                                    borderColor: '#3b82f6',
+                                    color: '#1d4ed8',
+                                    background: '#eff6ff'
+                                }}
+                            >
+                                <Image size={16} />
+                                <span>Link from Job Photos & Gallery</span>
                             </button>
                         </div>
                     </div>
@@ -3130,6 +3583,135 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                 onClose={() => setIsAuthModalOpen(false)} 
                 state="scanner_module"
             />
+
+            {localQrModal.isOpen && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justify: 'center', zIndex: 10000, padding: '20px' }}>
+                    <div style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
+                        <button 
+                            onClick={handleCloseLocalQR}
+                            style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                            onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                            onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
+                        >
+                            <X size={24} />
+                        </button>
+
+                        <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justify: 'center', margin: '0 auto 16px' }}>
+                            <Smartphone size={24} />
+                        </div>
+
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', margin: '0 0 8px 0' }}>Mobile Upload Gateway</h3>
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 24px 0', lineHeight: '1.4' }}>
+                            Scan this QR code with your smartphone camera to upload files directly to your <strong>{localQrModal.folderName}</strong> folder.
+                        </p>
+
+                        {localQrModal.isLoading || !localQrModal.folderId ? (
+                            <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                <Loader2 size={36} className="animate-spin text-primary" style={{ color: '#6366f1' }} />
+                                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
+                            </div>
+                        ) : (
+                            <div>
+                                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block', marginBottom: '24px' }}>
+                                    <img 
+                                        src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
+                                            `${window.location.origin}/upload-media?jobId=${formData.job_id || ''}&folderId=${localQrModal.folderId}&token=${localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent((formData.job_no || 'Job') + ' - ' + localQrModal.folderName)}`
+                                        )}`}
+                                        alt="Upload QR Code"
+                                        style={{ width: '200px', height: '200px', display: 'block' }}
+                                    />
+                                </div>
+
+                                <div style={{ fontSize: '0.8rem', color: '#94a3b8', background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+                                    <Info size={14} style={{ flexShrink: 0 }} />
+                                    <span>Session active. QR code is valid for temporary uploading.</span>
+                                </div>
+                            </div>
+                        )}
+
+                        <button 
+                            className="btn btn-primary" 
+                            style={{ width: '100%', marginTop: '24px', padding: '12px', borderRadius: '12px', fontWeight: 700, background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)', border: 'none', color: '#fff', cursor: 'pointer' }}
+                            onClick={handleCloseLocalQR}
+                        >
+                            Done
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {showPhotoPicker && (
+                <Modal
+                    isOpen={showPhotoPicker}
+                    onClose={() => setShowPhotoPicker(false)}
+                    title="Select Photo from Job Gallery"
+                    icon={Image}
+                    size="lg"
+                >
+                    <div style={{ padding: '8px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '16px', maxHeight: '450px', overflowY: 'auto', padding: '4px' }}>
+                            {galleryFiles?.map(file => (
+                                <div 
+                                    key={file.id} 
+                                    onClick={() => handleSelectPhoto(file)}
+                                    style={{ 
+                                        position: 'relative', 
+                                        borderRadius: '12px', 
+                                        overflow: 'hidden', 
+                                        background: '#fff', 
+                                        border: '1.5px solid #e2e8f0', 
+                                        aspectRatio: '1', 
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s',
+                                        boxShadow: '0 2px 6px rgba(0,0,0,0.05)'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.transform = 'translateY(-2px)';
+                                        e.currentTarget.style.borderColor = 'var(--accent)';
+                                        e.currentTarget.style.boxShadow = '0 6px 12px rgba(99, 102, 241, 0.15)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.transform = 'translateY(0)';
+                                        e.currentTarget.style.borderColor = '#e2e8f0';
+                                        e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.05)';
+                                    }}
+                                >
+                                    <img 
+                                        src={file.thumbnailLink?.replace('=s220', '=s600')} 
+                                        alt={file.name} 
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                                    />
+                                    <div style={{ 
+                                        position: 'absolute', 
+                                        bottom: 0, 
+                                        left: 0, 
+                                        right: 0, 
+                                        padding: '6px', 
+                                        background: 'linear-gradient(transparent, rgba(0,0,0,0.85))', 
+                                        color: '#fff', 
+                                        fontSize: '0.65rem', 
+                                        fontWeight: 600,
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis'
+                                    }} title={file.name}>
+                                        {file.name}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'flex-end' }}>
+                            <button 
+                                className="btn btn-secondary" 
+                                onClick={() => setShowPhotoPicker(false)}
+                                style={{ padding: '8px 16px' }}
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            )}
         </div>
     );
 };

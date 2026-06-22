@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import { 
     X, Plus, Search, Filter, ArrowLeft, Save, Trash2, FileText, 
     MoreHorizontal, ChevronDown, Package, Database, Edit, Ship, 
@@ -76,8 +77,153 @@ const CatalogForm = () => {
         supplier_id: '',
         purchase_date: new Date().toISOString().split('T')[0],
         last_purchase_price: '',
-        details: ''
+        details: '',
+        pic: '',
+        quantity: '',
+        bill_url: '',
+        remarks: ''
     });
+    const [uploadingBill, setUploadingBill] = useState(false);
+
+    useEffect(() => {
+        const runMigration = async () => {
+            const hasRun = localStorage.getItem('purchase_history_migration_v5');
+            if (!hasRun) {
+                console.log('Running purchase history schema migration via query RPC...');
+                const sql = `
+                    -- 1. Add columns to purchase_history
+                    ALTER TABLE public.purchase_history 
+                    ADD COLUMN IF NOT EXISTS pic text,
+                    ADD COLUMN IF NOT EXISTS quantity numeric,
+                    ADD COLUMN IF NOT EXISTS bill_url text,
+                    ADD COLUMN IF NOT EXISTS remarks text;
+
+                    -- 2. Trigger function for workflow_line_items stock adjust
+                    CREATE OR REPLACE FUNCTION public.handle_workflow_line_item_stock_adjust()
+                    RETURNS TRIGGER AS $$
+                    DECLARE
+                        v_doc_type text;
+                        v_job_id uuid;
+                        v_assigned_job_no text;
+                        v_item_id uuid;
+                        v_qty numeric;
+                        v_old_qty numeric;
+                        v_is_stock_reducing boolean;
+                    BEGIN
+                        IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+                            SELECT document_type, job_id, assigned_job_no
+                            INTO v_doc_type, v_job_id, v_assigned_job_no
+                            FROM public.workflow_documents
+                            WHERE id = NEW.document_id;
+                            
+                            v_item_id := NEW.item_id;
+                            v_qty := COALESCE(NEW.quantity, 0);
+                        ELSE
+                            SELECT document_type, job_id, assigned_job_no
+                            INTO v_doc_type, v_job_id, v_assigned_job_no
+                            FROM public.workflow_documents
+                            WHERE id = OLD.document_id;
+                            
+                            v_item_id := OLD.item_id;
+                            v_qty := 0;
+                        END IF;
+
+                        IF v_item_id IS NULL THEN
+                            RETURN COALESCE(NEW, OLD);
+                        END IF;
+
+                        v_is_stock_reducing := FALSE;
+                        IF v_doc_type = 'Job' THEN
+                            v_is_stock_reducing := TRUE;
+                        ELSIF v_doc_type = 'Tax Invoice' AND v_job_id IS NULL AND v_assigned_job_no IS NULL THEN
+                            v_is_stock_reducing := TRUE;
+                        END IF;
+
+                        IF NOT v_is_stock_reducing THEN
+                            RETURN COALESCE(NEW, OLD);
+                        END IF;
+
+                        IF TG_OP = 'UPDATE' THEN
+                            v_old_qty := COALESCE(OLD.quantity, 0);
+                        ELSIF TG_OP = 'DELETE' THEN
+                            v_old_qty := COALESCE(OLD.quantity, 0);
+                        ELSE
+                            v_old_qty := 0;
+                        END IF;
+
+                        IF (v_qty - v_old_qty) <> 0 THEN
+                            UPDATE public.catalog_items
+                            SET quantity = COALESCE(quantity, 0) - (v_qty - v_old_qty)
+                            WHERE id = v_item_id;
+                        END IF;
+
+                        RETURN COALESCE(NEW, OLD);
+                    END;
+                    $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+                    -- 3. Trigger for workflow_line_items
+                    DROP TRIGGER IF EXISTS trigger_workflow_line_item_stock_adjust ON public.workflow_line_items;
+                    CREATE TRIGGER trigger_workflow_line_item_stock_adjust
+                    AFTER INSERT OR UPDATE OR DELETE ON public.workflow_line_items
+                    FOR EACH ROW EXECUTE FUNCTION public.handle_workflow_line_item_stock_adjust();
+
+                    -- 4. Trigger function for purchase_history stock adjust
+                    CREATE OR REPLACE FUNCTION public.handle_purchase_history_stock_adjust()
+                    RETURNS TRIGGER AS $$
+                    DECLARE
+                        v_item_id uuid;
+                        v_qty numeric;
+                        v_old_qty numeric;
+                    BEGIN
+                        IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+                            v_item_id := NEW.item_id;
+                            v_qty := COALESCE(NEW.quantity, 0);
+                        ELSE
+                            v_item_id := OLD.item_id;
+                            v_qty := 0;
+                        END IF;
+
+                        IF v_item_id IS NULL THEN
+                            RETURN COALESCE(NEW, OLD);
+                        END IF;
+
+                        IF TG_OP = 'UPDATE' THEN
+                            v_old_qty := COALESCE(OLD.quantity, 0);
+                        ELSIF TG_OP = 'DELETE' THEN
+                            v_old_qty := COALESCE(OLD.quantity, 0);
+                        ELSE
+                            v_old_qty := 0;
+                        END IF;
+
+                        IF (v_qty - v_old_qty) <> 0 THEN
+                            UPDATE public.catalog_items
+                            SET quantity = COALESCE(quantity, 0) + (v_qty - v_old_qty)
+                            WHERE id = v_item_id;
+                        END IF;
+
+                        RETURN COALESCE(NEW, OLD);
+                    END;
+                    $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+                    -- 5. Trigger for purchase_history
+                    DROP TRIGGER IF EXISTS trigger_purchase_history_stock_adjust ON public.purchase_history;
+                    CREATE TRIGGER trigger_purchase_history_stock_adjust
+                    AFTER INSERT OR UPDATE OR DELETE ON public.purchase_history
+                    FOR EACH ROW EXECUTE FUNCTION public.handle_purchase_history_stock_adjust();
+                `;
+
+                const { data, error } = await supabase.rpc('query', { query_text: sql });
+                if (error) {
+                    console.error('Migration failed:', error);
+                } else {
+                    console.log('Migration successful:', data);
+                    localStorage.setItem('purchase_history_migration_v5', 'done');
+                }
+            }
+        };
+        runMigration();
+    }, []);
+
 
     useEffect(() => {
         // Restore pending data from before Google redirect
@@ -99,7 +245,7 @@ const CatalogForm = () => {
             checkDriveConnectivity();
         }
         fetchPartners();
-    }, [id, profile]);
+    }, [id, profile?.id]);
 
     const checkDriveConnectivity = async () => {
         const token = sessionStorage.getItem('google_contacts_token');
@@ -293,15 +439,73 @@ const CatalogForm = () => {
         setPurchaseFormData(prev => ({ ...prev, details: content }));
     };
 
+    const handleBillUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setUploadingBill(true);
+        try {
+            const url = await uploadFile('company_assets', `catalog/purchases/${id || 'temp'}`, file);
+            setPurchaseFormData(prev => ({ ...prev, bill_url: url }));
+            toast.success('Bill uploaded successfully!');
+        } catch (error) {
+            console.error('Bill upload failed:', error);
+            toast.error('Upload failed: ' + error.message);
+        } finally {
+            setUploadingBill(false);
+            if (e.target) e.target.value = '';
+        }
+    };
+
     const openNewPurchaseModal = () => {
         setPurchaseFormData({
             supplier_id: '',
             last_purchase_price: '',
             purchase_date: new Date().toISOString().split('T')[0],
-            details: ''
+            details: '',
+            pic: '',
+            quantity: '',
+            bill_url: '',
+            remarks: ''
         });
         setEditingPurchaseId(null);
         setShowPurchaseModal(true);
+    };
+
+    const getPurchaseValue = (purchase, fieldName) => {
+        if (purchase[fieldName] !== undefined && purchase[fieldName] !== null && purchase[fieldName] !== '') {
+            return purchase[fieldName];
+        }
+        try {
+            if (purchase.details) {
+                const parsed = typeof purchase.details === 'string' ? JSON.parse(purchase.details) : purchase.details;
+                return parsed[fieldName] || '';
+            }
+        } catch (e) {
+            // Ignore JSON parse error if details is plain text
+        }
+        return '';
+    };
+
+    const adjustCatalogStockForPurchase = async (oldQty, newQty) => {
+        // Skip client-side stock adjustment if database trigger is active (migration v5 succeeded)
+        const isMigrationSuccessful = localStorage.getItem('purchase_history_migration_v5') === 'done';
+        if (isMigrationSuccessful) {
+            console.log('Skipping client-side stock adjustment because DB trigger is active.');
+            return;
+        }
+
+        const netChange = newQty - oldQty;
+        if (netChange !== 0) {
+            const currentCatalogQty = parseFloat(formData.quantity || 0);
+            const targetQty = currentCatalogQty + netChange;
+            const { error } = await updateCatalogItem(id, { quantity: targetQty });
+            if (error) {
+                console.error('Failed to adjust catalog stock:', error);
+            } else {
+                setFormData(prev => ({ ...prev, quantity: targetQty }));
+            }
+        }
     };
 
     const openEditPurchaseModal = (purchase) => {
@@ -309,7 +513,11 @@ const CatalogForm = () => {
             supplier_id: purchase.supplier_id || '',
             last_purchase_price: purchase.last_purchase_price || '',
             purchase_date: purchase.purchase_date ? new Date(purchase.purchase_date).toISOString().split('T')[0] : '',
-            details: purchase.details || ''
+            details: purchase.details || '',
+            pic: getPurchaseValue(purchase, 'pic'),
+            quantity: getPurchaseValue(purchase, 'quantity'),
+            bill_url: getPurchaseValue(purchase, 'bill_url'),
+            remarks: getPurchaseValue(purchase, 'remarks')
         });
         setEditingPurchaseId(purchase.id);
         setShowPurchaseModal(true);
@@ -318,40 +526,119 @@ const CatalogForm = () => {
     const handleSavePurchase = async (e) => {
         e.preventDefault();
 
+        const qtyValue = purchaseFormData.quantity === '' ? null : parseFloat(purchaseFormData.quantity);
+        const priceValue = purchaseFormData.last_purchase_price === '' ? null : parseFloat(purchaseFormData.last_purchase_price);
+
         const dataToSave = {
             ...purchaseFormData,
             item_id: id,
-            last_purchase_price: purchaseFormData.last_purchase_price === '' ? null : parseFloat(purchaseFormData.last_purchase_price)
+            last_purchase_price: priceValue,
+            quantity: qtyValue
         };
 
         if (!editingPurchaseId && profile?.company_id) {
             dataToSave.company_id = profile.company_id;
         }
 
+        // We also duplicate the custom fields in details JSON for fallback compatibility
+        const detailsObj = {
+            pic: purchaseFormData.pic,
+            remarks: purchaseFormData.remarks,
+            bill_url: purchaseFormData.bill_url,
+            quantity: qtyValue
+        };
+        dataToSave.details = JSON.stringify(detailsObj);
+
+        let savedRecord = null;
+        let saveError = null;
+
         if (editingPurchaseId) {
-            const { error } = await updatePurchaseHistory(editingPurchaseId, dataToSave);
-            if (!error) {
+            // Try saving with columns first
+            const { data, error } = await updatePurchaseHistory(editingPurchaseId, dataToSave);
+            if (error) {
+                console.warn('Failed to update with columns, trying fallback:', error.message);
+                const fallbackPayload = {
+                    supplier_id: dataToSave.supplier_id,
+                    purchase_date: dataToSave.purchase_date,
+                    last_purchase_price: dataToSave.last_purchase_price,
+                    details: dataToSave.details,
+                    item_id: id
+                };
+                const fallbackRes = await updatePurchaseHistory(editingPurchaseId, fallbackPayload);
+                savedRecord = fallbackRes.data;
+                saveError = fallbackRes.error;
+            } else {
+                savedRecord = data;
+                saveError = error;
+            }
+
+            if (!saveError) {
+                // Adjust stock on success
+                const oldRecord = purchaseHistory.find(p => p.id === editingPurchaseId);
+                const oldQty = oldRecord ? parseFloat(getPurchaseValue(oldRecord, 'quantity') || 0) : 0;
+                const newQty = qtyValue || 0;
+                await adjustCatalogStockForPurchase(oldQty, newQty);
+
                 setShowPurchaseModal(false);
                 fetchPurchaseHistory();
+                fetchItemData();
+                toast.success('Purchase record updated successfully');
             } else {
-                alert('Failed to update purchase history');
+                toast.error('Failed to update purchase history');
             }
         } else {
-            const { error } = await createPurchaseHistory(dataToSave);
-            if (!error) {
+            // Try creating with columns first
+            const { data, error } = await createPurchaseHistory(dataToSave);
+            if (error) {
+                console.warn('Failed to create with columns, trying fallback:', error.message);
+                const fallbackPayload = {
+                    supplier_id: dataToSave.supplier_id,
+                    purchase_date: dataToSave.purchase_date,
+                    last_purchase_price: dataToSave.last_purchase_price,
+                    details: dataToSave.details,
+                    item_id: id
+                };
+                if (dataToSave.company_id) {
+                    fallbackPayload.company_id = dataToSave.company_id;
+                }
+                const fallbackRes = await createPurchaseHistory(fallbackPayload);
+                savedRecord = fallbackRes.data;
+                saveError = fallbackRes.error;
+            } else {
+                savedRecord = data;
+                saveError = error;
+            }
+
+            if (!saveError) {
+                // Adjust stock on success
+                const newQty = qtyValue || 0;
+                await adjustCatalogStockForPurchase(0, newQty);
+
                 setShowPurchaseModal(false);
                 fetchPurchaseHistory();
+                fetchItemData();
+                toast.success('Purchase record added successfully');
             } else {
-                alert('Failed to add purchase history');
+                toast.error('Failed to add purchase history');
             }
         }
     };
 
     const handleDeletePurchase = async (purchaseId) => {
         if (window.confirm('Delete this purchase record?')) {
+            const recordToDelete = purchaseHistory.find(p => p.id === purchaseId);
+            const oldQty = recordToDelete ? parseFloat(getPurchaseValue(recordToDelete, 'quantity') || 0) : 0;
+
             const { error } = await deletePurchaseHistory(purchaseId);
             if (!error) {
+                // Adjust stock (deducting the deleted quantity)
+                await adjustCatalogStockForPurchase(oldQty, 0);
+
                 fetchPurchaseHistory();
+                fetchItemData();
+                toast.success('Purchase record deleted');
+            } else {
+                toast.error('Failed to delete purchase record');
             }
         }
     };
@@ -812,41 +1099,69 @@ const CatalogForm = () => {
                                     <tr>
                                         <th>Date</th>
                                         <th>Supplier</th>
-                                        <th>Price/pc</th>
+                                        <th>PIC</th>
+                                        <th>Unit Price</th>
+                                        <th>Qty</th>
+                                        <th>Total</th>
+                                        <th>Bill</th>
+                                        <th>Remarks</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {purchaseHistory.length === 0 ? (
                                         <tr>
-                                            <td colSpan="4" style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-secondary)' }}>
+                                            <td colSpan="9" style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-secondary)' }}>
                                                 No purchase history recorded yet.
                                             </td>
                                         </tr>
                                     ) : (
-                                        purchaseHistory.map(purchase => (
-                                            <tr key={purchase.id}>
-                                                <td>{purchase.purchase_date ? new Date(purchase.purchase_date).toLocaleDateString() : '-'}</td>
-                                                <td>{purchase.supplier?.name || 'Unknown Supplier'}</td>
-                                                <td>{purchase.last_purchase_price ? `$${purchase.last_purchase_price}` : '-'}</td>
-                                                <td>
-                                                    <div style={{ display: 'flex', gap: '16px' }}>
-                                                        <button
-                                                            style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}
-                                                            onClick={() => openEditPurchaseModal(purchase)}
-                                                        >
-                                                            Edit
-                                                        </button>
-                                                        <button
-                                                            style={{ color: 'var(--danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}
-                                                            onClick={() => handleDeletePurchase(purchase.id)}
-                                                        >
-                                                            Delete
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))
+                                        purchaseHistory.map(purchase => {
+                                            const unitPrice = parseFloat(purchase.last_purchase_price) || 0;
+                                            const qty = parseFloat(getPurchaseValue(purchase, 'quantity')) || 0;
+                                            const total = unitPrice * qty;
+                                            const pic = getPurchaseValue(purchase, 'pic');
+                                            const billUrl = getPurchaseValue(purchase, 'bill_url');
+                                            const remarks = getPurchaseValue(purchase, 'remarks');
+                                            return (
+                                                <tr key={purchase.id}>
+                                                    <td>{purchase.purchase_date ? new Date(purchase.purchase_date).toLocaleDateString() : '-'}</td>
+                                                    <td>{purchase.supplier?.name || 'Unknown Supplier'}</td>
+                                                    <td>{pic || '-'}</td>
+                                                    <td>{purchase.last_purchase_price ? `$${unitPrice.toFixed(2)}` : '-'}</td>
+                                                    <td>{qty || '-'}</td>
+                                                    <td>{total > 0 ? `$${total.toFixed(2)}` : '-'}</td>
+                                                    <td>
+                                                        {billUrl ? (
+                                                            <a href={billUrl} target="_blank" rel="noreferrer" title="View Bill" style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center' }}>
+                                                                <FileText size={16} />
+                                                            </a>
+                                                        ) : (
+                                                            '-'
+                                                        )}
+                                                    </td>
+                                                    <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={remarks}>
+                                                        {remarks || '-'}
+                                                    </td>
+                                                    <td>
+                                                        <div style={{ display: 'flex', gap: '16px' }}>
+                                                            <button
+                                                                style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}
+                                                                onClick={() => openEditPurchaseModal(purchase)}
+                                                            >
+                                                                Edit
+                                                            </button>
+                                                            <button
+                                                                style={{ color: 'var(--danger)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}
+                                                                onClick={() => handleDeletePurchase(purchase.id)}
+                                                            >
+                                                                Delete
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })
                                     )}
                                 </tbody>
                             </table>
@@ -1119,7 +1434,7 @@ const CatalogForm = () => {
                                         </div>
 
                                         <div className="form-group">
-                                            <label className="form-label">Price per pc</label>
+                                            <label className="form-label">Price per pc / Unit Price</label>
                                             <div style={{ position: 'relative' }}>
                                                 <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}>$</span>
                                                 <input
@@ -1132,6 +1447,82 @@ const CatalogForm = () => {
                                                     onChange={handlePurchaseInputChange}
                                                     placeholder="0.00"
                                                 />
+                                            </div>
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label className="form-label">Quantity Purchased *</label>
+                                            <input
+                                                type="number"
+                                                className="form-input"
+                                                name="quantity"
+                                                value={purchaseFormData.quantity}
+                                                onChange={handlePurchaseInputChange}
+                                                required
+                                                placeholder="e.g. 10"
+                                            />
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label className="form-label">Person in Charge (PIC)</label>
+                                            <input
+                                                type="text"
+                                                className="form-input"
+                                                name="pic"
+                                                value={purchaseFormData.pic}
+                                                onChange={handlePurchaseInputChange}
+                                                placeholder="e.g. John Doe"
+                                            />
+                                        </div>
+
+                                        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                                            <label className="form-label">Remarks for Future Use</label>
+                                            <input
+                                                type="text"
+                                                className="form-input"
+                                                name="remarks"
+                                                value={purchaseFormData.remarks}
+                                                onChange={handlePurchaseInputChange}
+                                                placeholder="e.g. Batch #45, special discount applied"
+                                            />
+                                        </div>
+
+                                        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                                            <label className="form-label">Bill Image or PDF</label>
+                                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                                <input
+                                                    type="file"
+                                                    accept="image/*,application/pdf"
+                                                    onChange={handleBillUpload}
+                                                    style={{ display: 'none' }}
+                                                    id="bill-file-upload"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    className="btn btn-secondary"
+                                                    style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                                                    onClick={() => document.getElementById('bill-file-upload').click()}
+                                                    disabled={uploadingBill}
+                                                >
+                                                    {uploadingBill ? <Loader size={16} className="animate-spin" /> : <UploadCloud size={16} />}
+                                                    {uploadingBill ? 'Uploading...' : 'Choose File'}
+                                                </button>
+                                                
+                                                {purchaseFormData.bill_url && (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#f1f5f9', padding: '6px 12px', borderRadius: '8px' }}>
+                                                        <FileText size={16} color="var(--accent)" />
+                                                        <a href={purchaseFormData.bill_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.85rem', color: 'var(--accent)', fontWeight: 500, textDecoration: 'underline' }}>
+                                                            View Bill Attachment
+                                                        </a>
+                                                        <button
+                                                            type="button"
+                                                            style={{ border: 'none', background: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.85rem', marginLeft: '8px' }}
+                                                            onClick={() => setPurchaseFormData(prev => ({ ...prev, bill_url: '' }))}
+                                                        >
+                                                            Remove
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
 

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { UploadCloud, Camera, CheckCircle, Loader2, AlertCircle, HardDrive } from 'lucide-react';
-import { uploadFileToDrive } from '../../lib/driveService';
+import { UploadCloud, Camera, CheckCircle, Loader2, AlertCircle, HardDrive, RefreshCw, Trash2, X, Plus } from 'lucide-react';
+import { uploadFileToDrive, listFolderContent } from '../../lib/driveService';
 
 export default function UploadMediaGateway() {
     const [searchParams] = useSearchParams();
@@ -10,58 +10,217 @@ export default function UploadMediaGateway() {
     const token = searchParams.get('token');
     const jobName = searchParams.get('jobName') || 'Job Media';
 
-    const [uploading, setUploading] = useState(false);
-    const [progress, setProgress] = useState(0);
-    const [status, setStatus] = useState('idle'); // idle, uploading, success, error
-    const [errorMsg, setErrorMsg] = useState('');
-    const [uploadedFiles, setUploadedFiles] = useState([]);
+    const [initError, setInitError] = useState('');
+    const [queue, setQueue] = useState([]);
+    const [existingFiles, setExistingFiles] = useState(new Set());
+    const [duplicateAlert, setDuplicateAlert] = useState({ show: false, files: [] });
+    
+    const startedUploadsRef = useRef(new Set());
+    const controllersRef = useRef({});
 
     useEffect(() => {
         // Simple sanity check
         if (!folderId || !token) {
-            setStatus('error');
-            setErrorMsg('Invalid or expired upload link. Please scan the QR code again.');
+            setInitError('Invalid or expired upload link. Please scan the QR code again.');
         }
     }, [folderId, token]);
 
-    const handleUploadFiles = async (filesList) => {
-        const files = Array.from(filesList);
-        if (files.length === 0) return;
+    // Fetch existing files from Google Drive on load to prevent duplicates
+    useEffect(() => {
+        if (folderId && token) {
+            const fetchExisting = async () => {
+                try {
+                    const files = await listFolderContent(token, folderId);
+                    const fileNames = new Set(files.map(f => f.name));
+                    setExistingFiles(fileNames);
+                } catch (err) {
+                    console.error("Failed to fetch existing files from Drive:", err);
+                }
+            };
+            fetchExisting();
+        }
+    }, [folderId, token]);
 
-        setUploading(true);
-        setStatus('uploading');
-        setProgress(0);
-        setErrorMsg('');
+    // Cleanup object URLs on unmount
+    useEffect(() => {
+        return () => {
+            queue.forEach(item => {
+                if (item.previewUrl) {
+                    URL.revokeObjectURL(item.previewUrl);
+                }
+            });
+        };
+    }, []);
+
+    // Queue processor
+    useEffect(() => {
+        const activeUploads = queue.filter(item => item.status === 'uploading').length;
+        if (activeUploads >= 2) return; // Limit concurrency to 2 for mobile network stability
+
+        const nextPending = queue.find(item => item.status === 'pending' && !startedUploadsRef.current.has(item.id));
+        if (nextPending) {
+            startedUploadsRef.current.add(nextPending.id);
+            startUpload(nextPending.id, nextPending.file);
+        }
+    }, [queue]);
+
+    const startUpload = async (id, file) => {
+        // Set state to uploading
+        setQueue(prev => prev.map(item => 
+            item.id === id ? { ...item, status: 'uploading', progress: 0 } : item
+        ));
+
+        const controller = new AbortController();
+        controllersRef.current[id] = controller;
 
         try {
-            const uploadedNames = [];
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                // Direct call to drive service with token
-                const result = await uploadFileToDrive(token, file, { 
-                    folderId: folderId,
-                    onProgress: (pct) => {
-                        // Calculate overall progress
-                        const overallPct = Math.round(((i + pct / 100) / files.length) * 100);
-                        setProgress(overallPct);
-                    }
-                });
-                uploadedNames.push(file.name);
-            }
-            setUploadedFiles(prev => [...prev, ...uploadedNames]);
-            setStatus('success');
+            await uploadFileToDrive(token, file, { 
+                folderId: folderId,
+                signal: controller.signal
+            }, (pct) => {
+                setQueue(prev => prev.map(item => 
+                    item.id === id ? { ...item, progress: pct } : item
+                ));
+            });
+
+            // Mark success
+            setQueue(prev => prev.map(item => 
+                item.id === id ? { ...item, status: 'success', progress: 100 } : item
+            ));
+            // Add to existing files list
+            setExistingFiles(prev => {
+                const next = new Set(prev);
+                next.add(file.name);
+                return next;
+            });
         } catch (err) {
-            console.error('Mobile upload failed:', err);
-            setStatus('error');
-            setErrorMsg(err.message || 'Failed to upload files. Please try again.');
+            // Check if aborted
+            if (err.name === 'AbortError') {
+                console.log(`Upload for ${file.name} aborted.`);
+            } else {
+                console.error(`Upload failed for ${file.name}:`, err);
+                setQueue(prev => prev.map(item => 
+                    item.id === id ? { ...item, status: 'failed', errorMsg: err.message || 'Upload failed' } : item
+                ));
+            }
         } finally {
-            setUploading(false);
+            delete controllersRef.current[id];
+            startedUploadsRef.current.delete(id);
         }
     };
 
-    const triggerFileInput = (id) => {
-        document.getElementById(id).click();
+    const handleFilesSelected = (filesList) => {
+        const files = Array.from(filesList);
+        if (files.length === 0) return;
+
+        const duplicates = [];
+        const newItems = [];
+
+        files.forEach(file => {
+            // Check if already in queue (by name and size)
+            const inQueue = queue.some(item => item.name === file.name && item.size === file.size);
+            // Check if already in Drive (by name)
+            const isUploaded = existingFiles.has(file.name);
+
+            if (inQueue || isUploaded) {
+                duplicates.push(file.name);
+            } else {
+                const id = `${file.name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                let previewUrl = '';
+                if (file.type.startsWith('image/')) {
+                    previewUrl = URL.createObjectURL(file);
+                }
+                newItems.push({
+                    id,
+                    file,
+                    name: file.name,
+                    size: file.size,
+                    status: 'pending',
+                    progress: 0,
+                    errorMsg: '',
+                    previewUrl
+                });
+            }
+        });
+
+        if (duplicates.length > 0) {
+            setDuplicateAlert({
+                show: true,
+                files: duplicates
+            });
+        }
+
+        if (newItems.length > 0) {
+            setQueue(prev => [...prev, ...newItems]);
+        }
     };
+
+    const handleRetry = (id) => {
+        startedUploadsRef.current.delete(id);
+        setQueue(prev => prev.map(item => 
+            item.id === id ? { ...item, status: 'pending', progress: 0, errorMsg: '' } : item
+        ));
+    };
+
+    const handleRemove = (id) => {
+        const controller = controllersRef.current[id];
+        if (controller) {
+            controller.abort();
+            delete controllersRef.current[id];
+        }
+
+        const item = queue.find(f => f.id === id);
+        if (item && item.previewUrl) {
+            URL.revokeObjectURL(item.previewUrl);
+        }
+
+        setQueue(prev => prev.filter(f => f.id !== id));
+        startedUploadsRef.current.delete(id);
+    };
+
+    const handleRetryAllFailed = () => {
+        const failedItems = queue.filter(item => item.status === 'failed');
+        failedItems.forEach(item => {
+            handleRetry(item.id);
+        });
+    };
+
+    const handleCancelAllPending = () => {
+        const pendingOrUploading = queue.filter(item => item.status === 'pending' || item.status === 'uploading');
+        pendingOrUploading.forEach(item => {
+            handleRemove(item.id);
+        });
+    };
+
+    const handleClearCompleted = () => {
+        const completed = queue.filter(item => item.status === 'success');
+        completed.forEach(item => {
+            if (item.previewUrl) {
+                URL.revokeObjectURL(item.previewUrl);
+            }
+        });
+        setQueue(prev => prev.filter(item => item.status !== 'success'));
+    };
+
+    const triggerFileInput = (id) => {
+        const el = document.getElementById(id);
+        if (el) el.click();
+    };
+
+    const formatFileSize = (bytes) => {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    };
+
+    const succeededCount = queue.filter(item => item.status === 'success').length;
+    const failedCount = queue.filter(item => item.status === 'failed').length;
+    const uploadingCount = queue.filter(item => item.status === 'uploading').length;
+    const pendingCount = queue.filter(item => item.status === 'pending').length;
+    const totalCount = queue.length;
+    const isFinished = totalCount > 0 && uploadingCount === 0 && pendingCount === 0;
 
     return (
         <div style={{
@@ -86,7 +245,7 @@ export default function UploadMediaGateway() {
             {/* Main Panel */}
             <div style={{
                 width: '100%',
-                maxWidth: '450px',
+                maxWidth: '500px', // slightly wider for queue rows
                 background: 'rgba(30, 41, 59, 0.7)',
                 backdropFilter: 'blur(16px)',
                 borderRadius: '24px',
@@ -115,7 +274,7 @@ export default function UploadMediaGateway() {
                     </h2>
                 </div>
 
-                {status === 'error' && (
+                {initError ? (
                     <div style={{
                         background: 'rgba(239, 68, 68, 0.1)',
                         border: '1px solid rgba(239, 68, 68, 0.2)',
@@ -129,73 +288,72 @@ export default function UploadMediaGateway() {
                         marginBottom: '24px'
                     }}>
                         <AlertCircle size={32} />
-                        <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{errorMsg}</span>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{initError}</span>
                     </div>
-                )}
-
-                {status === 'uploading' && (
-                    <div style={{ padding: '24px 0' }}>
-                        <Loader2 size={48} className="animate-spin" style={{ margin: '0 auto 20px', color: '#38bdf8' }} />
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '8px' }}>Uploading to Google Drive...</h3>
-                        <p style={{ fontSize: '0.85rem', color: '#94a3b8', marginBottom: '20px' }}>Please keep this page open</p>
-                        
-                        <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden', marginBottom: '8px' }}>
-                            <div style={{ width: `${progress}%`, height: '100%', background: 'linear-gradient(to right, #38bdf8, #818cf8)', transition: 'width 0.3s ease' }} />
-                        </div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#38bdf8' }}>{progress}% Complete</div>
-                    </div>
-                )}
-
-                {status === 'success' && (
-                    <div style={{ padding: '16px 0' }}>
-                        <div style={{
-                            width: '64px',
-                            height: '64px',
-                            borderRadius: '50%',
-                            background: 'rgba(34, 197, 94, 0.1)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            margin: '0 auto 16px',
-                            color: '#4ade80',
-                            border: '2px solid rgba(34, 197, 94, 0.2)'
-                        }}>
-                            <CheckCircle size={36} />
-                        </div>
-                        <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#f1f5f9', marginBottom: '8px' }}>Upload Successful!</h3>
-                        <p style={{ fontSize: '0.85rem', color: '#94a3b8', marginBottom: '24px' }}>Files are saved directly to the project folder.</p>
-                        
-                        <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '12px', padding: '12px', textAlign: 'left', marginBottom: '24px', maxHeight: '120px', overflowY: 'auto' }}>
-                            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '6px' }}>Uploaded Files:</div>
-                            {uploadedFiles.map((f, idx) => (
-                                <div key={idx} style={{ fontSize: '0.8rem', color: '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', padding: '2px 0' }}>
-                                    ✓ {f}
+                ) : (
+                    <div>
+                        {duplicateAlert.show && (
+                            <div style={{
+                                background: 'rgba(245, 158, 11, 0.1)',
+                                border: '1px solid rgba(245, 158, 11, 0.25)',
+                                borderRadius: '16px',
+                                padding: '16px',
+                                color: '#fef08a',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'flex-start',
+                                gap: '8px',
+                                marginBottom: '20px',
+                                textAlign: 'left',
+                                position: 'relative'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+                                    <AlertCircle size={20} color="#eab308" style={{ flexShrink: 0 }} />
+                                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#facc15', flex: 1 }}>
+                                        Duplicate Files Skipped ({duplicateAlert.files.length})
+                                    </span>
+                                    <button 
+                                        onClick={() => setDuplicateAlert({ show: false, files: [] })}
+                                        style={{
+                                            background: 'transparent',
+                                            border: 'none',
+                                            color: '#94a3b8',
+                                            cursor: 'pointer',
+                                            padding: '2px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                    >
+                                        <X size={16} />
+                                    </button>
                                 </div>
-                            ))}
-                        </div>
+                                <p style={{ fontSize: '0.75rem', color: '#cbd5e1', margin: 0 }}>
+                                    Skipped because they are already uploaded or pending upload:
+                                </p>
+                                <div style={{ 
+                                    maxHeight: '80px', 
+                                    overflowY: 'auto', 
+                                    width: '100%', 
+                                    fontSize: '0.75rem', 
+                                    color: '#94a3b8', 
+                                    background: 'rgba(0,0,0,0.15)',
+                                    padding: '8px',
+                                    borderRadius: '8px',
+                                    marginTop: '4px'
+                                }} className="custom-scrollbar">
+                                    {duplicateAlert.files.map((name, idx) => (
+                                        <div key={idx} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            • {name}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
-                        <button 
-                            onClick={() => setStatus('idle')}
-                            style={{
-                                width: '100%',
-                                padding: '14px',
-                                borderRadius: '14px',
-                                border: '1px solid rgba(255,255,255,0.08)',
-                                background: 'rgba(255,255,255,0.05)',
-                                color: '#f8fafc',
-                                fontWeight: 700,
-                                fontSize: '0.95rem',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s'
-                            }}
-                        >
-                            Upload More Photos
-                        </button>
-                    </div>
-                )}
-
-                {status === 'idle' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        {queue.length === 0 ? (
+                            /* EMPTY QUEUE: SHOW INITIAL BUTTONS */
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                         {/* Camera Capture Card */}
                         <div 
                             onClick={() => triggerFileInput('camera-input')}
@@ -232,7 +390,7 @@ export default function UploadMediaGateway() {
                                 capture="environment" 
                                 multiple 
                                 style={{ display: 'none' }} 
-                                onChange={(e) => handleUploadFiles(e.target.files)} 
+                                onChange={(e) => handleFilesSelected(e.target.files)} 
                             />
                         </div>
 
@@ -271,9 +429,319 @@ export default function UploadMediaGateway() {
                                 accept="image/*" 
                                 multiple 
                                 style={{ display: 'none' }} 
-                                onChange={(e) => handleUploadFiles(e.target.files)} 
+                                onChange={(e) => handleFilesSelected(e.target.files)} 
                             />
                         </div>
+                    </div>
+                ) : (
+                    /* QUEUE LIST VIEW */
+                    <div>
+                        {/* Summary Header */}
+                        <div style={{ marginBottom: '20px', textAlign: 'left' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#cbd5e1' }}>
+                                    {isFinished 
+                                        ? `Upload complete (${succeededCount}/${totalCount} succeeded)`
+                                        : `Uploading: ${succeededCount + uploadingCount}/${totalCount} files`
+                                    }
+                                </span>
+                                <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#38bdf8' }}>
+                                    {Math.round((succeededCount / totalCount) * 100)}%
+                                </span>
+                            </div>
+                            <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden', marginBottom: '16px' }}>
+                                <div style={{ 
+                                    width: `${Math.round((succeededCount / totalCount) * 100)}%`, 
+                                    height: '100%', 
+                                    background: failedCount > 0 ? 'linear-gradient(to right, #f43f5e, #e11d48)' : 'linear-gradient(to right, #38bdf8, #818cf8)', 
+                                    transition: 'width 0.3s ease' 
+                                }} />
+                            </div>
+
+                            {/* Global Action Toolbar */}
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                <button 
+                                    onClick={() => triggerFileInput('gallery-input-more')}
+                                    style={{
+                                        padding: '6px 12px',
+                                        borderRadius: '8px',
+                                        background: 'rgba(56, 189, 248, 0.1)',
+                                        color: '#38bdf8',
+                                        border: '1px solid rgba(56, 189, 248, 0.2)',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 700,
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '4px'
+                                    }}
+                                >
+                                    <Plus size={14} /> Add Photos
+                                </button>
+
+                                {failedCount > 0 && (
+                                    <button 
+                                        onClick={handleRetryAllFailed}
+                                        style={{
+                                            padding: '6px 12px',
+                                            borderRadius: '8px',
+                                            background: 'rgba(244, 63, 94, 0.15)',
+                                            color: '#fb7185',
+                                            border: '1px solid rgba(244, 63, 94, 0.25)',
+                                            fontSize: '0.8rem',
+                                            fontWeight: 700,
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px'
+                                        }}
+                                    >
+                                        <RefreshCw size={14} /> Retry Failed
+                                    </button>
+                                )}
+
+                                {succeededCount > 0 && (
+                                    <button 
+                                        onClick={handleClearCompleted}
+                                        style={{
+                                            padding: '6px 12px',
+                                            borderRadius: '8px',
+                                            background: 'rgba(255,255,255,0.05)',
+                                            color: '#94a3b8',
+                                            border: '1px solid rgba(255,255,255,0.1)',
+                                            fontSize: '0.8rem',
+                                            fontWeight: 700,
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px'
+                                        }}
+                                    >
+                                        <Trash2 size={14} /> Clear Done
+                                    </button>
+                                )}
+
+                                {(uploadingCount > 0 || pendingCount > 0) && (
+                                    <button 
+                                        onClick={handleCancelAllPending}
+                                        style={{
+                                            padding: '6px 12px',
+                                            borderRadius: '8px',
+                                            background: 'rgba(255,255,255,0.05)',
+                                            color: '#cbd5e1',
+                                            border: '1px solid rgba(255,255,255,0.1)',
+                                            fontSize: '0.8rem',
+                                            fontWeight: 700,
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px'
+                                        }}
+                                    >
+                                        <X size={14} /> Cancel All
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Hidden file input for adding more */}
+                            <input 
+                                id="gallery-input-more" 
+                                type="file" 
+                                accept="image/*" 
+                                multiple 
+                                style={{ display: 'none' }} 
+                                onChange={(e) => handleFilesSelected(e.target.files)} 
+                            />
+                        </div>
+
+                        {/* List container */}
+                        <div style={{ maxHeight: '350px', overflowY: 'auto', paddingRight: '4px', textAlign: 'left' }} className="custom-scrollbar">
+                            {queue.map(item => (
+                                <div key={item.id} style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '12px',
+                                    background: 'rgba(15, 23, 42, 0.3)',
+                                    borderRadius: '16px',
+                                    padding: '12px',
+                                    border: '1px solid rgba(255,255,255,0.05)',
+                                    marginBottom: '10px',
+                                    position: 'relative',
+                                    overflow: 'hidden'
+                                }}>
+                                    {/* Background progress indicator overlay for active uploads */}
+                                    {item.status === 'uploading' && (
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: 0,
+                                            left: 0,
+                                            bottom: 0,
+                                            width: `${item.progress}%`,
+                                            background: 'rgba(56, 189, 248, 0.05)',
+                                            transition: 'width 0.2s ease',
+                                            zIndex: 0,
+                                            pointerEvents: 'none'
+                                        }} />
+                                    )}
+
+                                    {/* Thumbnail Preview */}
+                                    <div style={{ position: 'relative', zIndex: 1 }}>
+                                        {item.previewUrl ? (
+                                            <img 
+                                                src={item.previewUrl} 
+                                                alt="preview" 
+                                                style={{
+                                                    width: '48px',
+                                                    height: '48px',
+                                                    objectFit: 'cover',
+                                                    borderRadius: '8px',
+                                                    background: '#0f172a',
+                                                    border: '1px solid rgba(255,255,255,0.1)'
+                                                }} 
+                                            />
+                                        ) : (
+                                            <div style={{
+                                                width: '48px',
+                                                height: '48px',
+                                                borderRadius: '8px',
+                                                background: 'rgba(255,255,255,0.05)',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                color: '#64748b',
+                                                border: '1px solid rgba(255,255,255,0.1)'
+                                            }}>
+                                                <UploadCloud size={20} />
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* File Info */}
+                                    <div style={{ flex: 1, minWidth: 0, position: 'relative', zIndex: 1 }}>
+                                        <div style={{ 
+                                            fontSize: '0.85rem', 
+                                            fontWeight: 700, 
+                                            color: '#f1f5f9',
+                                            whiteSpace: 'nowrap',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis'
+                                        }}>
+                                            {item.name}
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px', flexWrap: 'wrap' }}>
+                                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                                {formatFileSize(item.size)}
+                                            </span>
+                                            
+                                            {/* Status badge */}
+                                            {item.status === 'pending' && (
+                                                <span style={{ fontSize: '0.7rem', color: '#94a3b8', background: 'rgba(148, 163, 184, 0.1)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                                                    Pending
+                                                </span>
+                                            )}
+                                            {item.status === 'uploading' && (
+                                                <span style={{ fontSize: '0.7rem', color: '#38bdf8', background: 'rgba(56, 189, 248, 0.1)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                                    <Loader2 size={10} className="animate-spin" /> {item.progress}%
+                                                </span>
+                                            )}
+                                            {item.status === 'success' && (
+                                                <span style={{ fontSize: '0.7rem', color: '#4ade80', background: 'rgba(34, 197, 94, 0.1)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                                                    Success
+                                                </span>
+                                            )}
+                                            {item.status === 'failed' && (
+                                                <span style={{ fontSize: '0.7rem', color: '#fca5a5', background: 'rgba(239, 68, 68, 0.1)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }} title={item.errorMsg}>
+                                                    Failed
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {/* Inline Progress Bar (only during uploading) */}
+                                        {item.status === 'uploading' && (
+                                            <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden', marginTop: '6px' }}>
+                                                <div style={{ width: `${item.progress}%`, height: '100%', background: '#38bdf8', transition: 'width 0.2s ease' }} />
+                                            </div>
+                                        )}
+                                        {item.status === 'failed' && (
+                                            <div style={{ fontSize: '0.75rem', color: '#fca5a5', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {item.errorMsg}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Action Buttons */}
+                                    <div style={{ display: 'flex', gap: '6px', zIndex: 1 }}>
+                                        {item.status === 'failed' && (
+                                            <button 
+                                                onClick={() => handleRetry(item.id)}
+                                                style={{
+                                                    background: 'rgba(56, 189, 248, 0.1)',
+                                                    border: 'none',
+                                                    color: '#38bdf8',
+                                                    borderRadius: '8px',
+                                                    width: '32px',
+                                                    height: '32px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s'
+                                                }}
+                                                title="Retry"
+                                            >
+                                                <RefreshCw size={14} />
+                                            </button>
+                                        )}
+                                        
+                                        {(item.status === 'pending' || item.status === 'uploading') && (
+                                            <button 
+                                                onClick={() => handleRemove(item.id)}
+                                                style={{
+                                                    background: 'rgba(255, 255, 255, 0.05)',
+                                                    border: 'none',
+                                                    color: '#94a3b8',
+                                                    borderRadius: '8px',
+                                                    width: '32px',
+                                                    height: '32px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s'
+                                                }}
+                                                title="Cancel"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        )}
+
+                                        {(item.status === 'success' || item.status === 'failed') && (
+                                            <button 
+                                                onClick={() => handleRemove(item.id)}
+                                                style={{
+                                                    background: 'rgba(239, 68, 68, 0.05)',
+                                                    border: 'none',
+                                                    color: '#fca5a5',
+                                                    borderRadius: '8px',
+                                                    width: '32px',
+                                                    height: '32px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s'
+                                                }}
+                                                title="Remove"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
                     </div>
                 )}
             </div>

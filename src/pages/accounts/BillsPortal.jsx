@@ -43,8 +43,8 @@ import {
     CircleDot
 } from 'lucide-react';
 import { Modal, QuickExpenseAdd } from '../../components/workflow/QuickAddForms';
-import { useNavigate } from 'react-router-dom';
-import { extractBillWithOpenAI } from '../../lib/openAiVisionService';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { extractBillWithGroq } from '../../lib/openAiVisionService';
 import { connectGoogleAPI, isTokenValid, performOCR } from '../../lib/googleAuthService';
 import toast from 'react-hot-toast';
 
@@ -52,7 +52,7 @@ import toast from 'react-hot-toast';
 const DriveDocPreview = ({ fileId, accessToken, fileName, style, className }) => {
     const [src, setSrc] = useState('');
     const [loading, setLoading] = useState(true);
-    const isPdf = fileName?.toLowerCase().endsWith('.pdf');
+    const isPdf = fileName?.toLowerCase().endsWith('.pdf') || fileName?.toLowerCase().includes('.pdf');
 
     useEffect(() => {
         if (!fileId || !accessToken) return;
@@ -113,6 +113,8 @@ const DriveDocPreview = ({ fileId, accessToken, fileName, style, className }) =>
 export default function BillsPortal() {
     const { profile } = useAuth();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const tabParam = searchParams.get('tab');
     
     // Auth & Drive Configuration
     const [googleAccessToken, setGoogleAccessToken] = useState('');
@@ -125,7 +127,7 @@ export default function BillsPortal() {
     const [bills, setBills] = useState([]);
     const [partners, setPartners] = useState([]);
     const [jobs, setJobs] = useState([]);
-    const [activeTab, setActiveTab] = useState('pending'); // 'all', 'unpaid', 'paid', 'scanned', 'pending'
+    const [activeTab, setActiveTab] = useState(tabParam || 'pending'); // 'all', 'unpaid', 'paid', 'scanned', 'pending'
     const [selectedDraftIds, setSelectedDraftIds] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -168,6 +170,13 @@ export default function BillsPortal() {
     }, [activeTab]);
 
     useEffect(() => {
+        const tab = searchParams.get('tab');
+        if (tab) {
+            setActiveTab(tab);
+        }
+    }, [searchParams]);
+
+    useEffect(() => {
         if (profile?.company_id) {
             fetchData();
         }
@@ -181,7 +190,7 @@ export default function BillsPortal() {
                 getPartners(profile.company_id),
                 supabase
                     .from('workflow_documents')
-                    .select('id, document_no, subject, partners(name), vessels!vessel_id(vessel_name)')
+                    .select('id, document_no, subject, drive_folder_id, gdrive_folder_id, partners(name), vessels!vessel_id(vessel_name)')
                     .eq('company_id', profile.company_id)
                     .eq('document_type', 'Job')
                     .order('document_no', { ascending: false })
@@ -217,6 +226,15 @@ export default function BillsPortal() {
 
     const handleConnectGoogle = () => {
         connectGoogleAPI('drive_bill_sync');
+    };
+
+    const handleOpenFolder = () => {
+        if (!folderLink) return;
+        let targetUrl = folderLink.trim();
+        if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+            targetUrl = `https://drive.google.com/drive/folders/${targetUrl}`;
+        }
+        window.open(targetUrl, '_blank');
     };
 
     const getDriveFileId = (bill) => {
@@ -382,8 +400,8 @@ export default function BillsPortal() {
                                 const extractedText = await performOCR(fileObj);
                                 if (!extractedText) throw new Error('No text content resolved from PDF file.');
                                 
-                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Submitting PDF content to OpenAI OCR parser (Attempt ${attempt}/3)...`, 'ai');
-                                result = await extractBillWithOpenAI(extractedText, true);
+                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Submitting PDF content to Groq OCR parser (Attempt ${attempt}/3)...`, 'ai');
+                                result = await extractBillWithGroq(extractedText, true);
                             } else {
                                 addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Converting image to Base64...`, 'info');
                                 const base64 = await new Promise((resolve, reject) => {
@@ -393,8 +411,8 @@ export default function BillsPortal() {
                                     reader.readAsDataURL(blob);
                                 });
 
-                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Submitting image to OpenAI Vision API (Attempt ${attempt}/3)...`, 'ai');
-                                result = await extractBillWithOpenAI(base64, false);
+                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Submitting image to Groq Vision API (Attempt ${attempt}/3)...`, 'ai');
+                                result = await extractBillWithGroq(base64, false);
                             }
                             success = true;
                             break;
@@ -417,7 +435,7 @@ export default function BillsPortal() {
                     }
 
                     if (!success || !result) {
-                        throw new Error('OpenAI Vision OCR failed to return structured data.');
+                        throw new Error('Groq Vision OCR failed to return structured data.');
                     }
 
                     addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Extracted Details: Vendor: "${result.supplier_name}", Invoice No: "${result.invoice_no}", Total: ${result.grand_total} ${result.currency || 'SGD'}`, 'ai');
@@ -486,7 +504,7 @@ export default function BillsPortal() {
                         bill_url: publicUrl,
                         attachment_url: publicUrl,
                         gdrive_file_id: file.id,
-                        attachment_note: `GoogleDrive File ID: ${file.id}. UEN: ${result.uen || ''}. Address: ${result.address || ''}. Phone: ${result.phone || ''}. Email: ${result.email || ''}. Website: ${result.website || ''}. Extracted via OpenAI Vision OCR.`
+                        attachment_note: `GoogleDrive File ID: ${file.id}. UEN: ${result.uen || ''}. Address: ${result.address || ''}. Phone: ${result.phone || ''}. Email: ${result.email || ''}. Website: ${result.website || ''}. Extracted via Groq Vision OCR.`
                     };
 
                     const { data: savedData, error: dbErr } = await supabase
@@ -545,6 +563,10 @@ export default function BillsPortal() {
                 const s = partners.find(p => p.id === value);
                 if (s) updated.supplier_name = s.name;
             }
+            if (field === 'job_id') {
+                const j = jobs.find(job => job.id === value);
+                updated.job_no = j ? j.document_no : '';
+            }
             if (['amount', 'gst_rate'].includes(field)) {
                 updated = calculateTotals(updated);
             }
@@ -554,6 +576,13 @@ export default function BillsPortal() {
 
     const handleOpenReview = (bill) => {
         setSelectedDraft(bill);
+        
+        let initialJobNo = bill.job_no || '';
+        if (!initialJobNo && bill.job_id && jobs.length > 0) {
+            const j = jobs.find(job => job.id === bill.job_id);
+            if (j) initialJobNo = j.document_no;
+        }
+
         const initialBill = {
             id: bill.id,
             supplier_id: bill.supplier_id || '',
@@ -566,6 +595,7 @@ export default function BillsPortal() {
             gst_amount: bill.gst_amount || 0,
             grand_total: bill.grand_total || 0,
             job_id: bill.job_id || '',
+            job_no: initialJobNo,
             bill_url: bill.bill_url || bill.attachment_url || '',
             gdrive_file_id: getDriveFileId(bill),
             attachment_note: bill.attachment_note || ''
@@ -821,7 +851,10 @@ export default function BillsPortal() {
                 <div style={{ display: 'flex', gap: '12px' }}>
                     <button 
                         className="btn btn-secondary" 
-                        onClick={() => setActiveTab('scanned')}
+                        onClick={() => {
+                            setActiveTab('scanned');
+                            navigate('/accounts/bills?tab=scanned', { replace: true });
+                        }}
                         style={{ 
                             display: 'flex', 
                             alignItems: 'center', 
@@ -847,7 +880,7 @@ export default function BillsPortal() {
                         <FolderOpen size={18} style={{ color: '#3b82f6' }} /> Google Drive Folder
                     </a>
                     <a 
-                        href="https://platform.openai.com/home" 
+                        href="https://console.groq.com/keys" 
                         target="_blank" 
                         rel="noreferrer" 
                         className="btn btn-secondary" 
@@ -858,7 +891,7 @@ export default function BillsPortal() {
                             textDecoration: 'none' 
                         }}
                     >
-                        <Sparkles size={18} style={{ color: '#10b981' }} /> OpenAI Balance
+                        <Sparkles size={18} style={{ color: '#f59e0b' }} /> Groq Console
                     </a>
                     <button className="btn btn-secondary" onClick={() => navigate('/gst-reporting')}>
                         <TrendingUp size={18} /> GST Summary
@@ -931,7 +964,14 @@ export default function BillsPortal() {
                         {['all', 'unpaid', 'paid', 'scanned', 'pending'].map(tab => (
                             <button 
                                 key={tab}
-                                onClick={() => setActiveTab(tab)}
+                                onClick={() => {
+                                    setActiveTab(tab);
+                                    if (tab === 'scanned') {
+                                        navigate('/accounts/bills?tab=scanned', { replace: true });
+                                    } else {
+                                        navigate('/accounts/bills', { replace: true });
+                                    }
+                                }}
                                 style={{ 
                                     background: 'none', 
                                     border: 'none', 
@@ -1251,6 +1291,27 @@ export default function BillsPortal() {
 
                                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
                                             <button 
+                                                onClick={handleOpenFolder}
+                                                disabled={!folderLink}
+                                                style={{ 
+                                                    background: '#fff', 
+                                                    border: '1px solid #6366f1', 
+                                                    color: '#6366f1', 
+                                                    padding: '10px 16px', 
+                                                    borderRadius: '8px', 
+                                                    fontWeight: 600, 
+                                                    cursor: 'pointer', 
+                                                    display: 'flex', 
+                                                    alignItems: 'center', 
+                                                    gap: '6px',
+                                                    transition: 'all 0.2s'
+                                                }}
+                                                onMouseOver={e => e.currentTarget.style.background = 'rgba(99, 102, 241, 0.05)'}
+                                                onMouseOut={e => e.currentTarget.style.background = '#fff'}
+                                            >
+                                                <ExternalLink size={16} /> Open Folder
+                                            </button>
+                                            <button 
                                                 onClick={handleConnectGoogle}
                                                 style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#475569', padding: '10px 16px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
                                             >
@@ -1364,7 +1425,7 @@ export default function BillsPortal() {
                                                 {/* Visual File Preview */}
                                                 <div style={{ position: 'relative', height: '160px', background: '#0f172a', display: 'flex', borderBottom: '1px solid #e2e8f0' }}>
                                                     {driveId && googleAccessToken ? (
-                                                        <DriveDocPreview fileId={driveId} accessToken={googleAccessToken} fileName={draft.supplier_name} style={{ width: '100%', height: '100%' }} />
+                                                        <DriveDocPreview fileId={driveId} accessToken={googleAccessToken} fileName={draft.bill_url || draft.attachment_url || draft.supplier_name} style={{ width: '100%', height: '100%' }} />
                                                     ) : (
                                                         <div style={{ margin: 'auto', textAlign: 'center', color: '#475569', fontSize: '0.85rem' }}>
                                                             <FileText size={32} style={{ margin: '0 auto 8px auto', display: 'block', color: '#64748b' }} />
@@ -1461,7 +1522,7 @@ export default function BillsPortal() {
                                     <DriveDocPreview 
                                         fileId={editedBill.gdrive_file_id} 
                                         accessToken={googleAccessToken} 
-                                        fileName={selectedDraft.supplier_name} 
+                                        fileName={selectedDraft.bill_url || selectedDraft.attachment_url || selectedDraft.supplier_name} 
                                         style={{ width: '100%', height: '100%' }} 
                                     />
                                 ) : (

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getPartners, getPendingPartners, savePartner, saveContact, deletePartner } from '../lib/store';
-import { extractCardWithOpenAI } from '../lib/openAiVisionService';
+import { extractCardWithGroq } from '../lib/openAiVisionService';
 import { connectGoogleAPI, isTokenValid } from '../lib/googleAuthService';
 import toast from 'react-hot-toast';
 import ReactQuill from 'react-quill-new';
@@ -103,6 +103,7 @@ export default function AiDriveCardParser() {
     name: '', email: '', handphone: '', post: 'Representative', department: 'Operations'
   });
   const [isSavingApproval, setIsSavingApproval] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Load Tokens and Data
   useEffect(() => {
@@ -334,8 +335,8 @@ export default function AiDriveCardParser() {
 
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-              addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Submitting to OpenAI Vision OCR (Attempt ${attempt}/3)...`, 'ai');
-              result = await extractCardWithOpenAI(base64);
+              addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Submitting to Groq Vision OCR (Attempt ${attempt}/3)...`, 'ai');
+              result = await extractCardWithGroq(base64);
               success = true;
               break;
             } catch (apiError) {
@@ -357,7 +358,7 @@ export default function AiDriveCardParser() {
           }
 
           if (!success || !result) {
-            throw new Error('OpenAI Vision OCR failed to return structured data.');
+            throw new Error('Groq Vision OCR failed to return structured data.');
           }
 
           addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Structured data resolved. Company: "${result.partner.name}". Person: "${result.contact.name}".`, 'ai');
@@ -389,7 +390,7 @@ export default function AiDriveCardParser() {
             phone1: result.partner.phone || '',
             email1: result.partner.email || '',
             uen: result.partner.uen || '',
-            info: `GoogleDrive File ID: ${file.id}. Extracted via OpenAI Vision OCR.`,
+            info: `GoogleDrive File ID: ${file.id}. Extracted via Groq Vision OCR.`,
             company_id: profile?.company_id,
             status: 'pending_approval',
             types: result.partner.types || ['Supplier'],
@@ -566,7 +567,7 @@ export default function AiDriveCardParser() {
         </div>
         <div>
           <a 
-            href="https://platform.openai.com/home" 
+            href="https://console.groq.com/keys" 
             target="_blank" 
             rel="noreferrer" 
             className="btn btn-secondary" 
@@ -585,7 +586,7 @@ export default function AiDriveCardParser() {
               boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
             }}
           >
-            <Sparkles size={16} style={{ color: '#10b981' }} /> OpenAI Balance
+            <Sparkles size={16} style={{ color: '#f59e0b' }} /> Groq Console
           </a>
         </div>
       </header>
@@ -737,7 +738,7 @@ export default function AiDriveCardParser() {
       {/* DASHBOARD: Visual Review Cards Queue */}
       <main style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
         
-        {/* Navigation Tabs */}
+        {/* Navigation Tabs and Search Bar */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '16px', marginBottom: '24px' }}>
           <div style={{ display: 'flex', gap: '24px' }}>
             <button 
@@ -765,6 +766,27 @@ export default function AiDriveCardParser() {
               </span>
             </button>
           </div>
+
+          <div style={{ position: 'relative', width: '300px' }}>
+            <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+            <input 
+              type="text" 
+              placeholder="Search by name, contact, UEN..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ 
+                width: '100%', 
+                padding: '10px 12px 10px 40px', 
+                borderRadius: '10px', 
+                border: '1px solid #e2e8f0', 
+                fontSize: '0.85rem',
+                outline: 'none',
+                transition: 'border-color 0.2s'
+              }}
+              onFocus={e => e.target.style.borderColor = '#7c3aed'}
+              onBlur={e => e.target.style.borderColor = '#e2e8f0'}
+            />
+          </div>
         </div>
 
         {/* Tab Content: Review Queue List */}
@@ -780,9 +802,43 @@ export default function AiDriveCardParser() {
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#475569', margin: '0 0 4px 0' }}>Perfect Sync! Review Queue Empty</h3>
               <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>All business cards in Google Drive have been pre-indexed and approved. Click "Sync Folder" to scan for new uploads!</p>
             </div>
+          ) : pendingDrafts.filter(draft => {
+            const rep = draft.contacts?.[0] || {};
+            const query = searchQuery.toLowerCase();
+            return (
+              (draft.name || '').toLowerCase().includes(query) ||
+              (draft.address || '').toLowerCase().includes(query) ||
+              (draft.email1 || '').toLowerCase().includes(query) ||
+              (draft.phone1 || '').toLowerCase().includes(query) ||
+              (draft.uen || '').toLowerCase().includes(query) ||
+              (rep.name || '').toLowerCase().includes(query) ||
+              (rep.post || '').toLowerCase().includes(query) ||
+              (rep.email || '').toLowerCase().includes(query) ||
+              (rep.handphone || '').toLowerCase().includes(query)
+            );
+          }).length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '64px 32px', background: '#fafafb', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
+              <Search size={48} color="#94a3b8" style={{ margin: '0 auto 16px auto' }} />
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#475569', margin: '0 0 4px 0' }}>No Cards Found</h3>
+              <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>No pending drafts match your search query "{searchQuery}".</p>
+            </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
-              {pendingDrafts.map((draft) => {
+              {pendingDrafts.filter(draft => {
+                const rep = draft.contacts?.[0] || {};
+                const query = searchQuery.toLowerCase();
+                return (
+                  (draft.name || '').toLowerCase().includes(query) ||
+                  (draft.address || '').toLowerCase().includes(query) ||
+                  (draft.email1 || '').toLowerCase().includes(query) ||
+                  (draft.phone1 || '').toLowerCase().includes(query) ||
+                  (draft.uen || '').toLowerCase().includes(query) ||
+                  (rep.name || '').toLowerCase().includes(query) ||
+                  (rep.post || '').toLowerCase().includes(query) ||
+                  (rep.email || '').toLowerCase().includes(query) ||
+                  (rep.handphone || '').toLowerCase().includes(query)
+                );
+              }).map((draft) => {
                 const driveId = getDriveFileId(draft.info);
                 const rep = draft.contacts?.[0] || {};
                 
@@ -848,39 +904,75 @@ export default function AiDriveCardParser() {
           )
         ) : (
           /* Active Partners List */
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
-            {activeDirectoryPartners.map((partner) => (
-              <div 
-                key={partner.id}
-                style={{ 
-                  background: '#fff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '20px', 
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between'
-                }}
-              >
-                <div>
-                  <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1e293b', margin: '0 0 6px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Building2 size={18} color="#7c3aed" /> {partner.name}
-                  </h4>
-                  <span style={{ background: '#ecfdf5', color: '#047857', padding: '3px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 600, display: 'inline-block', marginBottom: '12px' }}>
-                    ACTIVE PARTNER
-                  </span>
-                  <p style={{ margin: '0 0 8px 0', color: '#64748b', fontSize: '0.85rem' }}>{partner.address || 'Singapore'}</p>
-                  {partner.weblink && (
-                    <a href={partner.weblink.startsWith('http') ? partner.weblink : `https://${partner.weblink}`} target="_blank" rel="noreferrer" style={{ fontSize: '0.8rem', color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', marginBottom: '12px' }}>
-                      <Globe size={12} /> {partner.weblink}
-                    </a>
-                  )}
-                </div>
+          activeDirectoryPartners.filter(partner => {
+            const query = searchQuery.toLowerCase();
+            const hasContactMatch = (partner.contacts || []).some(c => 
+              (c.name || '').toLowerCase().includes(query) ||
+              (c.email || '').toLowerCase().includes(query) ||
+              (c.handphone || '').toLowerCase().includes(query)
+            );
+            return (
+              (partner.name || '').toLowerCase().includes(query) ||
+              (partner.address || '').toLowerCase().includes(query) ||
+              (partner.uen || '').toLowerCase().includes(query) ||
+              (partner.weblink || '').toLowerCase().includes(query) ||
+              hasContactMatch
+            );
+          }).length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '64px 32px', background: '#fafafb', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
+              <Search size={48} color="#94a3b8" style={{ margin: '0 auto 16px auto' }} />
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#475569', margin: '0 0 4px 0' }}>No Partners Found</h3>
+              <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>No active partners match your search query "{searchQuery}".</p>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
+              {activeDirectoryPartners.filter(partner => {
+                const query = searchQuery.toLowerCase();
+                const hasContactMatch = (partner.contacts || []).some(c => 
+                  (c.name || '').toLowerCase().includes(query) ||
+                  (c.email || '').toLowerCase().includes(query) ||
+                  (c.handphone || '').toLowerCase().includes(query)
+                );
+                return (
+                  (partner.name || '').toLowerCase().includes(query) ||
+                  (partner.address || '').toLowerCase().includes(query) ||
+                  (partner.uen || '').toLowerCase().includes(query) ||
+                  (partner.weblink || '').toLowerCase().includes(query) ||
+                  hasContactMatch
+                );
+              }).map((partner) => (
+                <div 
+                  key={partner.id}
+                  style={{ 
+                    background: '#fff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '20px', 
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between'
+                  }}
+                >
+                  <div>
+                    <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1e293b', margin: '0 0 6px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Building2 size={18} color="#7c3aed" /> {partner.name}
+                    </h4>
+                    <span style={{ background: '#ecfdf5', color: '#047857', padding: '3px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 600, display: 'inline-block', marginBottom: '12px' }}>
+                      ACTIVE PARTNER
+                    </span>
+                    <p style={{ margin: '0 0 8px 0', color: '#64748b', fontSize: '0.85rem' }}>{partner.address || 'Singapore'}</p>
+                    {partner.weblink && (
+                      <a href={partner.weblink.startsWith('http') ? partner.weblink : `https://${partner.weblink}`} target="_blank" rel="noreferrer" style={{ fontSize: '0.8rem', color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', marginBottom: '12px' }}>
+                        <Globe size={12} /> {partner.weblink}
+                      </a>
+                    )}
+                  </div>
 
-                <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <Users size={16} color="#64748b" />
-                  <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                    {partner.contacts?.length || 0} representative(s) linked
-                  </span>
+                  <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <Users size={16} color="#64748b" />
+                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                      {partner.contacts?.length || 0} representative(s) linked
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )
         )}
 
       </main>

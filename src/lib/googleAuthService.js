@@ -29,7 +29,7 @@ const SCOPES = [
  * @param {string} state - Arbitrary state (e.g. accountId or 'contacts_sync')
  * @param {string} customScope - Optional scope override
  */
-export const connectGoogleAPI = (state = 'sync', customScope = null) => {
+export const connectGoogleAPI = (state = 'sync', customScope = null, loginHint = null) => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
     const redirectUri = import.meta.env.VITE_GOOGLE_REDIRECT_URI || (window.location.origin + '/oauth-callback');
 
@@ -44,8 +44,14 @@ export const connectGoogleAPI = (state = 'sync', customScope = null) => {
         response_type: 'token',
         scope: customScope || SCOPES,
         state: state,
-        prompt: 'select_account'
+        prompt: 'select_account',
+        include_granted_scopes: 'true'
     });
+
+    // Optionally hint which account should be selected
+    if (loginHint) {
+        params.append('login_hint', loginHint);
+    }
 
     console.log('Initiating Google OAuth:', {
         clientId: clientId,
@@ -75,6 +81,20 @@ export const isTokenValid = () => {
  * @returns {string|null}
  */
 export const getStoredToken = () => {
+    // Prefer company-scoped token if active company set
+    try {
+        const activeCompany = localStorage.getItem('active_company_id');
+        if (activeCompany) {
+            const compToken = localStorage.getItem(`google_access_token_company_${activeCompany}`);
+            const compExpiry = localStorage.getItem(`google_token_expiry_company_${activeCompany}`);
+            if (compToken && compExpiry && new Date(compExpiry).getTime() > (Date.now() + 60000)) {
+                return compToken;
+            }
+        }
+    } catch (e) {
+        // ignore and fall back to global token
+    }
+
     return isTokenValid() ? localStorage.getItem('google_access_token') : null;
 };
 

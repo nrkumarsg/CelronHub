@@ -1361,40 +1361,150 @@ export default function StatementOfAccount() {
             </header>
 
             <div className="main-content" style={{ padding: '24px', maxWidth: '1600px', margin: '0 auto' }}>
-                {/* Visual Tab Selector for SOA Summary vs. Automated Scheduler */}
-                <div className="glass-panel" style={{ 
-                    display: 'flex', 
-                    gap: '12px', 
-                    padding: '12px 20px', 
-                    borderRadius: '16px', 
-                    marginBottom: '24px',
-                    border: '1px solid var(--border-color)',
-                    background: 'var(--glass)',
-                    alignItems: 'center',
-                    justifyContent: 'space-between'
-                }}>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <button 
-                            className={`btn-vibrant${soaView === 'summary' ? '' : '-secondary'}`}
-                            onClick={() => setSoaView('summary')}
-                            style={{ padding: '8px 20px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, borderRadius: '10px' }}
-                        >
-                            <Building2 size={16} /> Summary & Aging Reports
-                        </button>
-                        <button 
-                            className={`btn-vibrant${soaView === 'automated' ? '' : '-secondary'}`}
-                            onClick={() => setSoaView('automated')}
-                            style={{ padding: '8px 20px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, borderRadius: '10px' }}
-                        >
-                            <Calendar size={16} /> Automated SOA Dispatch & Reminders
-                        </button>
-                    </div>
-                    {soaView === 'automated' && (
-                        <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px', padding: '6px 14px', fontSize: '0.85rem', color: '#1e40af', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <AlertCircle size={16} /> 10-Day Billing Cycles: Active (10th, 20th, 30th)
+                {/* Finance Quick Directory */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+                    <div 
+                        onClick={() => setSoaView('summary')}
+                        style={{
+                            background: soaView === 'summary' ? 'rgba(99, 102, 241, 0.05)' : '#ffffff',
+                            border: soaView === 'summary' ? '1.5px solid #6366f1' : '1px solid #e2e8f0',
+                            borderRadius: '16px',
+                            padding: '16px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px',
+                            transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
+                        }}
+                        onMouseOver={(e) => {
+                            e.currentTarget.style.transform = 'translateY(-2px)';
+                            e.currentTarget.style.boxShadow = '0 8px 16px rgba(99, 102, 241, 0.08)';
+                            e.currentTarget.style.borderColor = '#6366f188';
+                        }}
+                        onMouseOut={(e) => {
+                            e.currentTarget.style.transform = 'none';
+                            e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.05)';
+                            e.currentTarget.style.borderColor = soaView === 'summary' ? '#6366f1' : '#e2e8f0';
+                        }}
+                    >
+                        <div style={{ background: 'rgba(99, 102, 241, 0.1)', color: '#6366f1', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center' }}>
+                            <Building2 size={20} />
                         </div>
-                    )}
+                        <div>
+                            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#1e293b' }}>Summary &amp; Aging</div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>Ledger &amp; aging tables</div>
+                        </div>
+                    </div>
+
+                    <div 
+                        onClick={() => setSoaView('automated')}
+                        style={{
+                            background: soaView === 'automated' ? 'rgba(236, 72, 153, 0.05)' : '#ffffff',
+                            border: soaView === 'automated' ? '1.5px solid #ec4899' : '1px solid #e2e8f0',
+                            borderRadius: '16px',
+                            padding: '16px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px',
+                            transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
+                        }}
+                        onMouseOver={(e) => {
+                            e.currentTarget.style.transform = 'translateY(-2px)';
+                            e.currentTarget.style.boxShadow = '0 8px 16px rgba(236, 72, 153, 0.08)';
+                            e.currentTarget.style.borderColor = '#ec489988';
+                        }}
+                        onMouseOut={(e) => {
+                            e.currentTarget.style.transform = 'none';
+                            e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.05)';
+                            e.currentTarget.style.borderColor = soaView === 'automated' ? '#ec4899' : '#e2e8f0';
+                        }}
+                    >
+                        <div style={{ background: 'rgba(236, 72, 153, 0.1)', color: '#ec4899', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center' }}>
+                            <Mail size={20} />
+                        </div>
+                        <div>
+                            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#1e293b' }}>Automated Dispatch</div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>10-day cycle reminders</div>
+                        </div>
+                    </div>
+
+                    <div 
+                        onClick={() => navigate('/accounts/bills')}
+                        style={{
+                            background: '#ffffff',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '16px',
+                            padding: '16px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px',
+                            transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
+                        }}
+                        onMouseOver={(e) => {
+                            e.currentTarget.style.transform = 'translateY(-2px)';
+                            e.currentTarget.style.boxShadow = '0 8px 16px rgba(249, 115, 22, 0.08)';
+                            e.currentTarget.style.borderColor = '#f9731688';
+                        }}
+                        onMouseOut={(e) => {
+                            e.currentTarget.style.transform = 'none';
+                            e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.05)';
+                            e.currentTarget.style.borderColor = '#e2e8f0';
+                        }}
+                    >
+                        <div style={{ background: 'rgba(249, 115, 22, 0.1)', color: '#f97316', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center' }}>
+                            <FileText size={20} />
+                        </div>
+                        <div>
+                            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#1e293b' }}>Accounts Payable</div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>Supplier bills portal</div>
+                        </div>
+                    </div>
+
+                    <div 
+                        onClick={() => navigate('/gst-reporting')}
+                        style={{
+                            background: '#ffffff',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '16px',
+                            padding: '16px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px',
+                            transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
+                        }}
+                        onMouseOver={(e) => {
+                            e.currentTarget.style.transform = 'translateY(-2px)';
+                            e.currentTarget.style.boxShadow = '0 8px 16px rgba(16, 185, 129, 0.08)';
+                            e.currentTarget.style.borderColor = '#10b98188';
+                        }}
+                        onMouseOut={(e) => {
+                            e.currentTarget.style.transform = 'none';
+                            e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.05)';
+                            e.currentTarget.style.borderColor = '#e2e8f0';
+                        }}
+                    >
+                        <div style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center' }}>
+                            <CreditCard size={20} />
+                        </div>
+                        <div>
+                            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#1e293b' }}>GST Reporting</div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>Tax summaries &amp; IRAS logs</div>
+                        </div>
+                    </div>
                 </div>
+
+                {soaView === 'automated' && (
+                    <div className="glass-panel" style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '16px', padding: '12px 20px', marginBottom: '24px', fontSize: '0.9rem', color: '#1e40af', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <AlertCircle size={18} /> 10-Day Billing Cycles: Active (10th, 20th, 30th)
+                    </div>
+                )}
 
                 {soaView === 'summary' ? (
                     <>
@@ -2860,6 +2970,9 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
     const [editingContact, setEditingContact] = useState(null);
     const [modalName, setModalName] = useState('');
     const [modalEmail, setModalEmail] = useState('');
+    const [modalPost, setModalPost] = useState('');
+    const [modalHandphone, setModalHandphone] = useState('');
+    const [modalDepartment, setModalDepartment] = useState('');
     const [isSaving, setIsSaving] = useState(false);
 
     useEffect(() => {
@@ -3018,6 +3131,9 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
             const contactData = {
                 name: modalName.trim(),
                 email: modalEmail.trim(),
+                post: modalPost.trim(),
+                handphone: modalHandphone.trim(),
+                department: modalDepartment,
                 partnerId: modalContactType === 'customer' ? partner?.id : null,
                 company_id: partner?.company_id || null
             };
@@ -3052,6 +3168,9 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
             setEditingContact(null);
             setModalName('');
             setModalEmail('');
+            setModalPost('');
+            setModalHandphone('');
+            setModalDepartment('');
         } catch (err) {
             console.error('Failed to save contact:', err);
             alert('Failed to save contact: ' + (err.message || err));
@@ -3125,6 +3244,9 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
                                             setEditingContact(null);
                                             setModalName('');
                                             setModalEmail('');
+                                            setModalPost('');
+                                            setModalHandphone('');
+                                            setModalDepartment('');
                                             setIsAddModalOpen(true);
                                         }}
                                         style={{ background: 'transparent', border: 'none', color: '#2563eb', fontSize: '11px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
@@ -3164,8 +3286,11 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
                                                 onEdit={(c) => {
                                                     setModalContactType('customer');
                                                     setEditingContact(c);
-                                                    setModalName(c.name);
-                                                    setModalEmail(c.email);
+                                                    setModalName(c.name || '');
+                                                    setModalEmail(c.email || '');
+                                                    setModalPost(c.post || '');
+                                                    setModalHandphone(c.handphone || '');
+                                                    setModalDepartment(c.department || '');
                                                     setIsAddModalOpen(true);
                                                 }}
                                             />
@@ -3187,6 +3312,9 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
                                             setEditingContact(null);
                                             setModalName('');
                                             setModalEmail('');
+                                            setModalPost('');
+                                            setModalHandphone('');
+                                            setModalDepartment('');
                                             setIsAddModalOpen(true);
                                         }}
                                         style={{ background: 'transparent', border: 'none', color: '#2563eb', fontSize: '11px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
@@ -3323,7 +3451,7 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
                         </div>
                         <form onSubmit={handleSaveModalContact} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Full Name</label>
+                                <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Full Name *</label>
                                 <input 
                                     type="text" 
                                     required
@@ -3334,7 +3462,17 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
                                 />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Email Address</label>
+                                <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Position</label>
+                                <input 
+                                    type="text" 
+                                    placeholder="e.g. Manager"
+                                    value={modalPost}
+                                    onChange={e => setModalPost(e.target.value)}
+                                    style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' }}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Email Address *</label>
                                 <input 
                                     type="email" 
                                     required
@@ -3343,6 +3481,36 @@ function EmailShareModal({ isOpen, onClose, partner, documentData, onShare, cont
                                     onChange={e => setModalEmail(e.target.value)}
                                     style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' }}
                                 />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Phone Number</label>
+                                <input 
+                                    type="text" 
+                                    placeholder="e.g. +65..."
+                                    value={modalHandphone}
+                                    onChange={e => setModalHandphone(e.target.value)}
+                                    style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' }}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Department</label>
+                                <select 
+                                    value={modalDepartment}
+                                    onChange={e => setModalDepartment(e.target.value)}
+                                    style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none', background: '#fff', color: '#1e293b' }}
+                                >
+                                    <option value="">-- Select Department --</option>
+                                    <option value="Accounts">Accounts</option>
+                                    <option value="Purchasing">Purchasing</option>
+                                    <option value="Logistics">Logistics</option>
+                                    <option value="Technical">Technical</option>
+                                    <option value="Sales">Sales</option>
+                                    <option value="Management">Management</option>
+                                    <option value="Operations">Operations</option>
+                                    <option value="Finance">Finance</option>
+                                    <option value="Safety">Safety</option>
+                                    <option value="Other">Other</option>
+                                </select>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
                                 <button 

@@ -60,7 +60,8 @@ export const uploadFileResumable = async (accessToken, file, metadata = {}, onPr
             'X-Upload-Content-Type': file.type || 'application/octet-stream',
             'X-Upload-Content-Length': file.size.toString()
         },
-        body: JSON.stringify(driveMetadata)
+        body: JSON.stringify(driveMetadata),
+        signal: metadata.signal
     });
 
     if (!initResponse.ok) {
@@ -76,6 +77,21 @@ export const uploadFileResumable = async (accessToken, file, metadata = {}, onPr
         xhr.open('PUT', uploadUrl);
         xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
 
+        let onAbort = null;
+        if (metadata.signal) {
+            onAbort = () => {
+                xhr.abort();
+                reject(new DOMException('Aborted', 'AbortError'));
+            };
+            metadata.signal.addEventListener('abort', onAbort);
+        }
+
+        const cleanupSignal = () => {
+            if (metadata.signal && onAbort) {
+                metadata.signal.removeEventListener('abort', onAbort);
+            }
+        };
+
         if (progressCallback) {
             xhr.upload.onprogress = (e) => {
                 if (e.lengthComputable) {
@@ -86,6 +102,7 @@ export const uploadFileResumable = async (accessToken, file, metadata = {}, onPr
         }
 
         xhr.onload = () => {
+            cleanupSignal();
             if (xhr.status >= 200 && xhr.status < 300) {
                 resolve(JSON.parse(xhr.responseText));
             } else {
@@ -98,7 +115,10 @@ export const uploadFileResumable = async (accessToken, file, metadata = {}, onPr
             }
         };
 
-        xhr.onerror = () => reject(new Error('Network error during upload'));
+        xhr.onerror = () => {
+            cleanupSignal();
+            reject(new Error('Network error during upload'));
+        };
         xhr.send(file);
     });
 };
@@ -245,7 +265,7 @@ export const createFolderStructure = async (accessToken, path, parentId = null) 
  * Standardized Job project structure provisioning (Option B - Flat Documents, subfolder for Photos).
  * Path: [CELRON]/01. TIME_BASED/JOBS/[Year]/[Project Name]
  */
-export const provisionFullProjectStructure = async (accessToken, celronRootId, year, projectFolderName) => {
+export const provisionFullProjectStructure = async (accessToken, celronRootId, year, projectFolderName, forceCreate = false) => {
     const customJobsRootId = '1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-';
     
     // Check if the root matches the custom Jobs root folder ID (directly or as part of a link)
@@ -261,41 +281,66 @@ export const provisionFullProjectStructure = async (accessToken, celronRootId, y
         
         // 2. Navigate to Year
         const yearId = await getOrCreateFolder(accessToken, year, timeBasedId);
-
+ 
         // 3. Navigate to JOBS
         jobsRootId = await getOrCreateFolder(accessToken, 'JOBS', yearId);
-
+ 
         // 3b. Also ensure AccountPayable folder exists under yearId
         await getOrCreateFolder(accessToken, 'AccountPayable', yearId);
     }
-
+ 
     // 4. Create/Find the specific Project folder (using prefix-contains query to avoid duplication)
     const jobNoPrefix = projectFolderName.split(' ')[0]; // E.g., 'CEL-2605-6063'
     let projectFolderId;
-
-    try {
-        let query = `name contains '${jobNoPrefix}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${jobsRootId}' in parents`;
-        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
-            headers: { 'Authorization': 'Bearer ' + accessToken }
-        });
-        if (searchRes.ok) {
-            const { files } = await searchRes.json();
-            if (files && files.length > 0) {
-                projectFolderId = files[0].id;
+ 
+    if (!forceCreate) {
+        try {
+            let query = `name contains '${jobNoPrefix}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${jobsRootId}' in parents`;
+            const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+                headers: { 'Authorization': 'Bearer ' + accessToken }
+            });
+            if (searchRes.ok) {
+                const { files } = await searchRes.json();
+                if (files && files.length > 0) {
+                    projectFolderId = files[0].id;
+                }
             }
+        } catch (e) {
+            console.warn("Prefix search failed, falling back to exact create/find:", e);
         }
-    } catch (e) {
-        console.warn("Prefix search failed, falling back to exact create/find:", e);
     }
-
+ 
     if (!projectFolderId) {
-        projectFolderId = await getOrCreateFolder(accessToken, projectFolderName, jobsRootId);
+        if (forceCreate) {
+            const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + accessToken,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    name: projectFolderName,
+                    mimeType: 'application/vnd.google-apps.folder',
+                    ...(jobsRootId ? { parents: [jobsRootId] } : {})
+                })
+            });
+            if (!createRes.ok) {
+                const err = await createRes.json().catch(() => ({}));
+                throw new Error(err.error?.message || `Failed to create folder: ${projectFolderName}`);
+            }
+            const folder = await createRes.json();
+            projectFolderId = folder.id;
+        } else {
+            projectFolderId = await getOrCreateFolder(accessToken, projectFolderName, jobsRootId);
+        }
     }
-
+ 
     // 5. Provision sub-folders inside the Job folder
     await getOrCreateFolder(accessToken, 'Photos & Gallery', projectFolderId);
     await getOrCreateFolder(accessToken, 'Worksuite', projectFolderId);
-
+    await getOrCreateFolder(accessToken, 'SupplierBills&Expenses', projectFolderId);
+    await getOrCreateFolder(accessToken, 'SupportDocs', projectFolderId);
+ 
     return projectFolderId;
 };
 

@@ -12,6 +12,14 @@ const getOpenAIKey = () => {
          DEFAULT_OPENAI_KEY;
 };
 
+const DEFAULT_GROQ_KEY = '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';
+
+const getGroqKey = () => {
+  return localStorage.getItem('custom_groq_key') || 
+         import.meta.env.VITE_GROQ_API_KEY || 
+         DEFAULT_GROQ_KEY;
+};
+
 /**
  * Extract structured contact & company details from business card image bytes (base64)
  * @param {string} base64Image - Base64 image data (including or excluding data URI prefix)
@@ -356,6 +364,256 @@ export const extractBillWithOpenAI = async (base64ImageOrText, isText = false) =
     return JSON.parse(textContent);
   } catch (error) {
     console.error('[OpenAI Vision OCR Bill Error]:', error);
+    throw error;
+  }
+};
+
+/**
+ * Visual Bill/Invoice Document Parser using Groq API.
+ * Extracts structured supplier bill details from a base64 image or raw text.
+ */
+export const extractBillWithGroq = async (base64ImageOrText, isText = false) => {
+  const apiKey = getGroqKey();
+  
+  if (!apiKey) {
+    throw new Error('Groq API Key is missing. Please configure it in your Settings or .env file.');
+  }
+
+  const systemPrompt = `
+    Analyze the provided invoice / supplier bill ${isText ? 'text content' : 'image'}. Extract structured information for the bill.
+    
+    You MUST output ONLY a valid JSON object with the following schema:
+    {
+      "supplier_name": "string (The name of the supplier/vendor, e.g. Ark Pte Ltd)",
+      "uen": "string (Singapore Unique Entity Number/UEN of the supplier if printed)",
+      "address": "string (Singapore physical address of the supplier if printed)",
+      "phone": "string (Company/office phone or mobile number of the supplier if printed)",
+      "email": "string (General company email of the supplier if printed)",
+      "website": "string (Official supplier website URL if printed)",
+      "invoice_no": "string (The invoice or bill number)",
+      "invoice_date": "string (YYYY-MM-DD formatted date of the invoice)",
+      "due_date": "string (YYYY-MM-DD formatted due date of the invoice if found)",
+      "currency": "string (Three-letter currency code, e.g. SGD, USD, default to SGD)",
+      "subtotal": number (Subtotal amount before GST/tax),
+      "gst_amount": number (GST or tax amount),
+      "grand_total": number (Total amount including GST/tax),
+      "description": "string (A brief description summarizing the items on the bill, e.g. Supply of office equipment)"
+    }
+
+    Rules:
+    1. Do NOT use placeholder values like "N/A", "Unknown", or "null". If a field is not found, leave it as empty string "" or 0.
+    2. Capitalize names and descriptions professionally.
+    3. Ensure calculations match: grand_total = subtotal + gst_amount.
+  `;
+
+  const messageContent = [];
+  if (isText) {
+    messageContent.push({
+      type: 'text',
+      text: `${systemPrompt}\n\nInvoice Content/Text:\n"""\n${base64ImageOrText}\n"""`
+    });
+  } else {
+    // Ensure clean base64 format with proper Data URI header for Groq
+    let cleanBase64 = base64ImageOrText;
+    if (!cleanBase64.startsWith('data:image/')) {
+      cleanBase64 = `data:image/jpeg;base64,${cleanBase64}`;
+    }
+    messageContent.push({
+      type: 'text',
+      text: systemPrompt
+    });
+    messageContent.push({
+      type: 'image_url',
+      image_url: {
+        url: cleanBase64
+      }
+    });
+  }
+
+  // If text, use llama-3.3-70b-versatile, if vision use meta-llama/llama-4-scout-17b-16e-instruct
+  const modelName = isText ? 'llama-3.3-70b-versatile' : 'meta-llama/llama-4-scout-17b-16e-instruct';
+
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages: [
+          {
+            role: 'user',
+            content: messageContent
+          }
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.1
+      })
+    });
+
+    if (!response.ok) {
+      const errData = await response.json();
+      throw new Error(errData.error?.message || `Groq API request failed with status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const textContent = data.choices?.[0]?.message?.content;
+    
+    if (!textContent) {
+      throw new Error('Received empty response from Groq model.');
+    }
+
+    return JSON.parse(textContent);
+  } catch (error) {
+    console.error('[Groq OCR Bill Error]:', error);
+    throw error;
+  }
+};
+
+/**
+ * Extract structured contact & company details from business card image bytes (base64) using Groq meta-llama/llama-4-scout-17b-16e-instruct
+ * @param {string} base64Image - Base64 image data (including or excluding data URI prefix)
+ * @returns {Promise<Object>} Extracted details matching Partner and Contact schema
+ */
+export const extractCardWithGroq = async (base64Image) => {
+  const apiKey = getGroqKey();
+  
+  if (!apiKey) {
+    throw new Error('Groq API Key is missing. Please configure it in your Settings or .env file.');
+  }
+
+  // Ensure clean base64 format with proper Data URI header for Groq
+  let cleanBase64 = base64Image;
+  if (!cleanBase64.startsWith('data:image/')) {
+    cleanBase64 = `data:image/jpeg;base64,${cleanBase64}`;
+  }
+
+  const systemPrompt = `
+    Analyze the provided business card image. Extract structured information for BOTH the organization (Partner) and the contact person (Contact).
+    
+    You MUST output ONLY a valid JSON object with the following schema:
+    {
+      "partner": {
+        "name": "string (Company Name, e.g. Ark Pte Ltd)",
+        "uen": "string (Singapore Unique Entity Number if printed, e.g. 201436227C)",
+        "address": "string (Full physical headquarters address)",
+        "country": "string (Country e.g. Singapore)",
+        "city": "string (City)",
+        "postal_code": "string (Postal Code/Pincode)",
+        "email": "string (General company email if found, e.g. info@company.com)",
+        "phone": "string (General company/office phone number)",
+        "website": "string (Official website URL, e.g. www.ark.sg)",
+        "brands": "string (Product brands / manufacturers represented, comma-separated if multiple)",
+        "business_scope": "string (Brief description of products, services, or business scope)",
+        "notes": "string (Any other important notes or details on the card)"
+      },
+      "contact": {
+        "name": "string (Full name of the contact representative)",
+        "email": "string (Personal professional email, e.g. john@company.com)",
+        "handphone": "string (Direct mobile/handphone number, e.g. +65 9123 4567)",
+        "post": "string (Job designation/title, e.g. Technical Director)",
+        "department": "string (Map to one of: Management, Sales, Technical, Operations, Finance, Safety, Other)"
+      }
+    }
+
+    Rules:
+    1. Do NOT use placeholder values like "N/A", "Unknown", or "null". If a field is not found, leave it as an empty string "".
+    2. Capitalize names, addresses, and designations professionally.
+    3. Ensure general office lines go to partner.phone, while personal mobile lines go to contact.handphone.
+  `;
+
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: systemPrompt
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: cleanBase64
+                }
+              }
+            ]
+          }
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.1
+      })
+    });
+
+    if (!response.ok) {
+      const errData = await response.json();
+      throw new Error(errData.error?.message || `Groq Vision request failed with status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const textContent = data.choices?.[0]?.message?.content;
+    
+    if (!textContent) {
+      throw new Error('Received empty response from Groq Vision model.');
+    }
+
+    const parsedData = JSON.parse(textContent);
+
+    // Auto-enrich Company details using ACRA UEN registry lookup if company name exists
+    if (parsedData.partner?.name && parsedData.partner.name.toLowerCase() !== 'individual') {
+      try {
+        console.log(`[Groq Vision] Running background ACRA/UEN lookup for: ${parsedData.partner.name}`);
+        const enrichment = await smartSearchCompany(parsedData.partner.name, parsedData.partner.website || '');
+        if (enrichment && enrichment.confidence > 50) {
+          parsedData.partner = {
+            ...parsedData.partner,
+            uen: parsedData.partner.uen || enrichment.uen || '',
+            address: parsedData.partner.address || enrichment.address || '',
+            country: parsedData.partner.country || enrichment.country || 'Singapore',
+            city: parsedData.partner.city || enrichment.city || '',
+            postal_code: parsedData.partner.postal_code || enrichment.postal_code || '',
+            website: parsedData.partner.website || enrichment.website || '',
+            phone: parsedData.partner.phone || enrichment.phone || '',
+            email: parsedData.partner.email || enrichment.email || '',
+            types: parsedData.partner.types || enrichment.categories || ['Supplier'],
+            brands: parsedData.partner.brands || enrichment.brands || '',
+            business_scope: parsedData.partner.business_scope || enrichment.activity_summary || '',
+            notes: parsedData.partner.notes || ''
+          };
+          console.log(`[Groq Vision] Enrichment successful for ${parsedData.partner.name}. UEN: ${parsedData.partner.uen}`);
+        }
+      } catch (enrichError) {
+        console.warn('[Groq Vision] Background company lookup failed:', enrichError);
+      }
+    }
+
+    // Fallback for corporate cards missing specific contact names
+    if (!parsedData.contact || !parsedData.contact.name || parsedData.contact.name.toLowerCase().includes('unknown')) {
+      parsedData.contact = {
+        name: 'Representative',
+        email: parsedData.contact?.email || parsedData.partner?.email || `pending_${Date.now()}@example.com`,
+        handphone: parsedData.contact?.handphone || parsedData.partner?.phone || '',
+        post: parsedData.contact?.post || 'Representative',
+        department: parsedData.contact?.department || 'Operations'
+      };
+    } else if (!parsedData.contact.email) {
+      parsedData.contact.email = parsedData.partner?.email || `pending_${Date.now()}@example.com`;
+    }
+
+    return parsedData;
+
+  } catch (error) {
+    console.error('[Groq Vision OCR Error]:', error);
     throw error;
   }
 };

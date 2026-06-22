@@ -288,12 +288,28 @@ export const saveDocumentSettings = async (payload) => {
   if (isExisting) {
     const { data, error } = await supabase.from('document_settings').update(dataToSave).eq('id', payload.id).select();
     if (error) throw error;
-    return data[0];
+    const saved = data[0];
+    try {
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('documentSettingsUpdated', { detail: { companyId: saved.company_id, settings: saved } }));
+      }
+    } catch (e) {
+      console.warn('Failed to dispatch documentSettingsUpdated event', e);
+    }
+    return saved;
   } else {
     delete dataToSave.id;
     const { data, error } = await supabase.from('document_settings').insert([dataToSave]).select();
     if (error) throw error;
-    return data[0];
+    const saved = data[0];
+    try {
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('documentSettingsUpdated', { detail: { companyId: saved.company_id, settings: saved } }));
+      }
+    } catch (e) {
+      console.warn('Failed to dispatch documentSettingsUpdated event', e);
+    }
+    return saved;
   }
 };
 

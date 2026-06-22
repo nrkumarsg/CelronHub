@@ -618,7 +618,7 @@ export default function ModuleSettings() {
                                                         {comm.provider === 'gmail' && (
                                                             <button
                                                                 onClick={() => {
-                                                                    import('../lib/googleAuthService').then(m => m.connectGoogleAPI(comm.id));
+                                                                    import('../lib/googleAuthService').then(m => m.connectGoogleAPI(comm.id, null, comm.email_address));
                                                                 }}
                                                                 title="Connect Google API"
                                                                 style={{

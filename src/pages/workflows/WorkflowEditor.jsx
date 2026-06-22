@@ -17,7 +17,7 @@ import {
     EyeOff,
     Info,
     Image, FolderOpen, DollarSign,
-    List
+    List, TrendingUp, TrendingDown, Percent
 } from 'lucide-react';
 import SearchableSelect from '../../components/common/SearchableSelect';
 import { getExchangeRateWithGemini } from '../../lib/geminiService';
@@ -125,6 +125,13 @@ export default function WorkflowEditor() {
     useEffect(() => {
         currentIdRef.current = id;
     }, [id]);
+
+    // Concurrency control for Google Drive folder provisioning
+    const isEnsuringFolderRef = useRef(false);
+    const ensuredFolderIdRef = useRef(null);
+    const isProvisioningFolderRef = useRef(false);
+
+
     const [poModal, setPoModal] = useState({ isOpen: false });
     const [poFile, setPoFile] = useState(null);
     const [lineItems, setLineItems] = useState([]);
@@ -139,16 +146,58 @@ export default function WorkflowEditor() {
     const [showOCRModal, setShowOCRModal] = useState(false);
     const [showDocumentParserModal, setShowDocumentParserModal] = useState(false);
     const [galleryFolderId, setGalleryFolderId] = useState(null);
-    const [showQRModal, setShowQRModal] = useState(false);
+    const [worksuiteFiles, setWorksuiteFiles] = useState([]);
+    const [supportDocsFiles, setSupportDocsFiles] = useState([]);
+    const [loadingDriveFiles, setLoadingDriveFiles] = useState(false);
+    const [activeAttachmentTab, setActiveAttachmentTab] = useState('worksuite');
+    const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
+    const [isDraggingExplorer, setIsDraggingExplorer] = useState(false);
+    const [isDraggingSigned, setIsDraggingSigned] = useState(false);
 
     // Payments State
     const [customerPayments, setCustomerPayments] = useState([]);
     const [supplierPayments, setSupplierPayments] = useState([]);
     const [loadingPayments, setLoadingPayments] = useState(false);
     const [paymentModal, setPaymentModal] = useState({ isOpen: false, type: null, data: null }); // type: 'customer' | 'supplier'
+    const [jobExpenses, setJobExpenses] = useState([]);
+    const [modalFields, setModalFields] = useState({
+        invoice_no: '',
+        payment_date: '',
+        amount: '',
+        gst_amount: '',
+        supplier_id: '',
+        status: 'Open',
+        payment_term: ''
+    });
     const [signedProofs, setSignedProofs] = useState([]);
     const [loadingSignedProofs, setLoadingSignedProofs] = useState(false);
     const [partnerInvoices, setPartnerInvoices] = useState([]);
+
+    useEffect(() => {
+        if (paymentModal.isOpen) {
+            if (paymentModal.data) {
+                setModalFields({
+                    invoice_no: paymentModal.data.invoice_no || '',
+                    payment_date: paymentModal.data.payment_date || new Date().toISOString().split('T')[0],
+                    amount: paymentModal.data.amount || '',
+                    gst_amount: paymentModal.data.gst_amount || '',
+                    supplier_id: paymentModal.data.supplier_id || '',
+                    status: paymentModal.data.status || 'Open',
+                    payment_term: paymentModal.data.payment_term || ''
+                });
+            } else {
+                setModalFields({
+                    invoice_no: '',
+                    payment_date: new Date().toISOString().split('T')[0],
+                    amount: '',
+                    gst_amount: '',
+                    supplier_id: '',
+                    status: 'Open',
+                    payment_term: ''
+                });
+            }
+        }
+    }, [paymentModal.isOpen, paymentModal.data]);
 
     // Explorer State
     const [explorerFiles, setExplorerFiles] = useState([]);
@@ -366,6 +415,9 @@ export default function WorkflowEditor() {
     const [modalEditingContact, setModalEditingContact] = useState(null);
     const [modalName, setModalName] = useState('');
     const [modalEmail, setModalEmail] = useState('');
+    const [modalPost, setModalPost] = useState('');
+    const [modalHandphone, setModalHandphone] = useState('');
+    const [modalDepartment, setModalDepartment] = useState('');
     const [isSavingContactModal, setIsSavingContactModal] = useState(false);
 
     const toggleEmailInField = (field, email) => {
@@ -507,6 +559,9 @@ export default function WorkflowEditor() {
             const contactData = {
                 name: modalName.trim(),
                 email: modalEmail.trim(),
+                post: modalPost.trim(),
+                handphone: modalHandphone.trim(),
+                department: modalDepartment,
                 partnerId: modalContactType === 'customer' ? partner?.id : null,
                 company_id: partner?.company_id || profile?.company_id || null
             };
@@ -541,6 +596,9 @@ export default function WorkflowEditor() {
             setModalEditingContact(null);
             setModalName('');
             setModalEmail('');
+            setModalPost('');
+            setModalHandphone('');
+            setModalDepartment('');
         } catch (err) {
             console.error('Failed to save contact:', err);
             alert('Failed to save contact: ' + (err.message || err));
@@ -622,6 +680,13 @@ export default function WorkflowEditor() {
     });
 
     const isAnithaType = ['Tax Invoice', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(formData.document_type);
+
+    useEffect(() => {
+        // Reset Google Drive provisioning refs when the document ID or job number changes
+        isEnsuringFolderRef.current = false;
+        ensuredFolderIdRef.current = null;
+        isProvisioningFolderRef.current = false;
+    }, [id, formData?.assigned_job_no]);
 
     useEffect(() => {
         fetchMasterData();
@@ -742,7 +807,9 @@ export default function WorkflowEditor() {
                     '7. Correspondence & Admin',
                     '8. Technical Documents',
                     'Photos & Gallery',
-                    'Worksuite'
+                    'Worksuite',
+                    'SupplierBills&Expenses',
+                    'SupportDocs'
                 ];
                 // Strict filter: only these folders, or non-folder files
                 const seenFolders = new Set();
@@ -781,8 +848,20 @@ export default function WorkflowEditor() {
 
     const ensureJobFolder = async () => {
         const docNo = formData.assigned_job_no || formData.document_no || formData.enquiry_no;
-        if (!docNo || explorerFolderId) return explorerFolderId;
+        if (!docNo) return null;
+        if (explorerFolderId) return explorerFolderId;
+        if (ensuredFolderIdRef.current) return ensuredFolderIdRef.current;
 
+        if (isEnsuringFolderRef.current) {
+            // Wait for the active provisioning to complete
+            while (isEnsuringFolderRef.current) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            if (ensuredFolderIdRef.current) return ensuredFolderIdRef.current;
+            if (explorerFolderId) return explorerFolderId;
+        }
+
+        isEnsuringFolderRef.current = true;
         setLoadingExplorer(true);
         try {
             const token = getStoredToken();
@@ -794,6 +873,7 @@ export default function WorkflowEditor() {
                 year, 
                 projName
             );
+            ensuredFolderIdRef.current = folderId;
             setExplorerFolderId(folderId);
             setExplorerPath([{ id: folderId, name: projName }]);
             return folderId;
@@ -801,6 +881,7 @@ export default function WorkflowEditor() {
             console.error('Error ensuring project folder:', err);
             setExplorerError('Failed to connect to Google Drive project folder.');
         } finally {
+            isEnsuringFolderRef.current = false;
             setLoadingExplorer(false);
         }
     };
@@ -828,10 +909,74 @@ export default function WorkflowEditor() {
     }, [activeTab, formData.assigned_job_no]);
 
     useEffect(() => {
-        if (showQRModal && !galleryFolderId) {
+        if (qrModal.isOpen && qrModal.folderName === 'Photos & Gallery' && !galleryFolderId) {
             fetchGallery();
         }
-    }, [showQRModal, galleryFolderId]);
+    }, [qrModal.isOpen, qrModal.folderName, galleryFolderId]);
+
+    useEffect(() => {
+        if (qrModal.isOpen && qrModal.folderName === 'Photos & Gallery' && galleryFolderId && !qrModal.folderId) {
+            setQrModal(prev => ({ ...prev, folderId: galleryFolderId }));
+        }
+    }, [qrModal.isOpen, qrModal.folderName, galleryFolderId, qrModal.folderId]);
+
+    // Auto-provision Google Drive folder if missing and connected
+    useEffect(() => {
+        const autoProvisionFolder = async () => {
+            const isJobDoc = formData.document_type === 'Job' || !!formData.assigned_job_no;
+            if (isNew || !formData.id || !isJobDoc || formData.drive_folder_id || formData.gdrive_folder_id) return;
+            if (partners.length === 0 || !settings) return; // Wait for master data
+            
+            const isAuthed = await checkGoogleAuth();
+            if (!isAuthed) return;
+
+            if (isProvisioningFolderRef.current) return;
+            isProvisioningFolderRef.current = true;
+
+            try {
+                // 1. Check if another document in the same suite already has a drive_folder_id
+                let targetFolderId = null;
+                const docJobNo = formData.assigned_job_no || formData.document_no;
+                if (docJobNo) {
+                    const { data: suiteDocs } = await supabase
+                        .from('workflow_documents')
+                        .select('drive_folder_id')
+                        .eq('assigned_job_no', docJobNo)
+                        .not('drive_folder_id', 'is', null);
+                    
+                    const found = suiteDocs?.find(d => d.drive_folder_id);
+                    if (found) {
+                        targetFolderId = found.drive_folder_id;
+                    }
+                }
+
+                // 2. If found, link this document to the existing folder
+                if (targetFolderId) {
+                    setFormData(prev => ({ ...prev, drive_folder_id: targetFolderId }));
+                    await supabase.from('workflow_documents').update({ drive_folder_id: targetFolderId }).eq('id', formData.id);
+                    setExplorerFolderId(targetFolderId);
+                    const projName = getProjectFolderName();
+                    setExplorerPath([{ id: targetFolderId, name: projName }]);
+                    console.log('Linked to existing suite folder:', targetFolderId);
+                    return;
+                }
+
+                // 3. Otherwise, provision a brand new folder structure
+                const folderId = await ensureJobFolder();
+                if (folderId) {
+                    setFormData(prev => ({ ...prev, drive_folder_id: folderId }));
+                    await supabase.from('workflow_documents').update({ drive_folder_id: folderId }).eq('id', formData.id);
+                    toast.success('Google Drive folder auto-provisioned!');
+                }
+            } catch (err) {
+                console.error('Error during auto-provisioning folder:', err);
+            } finally {
+                isProvisioningFolderRef.current = false;
+            }
+        };
+
+        autoProvisionFolder();
+    }, [isNew, formData.id, formData.document_type, formData.assigned_job_no, formData.drive_folder_id, formData.gdrive_folder_id, partners, settings]);
 
     const fetchSignedProofs = async () => {
         if (!formData.assigned_job_no) return;
@@ -839,7 +984,8 @@ export default function WorkflowEditor() {
         try {
             const token = getStoredToken();
             const rootId = await ensureJobFolder();
-            const files = await listFolderContent(token, rootId);
+            const targetFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+            const files = await listFolderContent(token, targetFolderId);
             const nonFolderFiles = files.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
             setSignedProofs(nonFolderFiles);
         } catch (err) {
@@ -873,7 +1019,7 @@ export default function WorkflowEditor() {
         try {
             const token = getStoredToken();
             const rootId = await ensureJobFolder();
-            const signedFolderId = rootId;
+            const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
             
             const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
             const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
@@ -937,6 +1083,126 @@ export default function WorkflowEditor() {
             console.error('Error fetching gallery:', err);
         } finally {
             setLoadingGallery(false);
+        }
+    };
+
+    const fetchDriveAttachments = async () => {
+        if (!formData.assigned_job_no) return;
+        setLoadingDriveFiles(true);
+        try {
+            const isAuthed = await checkGoogleAuth();
+            if (!isAuthed) return;
+            
+            const token = getStoredToken();
+            const rootId = await ensureJobFolder();
+            if (!rootId) return;
+
+            // Fetch Photos & Gallery
+            const mediaFolderId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+            setGalleryFolderId(mediaFolderId);
+            const mediaFiles = await listFolderContent(token, mediaFolderId);
+            setGalleryFiles(mediaFiles.filter(f => f.mimeType.startsWith('image/') || f.name.match(/\.(jpg|jpeg|png|gif|webp)$/i)));
+
+            // Fetch Worksuite
+            const worksuiteFolderId = await getOrCreateFolder(token, 'Worksuite', rootId);
+            const wFiles = await listFolderContent(token, worksuiteFolderId);
+            setWorksuiteFiles(wFiles);
+
+            // Fetch SupportDocs
+            const supportDocsFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+            const sFiles = await listFolderContent(token, supportDocsFolderId);
+            setSupportDocsFiles(sFiles);
+        } catch (err) {
+            console.error('Error fetching drive attachments:', err);
+        } finally {
+            setLoadingDriveFiles(false);
+        }
+    };
+
+    const attachDriveFile = async (fileInfo) => {
+        if (saving) return;
+        setSaving(true);
+        try {
+            const token = getStoredToken();
+            const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileInfo.id}?alt=media`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!response.ok) throw new Error('Failed to retrieve file content from Google Drive');
+            const blob = await response.blob();
+            const file = new File([blob], fileInfo.name, { type: fileInfo.mimeType || 'application/octet-stream' });
+            
+            setEmailPreview(prev => ({
+                ...prev,
+                attachments: [...(prev.attachments || []), file]
+            }));
+        } catch (err) {
+            console.error('Failed to attach Drive file:', err);
+            alert('Failed to attach: ' + err.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const viewAutoAttachedPDF = async () => {
+        setSaving(true);
+        try {
+            const isFloat = emailPreview?.isFloat;
+            const targetDocId = isFloat ? emailPreview.floatDocId : id;
+            
+            let pdfBlob;
+            if (isFloat) {
+                console.log('Generating PDF for floated RFQ preview...');
+                const { data: floatDoc, error } = await getWorkflowDocumentById(targetDocId);
+                if (error) throw error;
+                pdfBlob = await generateSleekPDF({
+                    ...floatDoc,
+                    partners: floatDoc.partners || partners.find(p => p.id === floatDoc.partner_id),
+                    vessels: floatDoc.vessels || vessels.find(v => v.id === floatDoc.vessel_id),
+                    work_locations: floatDoc.work_locations || workLocations.find(wl => wl.id === floatDoc.work_location_id)
+                }, settings, 'blob');
+            } else {
+                console.log('Generating PDF for current document preview...');
+                pdfBlob = await generateSleekPDF({
+                    ...formData,
+                    items: lineItems,
+                    partners: partners.find(p => p.id === formData.partner_id),
+                    vessels: vessels.find(v => v.id === formData.vessel_id),
+                    work_locations: workLocations.find(wl => wl.id === formData.work_location_id)
+                }, settings, 'blob');
+            }
+            
+            const fileURL = URL.createObjectURL(pdfBlob);
+            window.open(fileURL, '_blank');
+        } catch (err) {
+            console.error('Failed to preview PDF:', err);
+            alert('Failed to preview PDF: ' + err.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const viewInvoicePDF = async (docId) => {
+        setSaving(true);
+        try {
+            console.log('Generating PDF for suite invoice preview...', docId);
+            const { data: doc, error } = await getWorkflowDocumentById(docId);
+            if (error) throw error;
+            if (!doc) throw new Error("Invoice document not found.");
+            
+            const pdfBlob = await generateSleekPDF({
+                ...doc,
+                partners: doc.partners || partners.find(p => p.id === doc.partner_id),
+                vessels: doc.vessels || vessels.find(v => v.id === doc.vessel_id),
+                work_locations: doc.work_locations || workLocations.find(wl => wl.id === doc.work_location_id)
+            }, settings, 'blob');
+            
+            const fileURL = URL.createObjectURL(pdfBlob);
+            window.open(fileURL, '_blank');
+        } catch (err) {
+            console.error('Failed to preview invoice PDF:', err);
+            alert('Failed to preview invoice PDF: ' + err.message);
+        } finally {
+            setSaving(false);
         }
     };
 
@@ -1094,6 +1360,20 @@ export default function WorkflowEditor() {
         setExpenses(updated);
     };
 
+    const handleDeleteExpenseById = async (id) => {
+        if (!window.confirm('Delete this expense record?')) return;
+        
+        if (!id.startsWith('temp_')) {
+            const { error } = await deleteJobExpense(id);
+            if (error) {
+                alert('Error deleting: ' + error.message);
+                return;
+            }
+        }
+        
+        setExpenses(prev => prev.filter(e => e.id !== id));
+    };
+
     const handleBillUpload = async (index, file) => {
         if (!file) return;
         
@@ -1131,6 +1411,35 @@ export default function WorkflowEditor() {
         const { customerPayments: cp, supplierPayments: sp } = await getJobPayments(id);
         setCustomerPayments(cp);
         setSupplierPayments(sp);
+        
+        try {
+            const { data: je } = await getJobExpenses(id);
+            if (je) {
+                setJobExpenses(je);
+            }
+        } catch (err) {
+            console.error('Error fetching job expenses:', err);
+        }
+
+        // Fetch suite documents as well to keep ledger up-to-date
+        const jobNo = formData.assigned_job_no || (formData.document_type === 'Job' ? formData.document_no : '');
+        if (jobNo) {
+            try {
+                const { data: suiteData } = await supabase
+                    .from('workflow_documents')
+                    .select('id, document_no, document_type, status, total_amount, currency, issue_date, tax_amount, attachment_urls')
+                    .eq('assigned_job_no', jobNo)
+                    .eq('company_id', profile.company_id)
+                    .order('issue_date', { ascending: true });
+                
+                if (suiteData) {
+                    setWorkflowDocs(suiteData);
+                }
+            } catch (err) {
+                console.error('Error fetching suite documents for payments:', err);
+            }
+        }
+
         setLoadingPayments(false);
     };
 
@@ -1161,9 +1470,13 @@ export default function WorkflowEditor() {
             const result = await uploadFileToDrive(token, file, { folderId: targetFolder });
             const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
             
-            const saver = type === 'customer' ? saveCustomerPayment : saveSupplierPayment;
-            await saver({ id: paymentId, proof_url: proofUrl });
-            fetchPayments();
+            if (type === 'supplier') {
+                await saveJobExpense({ id: paymentId, bill_url: proofUrl });
+                fetchExpenses();
+            } else {
+                await saveCustomerPayment({ id: paymentId, proof_url: proofUrl });
+                fetchPayments();
+            }
         } catch (err) {
             console.error('Proof upload failed:', err);
             alert('Proof upload failed: ' + err.message);
@@ -1225,8 +1538,9 @@ export default function WorkflowEditor() {
         setUploadProgress(0);
         try {
             const token = getStoredToken();
+            const rootId = await ensureJobFolder();
             for (let i = 0; i < files.length; i++) {
-                await uploadFileToDrive(token, files[i], { folderId: explorerFolderId });
+                await uploadFileToDrive(token, files[i], { folderId: rootId });
                 setUploadProgress(((i + 1) / files.length) * 100);
             }
             fetchExplorerFiles();
@@ -1306,7 +1620,7 @@ export default function WorkflowEditor() {
                     setOriginalJobNo(data.assigned_job_no);
                     const { data: suiteData } = await supabase
                         .from('workflow_documents')
-                        .select('id, document_no, document_type, status, total_amount, currency, issue_date')
+                        .select('id, document_no, document_type, status, total_amount, currency, issue_date, tax_amount, attachment_urls')
                         .eq('assigned_job_no', data.assigned_job_no)
                         .eq('company_id', profile.company_id)
                         .order('issue_date', { ascending: true });
@@ -1355,6 +1669,7 @@ export default function WorkflowEditor() {
                     currency: 'SGD',
                     enquiry_id: enq.id,
                     notes: enq.notes || defaultNotes,
+                    assigned_job_no: docType === 'JOB' ? newNo : '',
                     terms_conditions: TC_PRESETS[docType === 'QUOTATION' ? 'Quotation' : ''] || ''
                 }));
 
@@ -1485,6 +1800,7 @@ export default function WorkflowEditor() {
             partner_id: initialPartnerId || prev.partner_id,
             contact_id: initialContactId || prev.contact_id,
             notes: defaultNotesVal,
+            assigned_job_no: docTypeUpper === 'JOB' ? newNo : '',
             terms_conditions: prev.terms_conditions || (TC_PRESETS[docTypeUpper === 'QUOTATION' ? 'Quotation' : ''] || '')
         }));
 
@@ -1908,6 +2224,58 @@ export default function WorkflowEditor() {
             } else {
                 toast.success('Saved successfully');
                 fetchDocument();
+
+                // --- Amendment PDF: auto-generate for existing suite documents ---
+                // Runs in background so the UI is not blocked
+                const isSuiteDoc = formData.is_job || [
+                    'Order Acknowledgment', 'Delivery Order', 'Packing List',
+                    'Proforma Invoice', 'Tax Invoice', 'Certificate', 'Service Report'
+                ].includes(formData.document_type);
+
+                if (isSuiteDoc) {
+                    (async () => {
+                        try {
+                            const token = getStoredToken();
+                            if (!token) return; // Skip if not connected to Google
+
+                            console.log('[Amendment] Generating amendment PDF for', data.document_no);
+                            const now = new Date();
+                            const timestamp = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+                            const filename = `${data.document_no}_Amendment_${timestamp}.pdf`;
+
+                            const pdfBlob = await generateSleekPDF({
+                                ...data,
+                                items: uniqueItems,
+                                partners: partners.find(p => p.id === data.partner_id),
+                                vessels: vessels.find(v => v.id === data.vessel_id),
+                                work_locations: workLocations.find(wl => wl.id === data.work_location_id)
+                            }, settings, 'blob');
+
+                            const rootId = await ensureJobFolder();
+                            if (!rootId) return;
+                            const worksuiteFolderId = await getOrCreateFolder(token, 'Worksuite', rootId);
+                            const uploadResult = await uploadFileToDrive(
+                                token,
+                                new File([pdfBlob], filename, { type: 'application/pdf' }),
+                                { folderId: worksuiteFolderId }
+                            );
+
+                            const driveUrl = `https://drive.google.com/file/d/${uploadResult.id}/view`;
+
+                            // Append the Drive URL to the document's attachment_urls
+                            const existingUrls = Array.isArray(data.attachment_urls) ? data.attachment_urls : [];
+                            await supabase
+                                .from('workflow_documents')
+                                .update({ attachment_urls: [...existingUrls, driveUrl] })
+                                .eq('id', data.id);
+
+                            toast.success(`Amendment PDF saved: ${filename}`, { duration: 4000 });
+                            console.log('[Amendment] PDF uploaded to Drive:', driveUrl);
+                        } catch (amendErr) {
+                            console.warn('[Amendment] PDF generation failed (non-blocking):', amendErr.message);
+                        }
+                    })();
+                }
             }
             return data;
         } catch (err) {
@@ -2083,34 +2451,11 @@ export default function WorkflowEditor() {
             const { data: savedDoc, error } = await saveWorkflowDocument(newDocData, lineItems);
             if (error) throw error;
 
-            toast.success(`${targetType} ${savedDoc.document_no} generated successfully!`);
+            toast.success(`${targetType} ${savedDoc.document_no} generated! Navigating to ${targetType} list...`);
 
-            // 4. Automatic Archive to Drive (as requested)
-            try {
-                const token = getStoredToken();
-                if (token) {
-                    console.log('Archiving generated document to Drive...');
-                    const pdfBlob = await generateSleekPDF({
-                        ...savedDoc,
-                        items: lineItems,
-                        partners: partners.find(p => p.id === savedDoc.partner_id),
-                        vessels: vessels.find(v => v.id === savedDoc.vessel_id),
-                        work_locations: workLocations.find(wl => wl.id === savedDoc.work_location_id)
-                    }, settings, 'blob');
-
-                    const rootId = await ensureJobFolder();
-                    const stageFolder = await getOrCreateFolder(token, 'Worksuite', rootId);
-                    
-                    const filename = `${getDocumentDisplayName(savedDoc)}.pdf`;
-                    await uploadFileToDrive(token, new File([pdfBlob], filename, { type: 'application/pdf' }), { folderId: stageFolder });
-                }
-            } catch (archiveErr) {
-                console.warn('Auto-archive failed, but document record was created:', archiveErr);
-            }
-
-            // 5. Navigate to the new document
-            const slug = targetType.toLowerCase().replace(/ /g, '-');
-            navigate(`/workflows/editor/${slug}/${savedDoc.id}`);
+            // Navigate to the Workflow list filtered by the new document type
+            // (No automatic Drive folder creation — user can save/archive manually from the list)
+            navigate(`/workflows?type=${encodeURIComponent(targetType)}`);
 
         } catch (err) {
             console.error(err);
@@ -2369,6 +2714,7 @@ export default function WorkflowEditor() {
             body, 
             attachments: [] 
         });
+        fetchDriveAttachments();
     };
 
     const attachDocumentFromSuite = async (doc) => {
@@ -2501,6 +2847,7 @@ export default function WorkflowEditor() {
                 floatDocId: newDoc.id,
                 floatDocNo: newDoc.document_no
             });
+            fetchDriveAttachments();
 
             setFloatingProcess({
                 isActive: true,
@@ -2576,7 +2923,16 @@ export default function WorkflowEditor() {
     };
 
     const sendEmail = async () => {
+        // --- Validation before sending ---
+        const recipientTo = (emailPreview?.to || '').trim();
+        if (!recipientTo) {
+            toast.error('Please enter a recipient email address in the "To" field before sending.');
+            return;
+        }
+
         setSaving(true);
+        const apiUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/send-email`;
+        console.log('[Email] Sending to API:', apiUrl, '| Recipient:', recipientTo);
         try {
             // Determine if we are in a floating process
             const isFloat = emailPreview?.isFloat;
@@ -2649,7 +3005,7 @@ export default function WorkflowEditor() {
                 });
             }));
 
-            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/send-email`, {
+            const response = await fetch(apiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2689,7 +3045,11 @@ export default function WorkflowEditor() {
             }
         } catch (err) {
             console.error('Failed to send email:', err);
-            alert(`Failed to send email: ${err.message}`);
+            if (err.message?.includes('fetch')) {
+                toast.error(`Could not reach email server. Is the backend running on port 4001?`);
+            } else {
+                toast.error(`Email failed: ${err.message}`);
+            }
         } finally {
             setSaving(false);
         }
@@ -3588,13 +3948,13 @@ export default function WorkflowEditor() {
                         </button>
                     )}
                     {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && (
-                        <button className={`tab tab-costing ${activeTab === 'costing' ? 'active' : ''}`} onClick={() => setActiveTab('costing')}>
-                            <Calculator size={16} /> Project Costing
+                        <button className={`tab tab-payments ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}>
+                            <DollarSign size={16} /> Payments & GST
                         </button>
                     )}
                     {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && (
-                        <button className={`tab tab-payments ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}>
-                            <DollarSign size={16} /> Payments & GST
+                        <button className={`tab tab-costing ${activeTab === 'costing' ? 'active' : ''}`} onClick={() => setActiveTab('costing')}>
+                            <Calculator size={16} /> Project Costing
                         </button>
                     )}
                     <button className={`tab tab-gallery ${activeTab === 'gallery' ? 'active' : ''}`} onClick={() => setActiveTab('gallery')}>
@@ -3683,7 +4043,16 @@ export default function WorkflowEditor() {
                                 </button>
                                 <button 
                                     className="btn btn-secondary" 
-                                    onClick={() => setShowQRModal(true)}
+                                    onClick={async () => {
+                                        let targetId = galleryFolderId;
+                                        if (!targetId) {
+                                            const token = getStoredToken();
+                                            const rootId = await ensureJobFolder();
+                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+                                            setGalleryFolderId(targetId);
+                                        }
+                                        setQrModal({ isOpen: true, folderId: targetId, folderName: 'Photos & Gallery' });
+                                    }}
                                     style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid #bbf7d0', color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}
                                 >
                                     <Smartphone size={16} /> Mobile Upload (QR)
@@ -3729,62 +4098,6 @@ export default function WorkflowEditor() {
                                 }
                             }}
                         />
-
-                        {showQRModal && (
-                            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
-                                <div className="glass-panel animate-scale-up" style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
-                                    <button 
-                                        onClick={() => setShowQRModal(false)}
-                                        style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
-                                        onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
-                                        onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
-                                    >
-                                        <X size={24} />
-                                    </button>
-
-                                    <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-                                        <Smartphone size={24} />
-                                    </div>
-
-                                    <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Mobile Upload Gateway</h3>
-                                    <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: '1.4' }}>
-                                        Scan this QR code with your smartphone camera to upload photos directly from your phone.
-                                    </p>
-
-                                    {!galleryFolderId ? (
-                                        <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                                            <Loader2 size={36} className="animate-spin text-primary" />
-                                            <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
-                                        </div>
-                                    ) : (
-                                        <div>
-                                            <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block', marginBottom: '24px' }}>
-                                                <img 
-                                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
-                                                        `${window.location.origin}/upload-media?jobId=${id}&folderId=${galleryFolderId}&token=${localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent(formData.assigned_job_no || formData.document_no || 'Job')}`
-                                                    )}`}
-                                                    alt="Upload QR Code"
-                                                    style={{ width: '200px', height: '200px', display: 'block' }}
-                                                />
-                                            </div>
-
-                                            <div style={{ fontSize: '0.8rem', color: '#94a3b8', background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
-                                                <Info size={14} style={{ flexShrink: 0 }} />
-                                                <span>Session active. QR code is valid for temporary uploading.</span>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    <button 
-                                        className="btn btn-primary" 
-                                        style={{ width: '100%', marginTop: '24px', padding: '12px', borderRadius: '12px', fontWeight: 700 }}
-                                        onClick={() => setShowQRModal(false)}
-                                    >
-                                        Done
-                                    </button>
-                                </div>
-                            </div>
-                        )}
 
                         {loadingGallery && galleryFiles.length === 0 ? (
                             <div style={{ padding: '80px', textAlign: 'center', color: 'var(--text-secondary)' }}>
@@ -3843,27 +4156,58 @@ export default function WorkflowEditor() {
                         <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 <Calculator size={20} className="text-accent" />
-                                <h3 style={{ margin: 0 }}>Project Costing & Profit Summary</h3>
+                                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#1e293b' }}>Project Costing & Profit Summary</h3>
                             </div>
-                            <button className="btn btn-primary" onClick={addExpenseRow}>
-                                <Plus size={16} /> Add Expense
-                            </button>
                         </div>
 
                         {/* Summary Cards */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '32px' }}>
-                            <div style={{ background: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
-                                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Total Revenue</div>
-                                <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e293b' }}>
-                                    {formData.currency} {formData.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px', marginBottom: '16px' }}>
+                            {/* Card 1: Total Revenue */}
+                            <div style={{ 
+                                background: 'linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%)', 
+                                padding: '28px 24px', 
+                                borderRadius: '24px', 
+                                border: '1.5px solid #dbeafe', 
+                                boxShadow: '0 10px 25px rgba(59, 130, 246, 0.05)',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                transition: 'all 0.3s ease'
+                            }}>
+                                <div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Revenue</div>
+                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#1e3a8a' }}>
+                                        {formData.currency} {formData.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </div>
+                                </div>
+                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
+                                    <TrendingUp size={24} />
                                 </div>
                             </div>
-                            <div style={{ background: '#fff1f2', padding: '20px', borderRadius: '16px', border: '1px solid #fecdd3' }}>
-                                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#be123c', textTransform: 'uppercase', marginBottom: '8px' }}>Total Expenses</div>
-                                <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#9f1239' }}>
-                                    {formData.currency} {expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+
+                            {/* Card 2: Total Expenses */}
+                            <div style={{ 
+                                background: 'linear-gradient(135deg, #ffffff 0%, #fff1f2 100%)', 
+                                padding: '28px 24px', 
+                                borderRadius: '24px', 
+                                border: '1.5px solid #fecdd3', 
+                                boxShadow: '0 10px 25px rgba(244, 63, 94, 0.05)',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                transition: 'all 0.3s ease'
+                            }}>
+                                <div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Expenses</div>
+                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#9f1239' }}>
+                                        {formData.currency} {expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </div>
+                                </div>
+                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e' }}>
+                                    <TrendingDown size={24} />
                                 </div>
                             </div>
+
                             {(() => {
                                 const totalRevenue = parseFloat(formData.total_amount) || 0;
                                 const totalExpenses = expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0);
@@ -3871,72 +4215,54 @@ export default function WorkflowEditor() {
                                 const margin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
                                 return (
                                     <>
-                                        <div style={{ background: profit >= 0 ? '#f0fdf4' : '#fff1f2', padding: '20px', borderRadius: '16px', border: `1px solid ${profit >= 0 ? '#bbf7d0' : '#fecdd3'}` }}>
-                                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: profit >= 0 ? '#15803d' : '#be123c', textTransform: 'uppercase', marginBottom: '8px' }}>Gross Profit</div>
-                                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: profit >= 0 ? '#166534' : '#9f1239' }}>
-                                                {formData.currency} {profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        {/* Card 3: Gross Profit */}
+                                        <div style={{ 
+                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdf4' : '#fff1f2'} 100%)`, 
+                                            padding: '28px 24px', 
+                                            borderRadius: '24px', 
+                                            border: `1.5px solid ${profit >= 0 ? '#bbf7d0' : '#fecdd3'}`, 
+                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(34, 197, 94, 0.05)' : 'rgba(244, 63, 94, 0.05)'}`,
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            transition: 'all 0.3s ease'
+                                        }}>
+                                            <div>
+                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#10b981' : '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Gross Profit</div>
+                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#14532d' : '#9f1239' }}>
+                                                    {formData.currency} {profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </div>
+                                            </div>
+                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdf4' : '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#10b981' : '#f43f5e' }}>
+                                                <Calculator size={24} />
                                             </div>
                                         </div>
-                                        <div style={{ background: profit >= 0 ? '#ecfdf5' : '#fff7ed', padding: '20px', borderRadius: '16px', border: `1px solid ${profit >= 0 ? '#d1fae5' : '#ffedd5'}` }}>
-                                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: profit >= 0 ? '#047857' : '#c2410c', textTransform: 'uppercase', marginBottom: '8px' }}>Profit Margin</div>
-                                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: profit >= 0 ? '#065f46' : '#9a3412' }}>
-                                                {margin.toFixed(1)}%
+
+                                        {/* Card 4: Profit Margin */}
+                                        <div style={{ 
+                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdfa' : '#fff7ed'} 100%)`, 
+                                            padding: '28px 24px', 
+                                            borderRadius: '24px', 
+                                            border: `1.5px solid ${profit >= 0 ? '#ccfbf1' : '#ffedd5'}`, 
+                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(20, 184, 166, 0.05)' : 'rgba(249, 115, 22, 0.05)'}`,
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            transition: 'all 0.3s ease'
+                                        }}>
+                                            <div>
+                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#14b8a6' : '#f97316', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Profit Margin</div>
+                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#0f766e' : '#9a3412' }}>
+                                                    {margin.toFixed(1)}%
+                                                </div>
+                                            </div>
+                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdfa' : '#fff7ed', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#14b8a6' : '#f97316' }}>
+                                                <Percent size={24} />
                                             </div>
                                         </div>
                                     </>
                                 );
                             })()}
-                        </div>
-
-                        {/* Expense Table */}
-                        <div className="table-container" style={{ overflowX: 'auto' }}>
-                            <table className="data-table" style={{ width: '100%' }}>
-                                <thead>
-                                    <tr>
-                                        <th style={{ width: '200px' }}>Supplier</th>
-                                        <th style={{ width: '120px' }}>Inv No</th>
-                                        <th style={{ width: '130px' }}>Date</th>
-                                        <th>Description</th>
-                                        <th style={{ width: '100px', textAlign: 'right' }}>Grand Total</th>
-                                        <th style={{ width: '80px', textAlign: 'center' }}>Bill</th>
-                                        <th style={{ width: '120px', textAlign: 'right' }}>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {loadingExpenses ? (
-                                        <tr><td colSpan="7" style={{ textAlign: 'center', padding: '40px' }}>Loading expenses...</td></tr>
-                                    ) : expenses.length === 0 ? (
-                                        <tr><td colSpan="7" style={{ textAlign: 'center', padding: '40px' }}>No expenses recorded yet. Click "Add Expense" to start.</td></tr>
-                                    ) : (
-                                        expenses.map((exp, idx) => (
-                                            <tr key={exp.id}>
-                                                <td style={{ fontWeight: 600 }}>{partners.find(p => p.id === exp.supplier_id)?.name || 'Unknown Supplier'}</td>
-                                                <td>{exp.invoice_no || '-'}</td>
-                                                <td>{exp.invoice_date ? new Date(exp.invoice_date).toLocaleDateString() : '-'}</td>
-                                                <td>{exp.description}</td>
-                                                <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--text-primary)' }}>
-                                                    {formData.currency} {(parseFloat(exp.grand_total) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                </td>
-                                                <td style={{ textAlign: 'center' }}>
-                                                    {exp.bill_url ? (
-                                                        <a href={exp.bill_url} target="_blank" rel="noreferrer" title="View Bill" style={{ color: '#10b981' }}><FileCheck size={18} /></a>
-                                                    ) : <span style={{ color: '#cbd5e1' }}><Paperclip size={18} /></span>}
-                                                </td>
-                                                <td style={{ textAlign: 'right' }}>
-                                                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                                                        <button className="btn-icon" onClick={() => setExpenseModal({ isOpen: true, data: exp })} title="Edit Expense" style={{ color: 'var(--accent)' }}>
-                                                            <FileText size={16} />
-                                                        </button>
-                                                        <button className="btn-icon" onClick={() => handleDeleteExpense(idx)} title="Delete Record" style={{ color: '#ef4444' }}>
-                                                            <Trash2 size={16} />
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
                         </div>
                     </div>
                 )}
@@ -4621,13 +4947,13 @@ export default function WorkflowEditor() {
                                                     if (!parentFolderId && formData.assigned_job_no) {
                                                         const { data: suiteDocs } = await supabase
                                                             .from('workflow_documents')
-                                                            .select('drive_folder_id, gdrive_folder_id')
+                                                            .select('drive_folder_id')
                                                             .eq('assigned_job_no', formData.assigned_job_no)
                                                             .not('drive_folder_id', 'is', null);
                                                         
-                                                        const found = suiteDocs?.find(d => d.drive_folder_id || d.gdrive_folder_id);
+                                                        const found = suiteDocs?.find(d => d.drive_folder_id);
                                                         if (found) {
-                                                            parentFolderId = found.drive_folder_id || found.gdrive_folder_id;
+                                                            parentFolderId = found.drive_folder_id;
                                                         }
                                                     }
                                                     
@@ -4832,14 +5158,133 @@ export default function WorkflowEditor() {
                                 <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.1rem', fontWeight: 700, color: '#1e293b' }}>
                                     <FileCheck size={22} color="#059669" /> Signed Proofs of Delivery / Service
                                 </h3>
-                                <button 
-                                    className="btn btn-sm btn-primary" 
-                                    style={{ background: '#059669', borderColor: '#059669', display: 'flex', alignItems: 'center', gap: '8px' }}
-                                    onClick={() => document.getElementById('signed-proof-upload').click()}
-                                >
-                                    <Upload size={14} /> Upload Signed Copy
-                                </button>
-                                <input id="signed-proof-upload" type="file" hidden onChange={(e) => handleUploadSignedProofDirect(e.target.files[0])} />
+                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                    <button 
+                                        type="button"
+                                        onClick={() => fetchSignedProofs()} 
+                                        className="btn btn-secondary btn-sm" 
+                                        title="Refresh signed proofs from Google Drive" 
+                                        style={{ 
+                                            height: '36px', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center',
+                                            padding: '6px 12px',
+                                            borderRadius: '8px'
+                                        }}
+                                    >
+                                        <RefreshCw size={14} className={loadingSignedProofs ? 'animate-spin' : ''} />
+                                    </button>
+                                    <button 
+                                        type="button"
+                                        onClick={async () => {
+                                            if (authStatus !== 'connected') {
+                                                toast.error('Google Drive is not connected. Please connect/reconnect at the status bar or Settings first.');
+                                                return;
+                                            }
+                                            const token = getStoredToken();
+                                            const rootId = await ensureJobFolder();
+                                            const supportDocsFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+                                            setQrModal({ isOpen: true, folderId: supportDocsFolderId, folderName: 'SupportDocs' });
+                                        }} 
+                                        className="btn btn-secondary btn-sm" 
+                                        title="Mobile Upload to SupportDocs via QR Code"
+                                        style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            gap: '6px',
+                                            background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', 
+                                            border: '1px solid #bbf7d0', 
+                                            color: '#166534',
+                                            height: '36px',
+                                            padding: '6px 12px',
+                                            borderRadius: '8px',
+                                            fontWeight: 600,
+                                            fontSize: '0.85rem'
+                                        }}
+                                    >
+                                        <Smartphone size={14} /> Mobile Scan
+                                    </button>
+                                    <div
+                                        onDragOver={(e) => { e.preventDefault(); setIsDraggingSigned(true); }}
+                                        onDragLeave={(e) => { e.preventDefault(); setIsDraggingSigned(false); }}
+                                        onDrop={async (e) => {
+                                            e.preventDefault();
+                                            setIsDraggingSigned(false);
+                                            const files = Array.from(e.dataTransfer.files);
+                                            if (files.length > 0) {
+                                                setLoadingSignedProofs(true);
+                                                try {
+                                                    const token = getStoredToken();
+                                                    const rootId = await ensureJobFolder();
+                                                    const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+                                                    for (const file of files) {
+                                                        const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
+                                                        const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
+                                                        setFormData(prev => {
+                                                            const newAttachments = [...(prev.attachment_urls || []), proofUrl];
+                                                            return { ...prev, attachment_urls: newAttachments };
+                                                        });
+                                                    }
+                                                    alert('Signed proof(s) uploaded successfully to SupportDocs!');
+                                                    fetchSignedProofs();
+                                                } catch (err) {
+                                                    console.error('Proof upload failed:', err);
+                                                    alert('Upload failed: ' + err.message);
+                                                } finally {
+                                                    setLoadingSignedProofs(false);
+                                                }
+                                            }
+                                        }}
+                                        onClick={() => document.getElementById('signed-proof-upload').click()}
+                                        style={{
+                                            border: isDraggingSigned ? '2px dashed #059669' : '2px dashed #cbd5e1',
+                                            background: isDraggingSigned ? '#ecfdf5' : '#f8fafc',
+                                            padding: '6px 16px',
+                                            borderRadius: '8px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            cursor: 'pointer',
+                                            color: '#059669',
+                                            fontWeight: 600,
+                                            fontSize: '0.85rem',
+                                            transition: 'all 0.2s ease',
+                                            height: '36px',
+                                            justifyContent: 'center'
+                                        }}
+                                    >
+                                        <Upload size={14} />
+                                        <span>{isDraggingSigned ? 'Drop Signed Copy Here' : 'Drop Signed Copy'}</span>
+                                    </div>
+                                    <input id="signed-proof-upload" type="file" multiple hidden onChange={(e) => {
+                                        const files = Array.from(e.target.files);
+                                        const uploadSequence = async () => {
+                                            setLoadingSignedProofs(true);
+                                            try {
+                                                const token = getStoredToken();
+                                                const rootId = await ensureJobFolder();
+                                                const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+                                                for (const file of files) {
+                                                    const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
+                                                    const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
+                                                    setFormData(prev => {
+                                                        const newAttachments = [...(prev.attachment_urls || []), proofUrl];
+                                                        return { ...prev, attachment_urls: newAttachments };
+                                                    });
+                                                }
+                                                alert('Signed proof(s) uploaded successfully!');
+                                                fetchSignedProofs();
+                                            } catch (err) {
+                                                console.error('Proof upload failed:', err);
+                                                alert('Upload failed: ' + err.message);
+                                            } finally {
+                                                setLoadingSignedProofs(false);
+                                            }
+                                        };
+                                        uploadSequence();
+                                    }} />
+                                </div>
                             </div>
                             {loadingSignedProofs ? (
                                 <div style={{ textAlign: 'center', padding: '20px' }}><Loader2 size={24} className="animate-spin" /></div>
@@ -4923,13 +5368,100 @@ export default function WorkflowEditor() {
                                     ))}
                                 </div>
                             </div>
-                            <div style={{ display: 'flex', gap: '10px' }}>
-                                <button onClick={() => fetchExplorerFiles()} className="btn btn-secondary" title="Refresh list">
+                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                <button onClick={() => fetchExplorerFiles()} className="btn btn-secondary" title="Refresh list" style={{ height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                     <RefreshCw size={18} className={loadingExplorer ? 'animate-spin' : ''} />
                                 </button>
-                                <button className="btn btn-primary" onClick={() => document.getElementById('explorer-upload').click()}>
-                                    <Upload size={18} /> Upload Files
+                                <button 
+                                    type="button"
+                                    onClick={async () => {
+                                        if (authStatus !== 'connected') {
+                                            toast.error('Google Drive is not connected. Please connect/reconnect at the status bar or Settings first.');
+                                            return;
+                                        }
+                                        const rootId = await ensureJobFolder();
+                                        setQrModal({ isOpen: true, folderId: rootId, folderName: 'Job Root Folder' });
+                                    }} 
+                                    className="btn btn-secondary" 
+                                    title="Mobile Upload via QR Code"
+                                    style={{ 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        gap: '8px',
+                                        background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', 
+                                        border: '1px solid #bbf7d0', 
+                                        color: '#166534',
+                                        height: '42px',
+                                        padding: '0 16px',
+                                        borderRadius: '10px',
+                                        fontWeight: 600,
+                                        fontSize: '0.85rem'
+                                    }}
+                                >
+                                    <Smartphone size={16} /> Mobile Scan
                                 </button>
+                                <div
+                                    onDragOver={(e) => { e.preventDefault(); setIsDraggingExplorer(true); }}
+                                    onDragLeave={(e) => { e.preventDefault(); setIsDraggingExplorer(false); }}
+                                    onDrop={async (e) => {
+                                        e.preventDefault();
+                                        setIsDraggingExplorer(false);
+                                        const files = Array.from(e.dataTransfer.files);
+                                        if (files.length > 0) {
+                                            setUploadingExplorer(true);
+                                            setUploadProgress(0);
+                                            try {
+                                                const token = getStoredToken();
+                                                const rootId = await ensureJobFolder();
+                                                for (let i = 0; i < files.length; i++) {
+                                                    await uploadFileToDrive(token, files[i], { folderId: rootId });
+                                                    setUploadProgress(((i + 1) / files.length) * 100);
+                                                }
+                                                fetchExplorerFiles();
+                                            } catch (err) {
+                                                console.error('Upload error:', err);
+                                                alert('Failed to upload files.');
+                                            } finally {
+                                                setUploadingExplorer(false);
+                                                setUploadProgress(0);
+                                            }
+                                        }
+                                    }}
+                                    onClick={() => document.getElementById('explorer-upload').click()}
+                                    style={{
+                                        border: isDraggingExplorer ? '2px dashed var(--accent)' : '2px dashed #cbd5e1',
+                                        background: isDraggingExplorer ? '#eff6ff' : '#f8fafc',
+                                        padding: '0 20px',
+                                        borderRadius: '10px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px',
+                                        cursor: 'pointer',
+                                        color: 'var(--accent)',
+                                        fontWeight: 600,
+                                        fontSize: '0.85rem',
+                                        transition: 'all 0.2s ease',
+                                        height: '42px',
+                                        justifyContent: 'center',
+                                        position: 'relative',
+                                        overflow: 'hidden'
+                                    }}
+                                >
+                                    <Upload size={18} />
+                                    <span>{isDraggingExplorer ? 'Drop Files Here' : 'Drop Files to Upload'}</span>
+                                    {uploadingExplorer && (
+                                        <div style={{ 
+                                            position: 'absolute', 
+                                            left: 0, 
+                                            top: 0, 
+                                            bottom: 0, 
+                                            width: `${uploadProgress}%`, 
+                                            background: 'rgba(99, 102, 241, 0.15)', 
+                                            transition: 'width 0.2s ease',
+                                            pointerEvents: 'none'
+                                        }} />
+                                    )}
+                                </div>
                                 <input id="explorer-upload" type="file" multiple hidden onChange={handleExplorerUpload} />
                             </div>
                         </div>
@@ -5033,7 +5565,9 @@ export default function WorkflowEditor() {
                         {/* GST & Financial Summary */}
                         {(() => {
                             const getQuarter = (dateStr) => {
+                                if (!dateStr) return 'Q1';
                                 const month = new Date(dateStr).getMonth();
+                                if (isNaN(month)) return 'Q1';
                                 if (month <= 2) return 'Q1';
                                 if (month <= 5) return 'Q2';
                                 if (month <= 8) return 'Q3';
@@ -5041,9 +5575,38 @@ export default function WorkflowEditor() {
                             };
 
                             const fCust = paymentQuarter === 'All' ? customerPayments : customerPayments.filter(p => getQuarter(p.payment_date) === paymentQuarter);
-                            const fSupp = paymentQuarter === 'All' ? supplierPayments : supplierPayments.filter(p => getQuarter(p.payment_date) === paymentQuarter);
+                            const fSupp = paymentQuarter === 'All' ? expenses : expenses.filter(p => getQuarter(p.invoice_date) === paymentQuarter);
                             
-                            const outGst = fCust.reduce((acc, p) => acc + (parseFloat(p.gst_amount) || 0), 0);
+                            const fInvoices = workflowDocs.filter(d => 
+                                (d.document_type === 'Tax Invoice' || d.document_type === 'Proforma Invoice') &&
+                                (paymentQuarter === 'All' || getQuarter(d.issue_date) === paymentQuarter)
+                            );
+
+                            const ledgerItems = [
+                                ...fInvoices.map(inv => ({
+                                    ...inv,
+                                    isSuiteInvoice: true,
+                                    invoice_no: inv.document_no,
+                                    payment_date: inv.issue_date,
+                                    gst_amount: inv.tax_amount || 0,
+                                    amount: inv.total_amount || 0,
+                                    proof_url: inv.attachment_urls?.[0] || null
+                                })),
+                                ...fCust.map(p => ({
+                                    ...p,
+                                    isSuiteInvoice: false,
+                                    invoice_no: p.invoice_no,
+                                    payment_date: p.payment_date,
+                                    gst_amount: p.gst_amount || 0,
+                                    amount: p.amount || 0,
+                                    proof_url: p.proof_url
+                                }))
+                            ].sort((a, b) => new Date(b.payment_date) - new Date(a.payment_date));
+
+                            const outGst = fInvoices.length > 0 
+                                ? fInvoices.reduce((acc, inv) => acc + (parseFloat(inv.tax_amount) || 0), 0)
+                                : fCust.reduce((acc, p) => acc + (parseFloat(p.gst_amount) || 0), 0);
+                                
                             const inGst = fSupp.reduce((acc, p) => acc + (parseFloat(p.gst_amount) || 0), 0);
                             const netGst = outGst - inGst;
 
@@ -5055,14 +5618,16 @@ export default function WorkflowEditor() {
                                         <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#1e3a8a' }}>
                                             {formData.currency} {outGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                         </div>
-                                        <div style={{ fontSize: '0.7rem', color: '#60a5fa', marginTop: '4px' }}>From {fCust.length} receipts</div>
+                                        <div style={{ fontSize: '0.7rem', color: '#60a5fa', marginTop: '4px' }}>
+                                            {fInvoices.length > 0 ? `From ${fInvoices.length} invoices` : `From ${fCust.length} receipts`}
+                                        </div>
                                     </div>
                                     <div className="summary-card" style={{ background: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)', padding: '20px', borderRadius: '16px', border: '1px solid #fed7aa' }}>
                                         <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#9a3412', textTransform: 'uppercase', marginBottom: '8px' }}>Input GST (Paid)</div>
                                         <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#7c2d12' }}>
                                             {formData.currency} {inGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                         </div>
-                                        <div style={{ fontSize: '0.7rem', color: '#fb923c', marginTop: '4px' }}>From {fSupp.length} invoices</div>
+                                        <div style={{ fontSize: '0.7rem', color: '#fb923c', marginTop: '4px' }}>From {fSupp.length} bills</div>
                                     </div>
                                     <div className="summary-card" style={{ background: `linear-gradient(135deg, ${netGst >= 0 ? '#f0fdf4 0%, #dcfce7 100%' : '#fef2f2 0%, #fee2e2 100%'})`, padding: '20px', borderRadius: '16px', border: `1px solid ${netGst >= 0 ? '#bbf7d0' : '#fecaca'}` }}>
                                         <div style={{ fontSize: '0.75rem', fontWeight: 800, color: netGst >= 0 ? '#166534' : '#991b1b', textTransform: 'uppercase', marginBottom: '8px' }}>Net GST Position</div>
@@ -5078,7 +5643,6 @@ export default function WorkflowEditor() {
                                     <div>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                             <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}><CreditCard size={20} className="text-accent" /> Customer Ledger</h3>
-                                            <button className="btn btn-sm btn-primary" onClick={() => setPaymentModal({ isOpen: true, type: 'customer', data: null })}>+ Add Payment</button>
                                         </div>
                                         <div className="table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
                                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
@@ -5093,30 +5657,69 @@ export default function WorkflowEditor() {
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {fCust.length === 0 ? (
-                                                        <tr><td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>No {paymentQuarter === 'All' ? '' : paymentQuarter} payments recorded.</td></tr>
+                                                    {ledgerItems.length === 0 ? (
+                                                        <tr><td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>No {paymentQuarter === 'All' ? '' : paymentQuarter} payments or invoices recorded.</td></tr>
                                                     ) : (
-                                                        fCust.map(p => (
-                                                            <tr key={p.id} style={{ borderTop: '1px solid #f1f5f9' }}>
-                                                                <td style={{ padding: '12px' }}>{p.invoice_no}</td>
-                                                                <td style={{ padding: '12px' }}>{new Date(p.payment_date).toLocaleDateString()}</td>
-                                                                <td style={{ padding: '12px', textAlign: 'right', color: '#64748b' }}>{p.gst_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>{p.amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                                                <td style={{ padding: '12px', textAlign: 'center' }}>
-                                                                    {p.proof_url ? (
-                                                                        <a href={p.proof_url} target="_blank" rel="noreferrer" style={{ color: '#10b981' }}><FileCheck size={16} /></a>
+                                                        ledgerItems.map(item => (
+                                                            <tr key={item.id} style={{ borderTop: '1px solid #f1f5f9' }}>
+                                                                <td style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', minHeight: '44px' }}>
+                                                                    <span>{item.invoice_no}</span>
+                                                                    {item.isSuiteInvoice ? (
+                                                                        <span style={{ 
+                                                                            padding: '2px 6px', 
+                                                                            borderRadius: '4px', 
+                                                                            fontSize: '0.7rem', 
+                                                                            fontWeight: 700, 
+                                                                            background: '#eff6ff', 
+                                                                            color: '#1e40af',
+                                                                            border: '1px solid #bfdbfe'
+                                                                        }}>
+                                                                            Invoice
+                                                                        </span>
                                                                     ) : (
-                                                                        <label style={{ cursor: 'pointer', color: '#94a3b8' }}>
+                                                                        <span style={{ 
+                                                                            padding: '2px 6px', 
+                                                                            borderRadius: '4px', 
+                                                                            fontSize: '0.7rem', 
+                                                                            fontWeight: 700, 
+                                                                            background: '#f0fdf4', 
+                                                                            color: '#166534',
+                                                                            border: '1px solid #bbf7d0'
+                                                                        }}>
+                                                                            Payment
+                                                                        </span>
+                                                                    )}
+                                                                </td>
+                                                                <td style={{ padding: '12px' }}>{item.payment_date ? new Date(item.payment_date).toLocaleDateString() : '-'}</td>
+                                                                <td style={{ padding: '12px', textAlign: 'right', color: '#64748b' }}>{item.gst_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>{item.amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                                <td style={{ padding: '12px', textAlign: 'center' }}>
+                                                                    {item.isSuiteInvoice ? (
+                                                                        <button 
+                                                                            onClick={() => viewInvoicePDF(item.id)}
+                                                                            style={{ color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'inline-flex', alignItems: 'center' }}
+                                                                            title="Preview Suite Invoice PDF"
+                                                                        >
+                                                                            <Eye size={16} />
+                                                                        </button>
+                                                                    ) : item.proof_url ? (
+                                                                        <a href={item.proof_url} target="_blank" rel="noreferrer" style={{ color: '#10b981', display: 'inline-flex', alignItems: 'center' }}><FileCheck size={16} /></a>
+                                                                    ) : (
+                                                                        <label style={{ cursor: 'pointer', color: '#94a3b8', display: 'inline-flex', alignItems: 'center' }}>
                                                                             <Upload size={16} />
-                                                                            <input type="file" hidden onChange={(e) => handlePaymentProofUpload('customer', p.id, e.target.files[0])} />
+                                                                            <input type="file" hidden onChange={(e) => handlePaymentProofUpload('customer', item.id, e.target.files[0])} />
                                                                         </label>
                                                                     )}
                                                                 </td>
                                                                 <td style={{ padding: '12px', textAlign: 'right' }}>
-                                                                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                                                                        <button onClick={() => setPaymentModal({ isOpen: true, type: 'customer', data: p })} style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}><FileText size={14} /></button>
-                                                                        <button onClick={() => handleDeletePayment('customer', p.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' }}><Trash2 size={14} /></button>
-                                                                    </div>
+                                                                    {item.isSuiteInvoice ? (
+                                                                        <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic' }}>Managed in Suite</span>
+                                                                    ) : (
+                                                                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                                                            <button onClick={() => setPaymentModal({ isOpen: true, type: 'customer', data: item })} style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}><FileText size={14} /></button>
+                                                                            <button onClick={() => handleDeletePayment('customer', item.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' }}><Trash2 size={14} /></button>
+                                                                        </div>
+                                                                    )}
                                                                 </td>
                                                             </tr>
                                                         ))
@@ -5130,7 +5733,7 @@ export default function WorkflowEditor() {
                                     <div>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                             <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}><Users size={20} className="text-accent" /> Supplier Ledger</h3>
-                                            <button className="btn btn-sm btn-primary" onClick={() => setPaymentModal({ isOpen: true, type: 'supplier', data: null })}>+ Add Record</button>
+                                            <button className="btn btn-sm btn-primary" onClick={addExpenseRow}>+ Add Record</button>
                                         </div>
                                         <div className="table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
                                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
@@ -5152,14 +5755,14 @@ export default function WorkflowEditor() {
                                                             <tr key={p.id} style={{ borderTop: '1px solid #f1f5f9' }}>
                                                                 <td style={{ padding: '12px' }}>
                                                                     <div style={{ fontWeight: 600 }}>{partners.find(part => part.id === p.supplier_id)?.name || 'Unknown'}</div>
-                                                                    <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{p.invoice_no}</div>
+                                                                    <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{p.invoice_no || '-'}</div>
                                                                 </td>
-                                                                <td style={{ padding: '12px' }}>{new Date(p.payment_date).toLocaleDateString()}</td>
+                                                                <td style={{ padding: '12px' }}>{p.invoice_date ? new Date(p.invoice_date).toLocaleDateString() : '-'}</td>
                                                                 <td style={{ padding: '12px', textAlign: 'right', color: '#64748b' }}>{p.gst_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>{p.amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>{p.grand_total?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                                                                 <td style={{ padding: '12px', textAlign: 'center' }}>
-                                                                    {p.proof_url ? (
-                                                                        <a href={p.proof_url} target="_blank" rel="noreferrer" style={{ color: '#10b981' }}><FileCheck size={16} /></a>
+                                                                    {p.bill_url ? (
+                                                                        <a href={p.bill_url} target="_blank" rel="noreferrer" style={{ color: '#10b981' }}><FileCheck size={16} /></a>
                                                                     ) : (
                                                                         <label style={{ cursor: 'pointer', color: '#94a3b8' }}>
                                                                             <Upload size={16} />
@@ -5169,8 +5772,8 @@ export default function WorkflowEditor() {
                                                                 </td>
                                                                 <td style={{ padding: '12px', textAlign: 'right' }}>
                                                                     <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                                                                        <button onClick={() => setPaymentModal({ isOpen: true, type: 'supplier', data: p })} style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}><FileText size={14} /></button>
-                                                                        <button onClick={() => handleDeletePayment('supplier', p.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' }}><Trash2 size={14} /></button>
+                                                                        <button onClick={() => setExpenseModal({ isOpen: true, data: p })} style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}><FileText size={14} /></button>
+                                                                        <button onClick={() => handleDeleteExpenseById(p.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' }}><Trash2 size={14} /></button>
                                                                     </div>
                                                                 </td>
                                                             </tr>
@@ -5467,6 +6070,9 @@ export default function WorkflowEditor() {
                                                     setModalEditingContact(null);
                                                     setModalName('');
                                                     setModalEmail('');
+                                                    setModalPost('');
+                                                    setModalHandphone('');
+                                                    setModalDepartment('');
                                                     setIsAddModalOpen(true);
                                                 }}
                                                 style={{ background: 'transparent', border: 'none', color: '#2563eb', fontSize: '11px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
@@ -5506,8 +6112,11 @@ export default function WorkflowEditor() {
                                                         onEdit={(c) => {
                                                             setModalContactType('customer');
                                                             setModalEditingContact(c);
-                                                            setModalName(c.name);
-                                                            setModalEmail(c.email);
+                                                            setModalName(c.name || '');
+                                                            setModalEmail(c.email || '');
+                                                            setModalPost(c.post || '');
+                                                            setModalHandphone(c.handphone || '');
+                                                            setModalDepartment(c.department || '');
                                                             setIsAddModalOpen(true);
                                                         }}
                                                     />
@@ -5529,6 +6138,9 @@ export default function WorkflowEditor() {
                                                     setModalEditingContact(null);
                                                     setModalName('');
                                                     setModalEmail('');
+                                                    setModalPost('');
+                                                    setModalHandphone('');
+                                                    setModalDepartment('');
                                                     setIsAddModalOpen(true);
                                                 }}
                                                 style={{ background: 'transparent', border: 'none', color: '#2563eb', fontSize: '11px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
@@ -5563,8 +6175,11 @@ export default function WorkflowEditor() {
                                                     onEdit={(c) => {
                                                         setModalContactType('office');
                                                         setModalEditingContact(c);
-                                                        setModalName(c.name);
-                                                        setModalEmail(c.email);
+                                                        setModalName(c.name || '');
+                                                        setModalEmail(c.email || '');
+                                                        setModalPost(c.post || '');
+                                                        setModalHandphone(c.handphone || '');
+                                                        setModalDepartment(c.department || '');
                                                         setIsAddModalOpen(true);
                                                     }}
                                                 />
@@ -5589,117 +6204,293 @@ export default function WorkflowEditor() {
                                     style={{ width: '100%', minHeight: '200px', padding: '14px', border: '1px solid #cbd5e1', borderRadius: '8px', outline: 'none', resize: 'vertical', fontFamily: 'monospace', fontSize: '13px', lineHeight: '1.5', boxSizing: 'border-box' }}
                                     value={emailPreview.body}
                                     onChange={(e) => setEmailPreview(prev => ({ ...prev, body: e.target.value }))}
-                                />
-                                <div style={{ background: '#f0fdf4', padding: '12px', borderRadius: '8px', border: '1px solid #bbf7d0', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                    <FileText size={24} color="#16a34a" />
+                                />                                {/* Automatically Attached Document Info */}
+                                <div style={{ background: '#f0fdf4', padding: '12px 16px', borderRadius: '10px', border: '1px solid #bbf7d0', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <div style={{ background: '#dcfce7', borderRadius: '50%', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px' }}>
+                                        <FileCheck size={18} color="#16a34a" />
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{ fontSize: '13px', fontWeight: 700, color: '#14532d' }}>Auto-Generated Document PDF</span>
+                                            <span style={{ fontSize: '10px', background: '#16a34a', color: '#fff', padding: '2px 6px', borderRadius: '4px', fontWeight: 700, textTransform: 'uppercase' }}>Auto</span>
+                                        </div>
+                                        <p style={{ fontSize: '11px', color: '#166534', margin: '2px 0 0 0', opacity: 0.9 }}>The {formData.document_type || 'Document'} PDF is automatically compiled and attached to this email.</p>
+                                    </div>
                                     <div>
-                                        <p style={{ fontSize: '12px', color: '#166534', margin: 0, fontWeight: 700 }}>📄 PDF Automatically Attached</p>
-                                        <p style={{ fontSize: '11px', color: '#166534', margin: '2px 0 0 0', opacity: 0.9 }}>The {formData.document_type || 'Document'} PDF has been generated and is attached to this email.</p>
+                                        <button
+                                            type="button"
+                                            onClick={viewAutoAttachedPDF}
+                                            disabled={saving}
+                                            style={{
+                                                padding: '6px 12px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                color: '#166534',
+                                                background: '#dcfce7',
+                                                border: '1px solid #bbf7d0',
+                                                borderRadius: '6px',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                transition: 'all 0.2s',
+                                                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                                            }}
+                                        >
+                                            <Eye size={12} /> View PDF
+                                        </button>
                                     </div>
                                 </div>
 
-                                {/* SUGGESTED ATTACHMENTS (Linked Documents) */}
-                                {workflowDocs.length > 0 && (
-                                    <div style={{ marginTop: '16px', borderTop: '1px solid #f1f5f9', paddingTop: '16px' }}>
-                                        <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '12px' }}>
-                                            Quick Attach Linked Documents (Job Suite)
-                                        </label>
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                                            {/* Root Job Reference Button (If not current) */}
-                                            {formData.assigned_job_no && formData.document_type !== 'Job' && !workflowDocs.some(d => d.document_type === 'Job') && (
-                                                <div
-                                                    style={{
-                                                        padding: '6px 12px',
-                                                        borderRadius: '6px',
-                                                        background: '#f8fafc',
-                                                        border: '1px solid #e2e8f0',
-                                                        fontSize: '0.75rem',
-                                                        fontWeight: 600,
-                                                        color: '#64748b',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '6px'
-                                                    }}
-                                                >
-                                                    <Package size={12} /> Job: {formData.assigned_job_no}
+                                {/* ATTACHMENTS MANAGER */}
+                                <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', background: '#fff', marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                    
+                                    {/* Header */}
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <Paperclip size={18} color="#3b82f6" />
+                                            <span style={{ fontSize: '14px', fontWeight: 700, color: '#1e293b' }}>Attach Files</span>
+                                            {loadingDriveFiles && (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#64748b' }}>
+                                                    <Loader2 size={12} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
+                                                    <span>Syncing with GDrive...</span>
                                                 </div>
                                             )}
-
-                                            {workflowDocs.filter(d => d.id !== id).map(doc => {
-                                                const isAttached = emailPreview.attachments?.some(a => a.name.includes(doc.document_no));
-                                                return (
-                                                    <button
-                                                        key={doc.id}
-                                                        type="button"
-                                                        onClick={() => attachDocumentFromSuite(doc)}
-                                                        disabled={saving || isAttached}
-                                                        style={{
-                                                            padding: '6px 12px',
-                                                            borderRadius: '6px',
-                                                            background: isAttached ? '#f1f5f9' : '#eff6ff',
-                                                            border: `1px solid ${isAttached ? '#e2e8f0' : '#bfdbfe'}`,
-                                                            fontSize: '0.75rem',
-                                                            fontWeight: 600,
-                                                            color: isAttached ? '#94a3b8' : '#2563eb',
-                                                            cursor: isAttached ? 'default' : 'pointer',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: '6px',
-                                                            transition: 'all 0.2s'
-                                                        }}
-                                                    >
-                                                        {isAttached ? <FileCheck size={12} /> : <Plus size={12} />} 
-                                                        {doc.document_type}: {doc.document_no}
-                                                    </button>
-                                                );
-                                            })}
                                         </div>
+                                        <button
+                                            type="button"
+                                            onClick={fetchDriveAttachments}
+                                            disabled={loadingDriveFiles}
+                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
+                                        >
+                                            <RefreshCw size={12} className={loadingDriveFiles ? 'animate-spin' : ''} style={{ animation: loadingDriveFiles ? 'spin 1s linear infinite' : 'none' }} />
+                                            Refresh Drive
+                                        </button>
                                     </div>
-                                )}
 
-                                {/* QUICK ATTACH GALLERY PHOTOS */}
-                                {galleryFiles.length > 0 && (
-                                    <div style={{ marginTop: '16px', borderTop: '1px solid #f1f5f9', paddingTop: '16px' }}>
-                                        <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '12px' }}>
-                                            Quick Attach Job Photos
-                                        </label>
-                                        <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '8px' }}>
-                                            {galleryFiles.map(file => {
-                                                const isAttached = emailPreview.attachments?.some(a => a.name === file.name);
-                                                return (
-                                                    <div 
-                                                        key={file.id} 
-                                                        onClick={() => !isAttached && attachGalleryFile(file)}
-                                                        style={{ 
-                                                            minWidth: '80px', 
-                                                            height: '60px', 
-                                                            borderRadius: '6px', 
-                                                            overflow: 'hidden', 
-                                                            position: 'relative', 
-                                                            cursor: isAttached ? 'default' : 'pointer',
-                                                            border: isAttached ? '2px solid #10b981' : '1px solid #e2e8f0',
-                                                            opacity: isAttached ? 0.6 : 1
-                                                        }}
-                                                    >
-                                                        <img src={file.thumbnailLink} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                                        {isAttached && (
-                                                            <div style={{ position: 'absolute', inset: 0, background: 'rgba(16,185,129,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                                                <FileCheck size={16} color="#fff" />
+                                    {/* Tabs */}
+                                    <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', borderBottom: '1px solid #cbd5e1', paddingBottom: '1px' }}>
+                                        {[
+                                            { id: 'worksuite', name: 'Worksuite Docs', count: worksuiteFiles.length },
+                                            { id: 'supportDocs', name: 'Support Docs', count: supportDocsFiles.length },
+                                            { id: 'gallery', name: 'Photos', count: galleryFiles.length },
+                                            { id: 'workflowDocs', name: 'Suite Docs', count: workflowDocs.filter(d => d.id !== id).length }
+                                        ].map(tab => {
+                                            const isActive = activeAttachmentTab === tab.id;
+                                            return (
+                                                <button
+                                                    key={tab.id}
+                                                    type="button"
+                                                    onClick={() => setActiveAttachmentTab(tab.id)}
+                                                    style={{
+                                                        padding: '8px 14px',
+                                                        fontSize: '12px',
+                                                        fontWeight: 600,
+                                                        border: 'none',
+                                                        background: isActive ? '#f1f5f9' : 'transparent',
+                                                        color: isActive ? '#2563eb' : '#64748b',
+                                                        borderBottom: isActive ? '2px solid #2563eb' : '2px solid transparent',
+                                                        borderRadius: '6px 6px 0 0',
+                                                        cursor: 'pointer',
+                                                        transition: 'all 0.2s',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '6px',
+                                                        whiteSpace: 'nowrap'
+                                                    }}
+                                                >
+                                                    {tab.name}
+                                                    <span style={{ fontSize: '10px', background: isActive ? '#dbeafe' : '#f1f5f9', color: isActive ? '#2563eb' : '#64748b', padding: '1px 6px', borderRadius: '10px' }}>
+                                                        {tab.count}
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+
+                                    {/* Tab Contents */}
+                                    <div style={{ minHeight: '120px', maxHeight: '200px', overflowY: 'auto', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px' }}>
+                                        {loadingDriveFiles ? (
+                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100px', gap: '8px', color: '#64748b' }}>
+                                                <Loader2 size={24} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
+                                                <span style={{ fontSize: '12px' }}>Loading files from Google Drive...</span>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                {/* Worksuite tab */}
+                                                {activeAttachmentTab === 'worksuite' && (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                                        {worksuiteFiles.length === 0 ? (
+                                                            <div style={{ textAlign: 'center', padding: '24px', color: '#94a3b8', fontSize: '12px' }}>
+                                                                No documents found in Google Drive 'Worksuite' folder.
+                                                            </div>
+                                                        ) : (
+                                                            worksuiteFiles.map(file => {
+                                                                const isAttached = emailPreview.attachments?.some(a => a.name === file.name);
+                                                                return (
+                                                                    <div key={file.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#fff', border: '1px solid #f1f5f9', borderRadius: '6px' }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                                                            {getExplorerFileIcon(file.mimeType)}
+                                                                            <span style={{ fontSize: '12px', fontWeight: 500, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
+                                                                            {file.size && <span style={{ fontSize: '10px', color: '#94a3b8' }}>({Math.round(parseInt(file.size) / 1024)} KB)</span>}
+                                                                        </div>
+                                                                        {isAttached ? (
+                                                                            <span style={{ fontSize: '11px', fontWeight: 600, color: '#10b981', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                                                <FileCheck size={14} /> Attached
+                                                                            </span>
+                                                                        ) : (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => attachDriveFile(file)}
+                                                                                disabled={saving}
+                                                                                style={{ padding: '4px 10px', fontSize: '11px', fontWeight: 600, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', borderRadius: '4px', cursor: 'pointer' }}
+                                                                            >
+                                                                                + Attach
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {/* SupportDocs tab */}
+                                                {activeAttachmentTab === 'supportDocs' && (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                                        {supportDocsFiles.length === 0 ? (
+                                                            <div style={{ textAlign: 'center', padding: '24px', color: '#94a3b8', fontSize: '12px' }}>
+                                                                No documents found in Google Drive 'SupportDocs' folder.
+                                                            </div>
+                                                        ) : (
+                                                            supportDocsFiles.map(file => {
+                                                                const isAttached = emailPreview.attachments?.some(a => a.name === file.name);
+                                                                return (
+                                                                    <div key={file.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#fff', border: '1px solid #f1f5f9', borderRadius: '6px' }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                                                            {getExplorerFileIcon(file.mimeType)}
+                                                                            <span style={{ fontSize: '12px', fontWeight: 500, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
+                                                                            {file.size && <span style={{ fontSize: '10px', color: '#94a3b8' }}>({Math.round(parseInt(file.size) / 1024)} KB)</span>}
+                                                                        </div>
+                                                                        {isAttached ? (
+                                                                            <span style={{ fontSize: '11px', fontWeight: 600, color: '#10b981', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                                                <FileCheck size={14} /> Attached
+                                                                            </span>
+                                                                        ) : (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => attachDriveFile(file)}
+                                                                                disabled={saving}
+                                                                                style={{ padding: '4px 10px', fontSize: '11px', fontWeight: 600, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', borderRadius: '4px', cursor: 'pointer' }}
+                                                                            >
+                                                                                + Attach
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {/* Photos & Gallery tab */}
+                                                {activeAttachmentTab === 'gallery' && (
+                                                    <div>
+                                                        {galleryFiles.length === 0 ? (
+                                                            <div style={{ textAlign: 'center', padding: '24px', color: '#94a3b8', fontSize: '12px' }}>
+                                                                No photos found in Google Drive 'Photos & Gallery' folder.
+                                                            </div>
+                                                        ) : (
+                                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: '8px' }}>
+                                                                {galleryFiles.map(file => {
+                                                                    const isAttached = emailPreview.attachments?.some(a => a.name === file.name);
+                                                                    return (
+                                                                        <div 
+                                                                            key={file.id} 
+                                                                            onClick={() => !isAttached && !saving && attachDriveFile(file)}
+                                                                            style={{ 
+                                                                                aspectRatio: '4/3', 
+                                                                                borderRadius: '6px', 
+                                                                                overflow: 'hidden', 
+                                                                                position: 'relative', 
+                                                                                cursor: isAttached || saving ? 'default' : 'pointer',
+                                                                                border: isAttached ? '2px solid #10b981' : '1px solid #e2e8f0',
+                                                                                opacity: isAttached ? 0.7 : 1,
+                                                                                transition: 'all 0.2s'
+                                                                            }}
+                                                                            title={file.name}
+                                                                        >
+                                                                            <img src={file.thumbnailLink} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                                            {isAttached && (
+                                                                                <div style={{ position: 'absolute', inset: 0, background: 'rgba(16,185,129,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                                                    <FileCheck size={18} color="#fff" />
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    );
+                                                                })}
                                                             </div>
                                                         )}
                                                     </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                )}
+                                                )}
 
-                                {/* Custom Attachments Section */}
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
-                                    <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span>Additional Attachments</span>
-                                        <label style={{ cursor: 'pointer', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '4px', textTransform: 'none', letterSpacing: 'normal' }}>
-                                            <Paperclip size={14} /> Add File
+                                                {/* Suite Docs tab */}
+                                                {activeAttachmentTab === 'workflowDocs' && (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                                        {/* Root Job Reference */}
+                                                        {formData.assigned_job_no && formData.document_type !== 'Job' && !workflowDocs.some(d => d.document_type === 'Job') && (
+                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#fff', border: '1px solid #f1f5f9', borderRadius: '6px' }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                    <Package size={16} color="#64748b" />
+                                                                    <span style={{ fontSize: '12px', fontWeight: 500, color: '#64748b' }}>Job: {formData.assigned_job_no}</span>
+                                                                </div>
+                                                                <span style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic' }}>Job Context</span>
+                                                            </div>
+                                                        )}
+
+                                                        {workflowDocs.filter(d => d.id !== id).length === 0 ? (
+                                                            <div style={{ textAlign: 'center', padding: '24px', color: '#94a3b8', fontSize: '12px' }}>
+                                                                No other documents found in this job suite.
+                                                            </div>
+                                                        ) : (
+                                                            workflowDocs.filter(d => d.id !== id).map(doc => {
+                                                                const filename = `${doc.document_type}_${doc.document_no}.pdf`;
+                                                                const isAttached = emailPreview.attachments?.some(a => a.name === filename);
+                                                                return (
+                                                                    <div key={doc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#fff', border: '1px solid #f1f5f9', borderRadius: '6px' }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                            <FileText size={16} color="#3b82f6" />
+                                                                            <span style={{ fontSize: '12px', fontWeight: 500, color: '#334155' }}>{doc.document_type}: {doc.document_no}</span>
+                                                                        </div>
+                                                                        {isAttached ? (
+                                                                            <span style={{ fontSize: '11px', fontWeight: 600, color: '#10b981', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                                                <FileCheck size={14} /> Attached
+                                                                            </span>
+                                                                        ) : (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => attachDocumentFromSuite(doc)}
+                                                                                disabled={saving}
+                                                                                style={{ padding: '4px 10px', fontSize: '11px', fontWeight: 600, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', borderRadius: '4px', cursor: 'pointer' }}
+                                                                            >
+                                                                                + Attach
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+
+                                    {/* Local File Attachment */}
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
+                                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#475569' }}>Upload Local Files</span>
+                                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', background: '#3b82f6', color: '#fff', padding: '6px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, transition: 'all 0.2s', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+                                            <Upload size={13} /> + Add File
                                             <input
                                                 type="file"
                                                 multiple
@@ -5711,25 +6502,51 @@ export default function WorkflowEditor() {
                                                             attachments: [...(prev.attachments || []), ...files]
                                                         }));
                                                     }
-                                                    e.target.value = null; // Reset input so same file can be selected again if needed
+                                                    e.target.value = null;
                                                 }}
                                                 style={{ display: 'none' }}
                                             />
                                         </label>
-                                    </label>
+                                    </div>
 
-                                    {emailPreview.attachments?.length > 0 && (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                            {emailPreview.attachments.map((file, idx) => (
-                                                <div key={idx} style={{ background: '#f8fafc', padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    {/* Currently Attached Files List */}
+                                    <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
+                                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>
+                                            Currently Attached ({1 + (emailPreview.attachments?.length || 0)})
+                                        </label>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            {/* Special row for the main auto-generated PDF */}
+                                            <div style={{ background: '#f0fdf4', padding: '8px 12px', borderRadius: '8px', border: '1px solid #bbf7d0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderLeft: '4px solid #10b981' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                                    <FileCheck size={16} color="#16a34a" />
+                                                    <span style={{ fontSize: '12px', color: '#14532d', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                        {formData.document_type || 'Document'}_{formData.document_no || 'Draft'}.pdf
+                                                    </span>
+                                                    <span style={{ fontSize: '10px', color: '#166534', background: '#dcfce7', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>Auto-Generated</span>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={viewAutoAttachedPDF}
+                                                    disabled={saving}
+                                                    style={{ background: 'none', border: 'none', color: '#166534', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', fontWeight: 700 }}
+                                                    title="Preview auto-generated PDF"
+                                                >
+                                                    <Eye size={14} /> View
+                                                </button>
+                                            </div>
+
+                                            {/* Other attachments (GDrive, suite, local upload) */}
+                                            {emailPreview.attachments?.map((file, idx) => (
+                                                <div key={idx} style={{ background: '#f8fafc', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-                                                        <Paperclip size={16} color="#64748b" />
-                                                        <span style={{ fontSize: '12px', color: '#334155', whiteWhiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
+                                                        <Paperclip size={15} color="#64748b" />
+                                                        <span style={{ fontSize: '12px', color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
                                                         <span style={{ fontSize: '11px', color: '#94a3b8' }}>({Math.round(file.size / 1024)} KB)</span>
                                                     </div>
                                                     <button
+                                                        type="button"
                                                         onClick={() => setEmailPreview(prev => ({ ...prev, attachments: prev.attachments.filter((_, i) => i !== idx) }))}
-                                                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                                                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
                                                         title="Remove attachment"
                                                     >
                                                         <Trash2 size={14} />
@@ -5737,7 +6554,7 @@ export default function WorkflowEditor() {
                                                 </div>
                                             ))}
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -5774,7 +6591,7 @@ export default function WorkflowEditor() {
                                 </div>
                                 <form onSubmit={handleSaveModalContact} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                        <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Full Name</label>
+                                        <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Full Name *</label>
                                         <input 
                                             type="text" 
                                             required
@@ -5785,7 +6602,17 @@ export default function WorkflowEditor() {
                                         />
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                        <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Email Address</label>
+                                        <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Position</label>
+                                        <input 
+                                            type="text" 
+                                            placeholder="e.g. Manager"
+                                            value={modalPost}
+                                            onChange={e => setModalPost(e.target.value)}
+                                            style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' }}
+                                        />
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Email Address *</label>
                                         <input 
                                             type="email" 
                                             required
@@ -5794,6 +6621,36 @@ export default function WorkflowEditor() {
                                             onChange={e => setModalEmail(e.target.value)}
                                             style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' }}
                                         />
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Phone Number</label>
+                                        <input 
+                                            type="text" 
+                                            placeholder="e.g. +65..."
+                                            value={modalHandphone}
+                                            onChange={e => setModalHandphone(e.target.value)}
+                                            style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' }}
+                                        />
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>Department</label>
+                                        <select 
+                                            value={modalDepartment}
+                                            onChange={e => setModalDepartment(e.target.value)}
+                                            style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none', background: '#fff', color: '#1e293b' }}
+                                        >
+                                            <option value="">-- Select Department --</option>
+                                            <option value="Accounts">Accounts</option>
+                                            <option value="Purchasing">Purchasing</option>
+                                            <option value="Logistics">Logistics</option>
+                                            <option value="Technical">Technical</option>
+                                            <option value="Sales">Sales</option>
+                                            <option value="Management">Management</option>
+                                            <option value="Operations">Operations</option>
+                                            <option value="Finance">Finance</option>
+                                            <option value="Safety">Safety</option>
+                                            <option value="Other">Other</option>
+                                        </select>
                                     </div>
                                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
                                         <button 
@@ -6449,8 +7306,20 @@ export default function WorkflowEditor() {
                     <QuickExpenseAdd 
                         company_id={profile?.company_id}
                         job_id={id}
+                        jobs={[{ 
+                            id: id, 
+                            document_no: formData.assigned_job_no || formData.document_no || originalJobNo,
+                            customer_name: formData.customer_name || formData.partners?.name || '',
+                            vessel_name: formData.vessel_name || formData.vessels?.vessel_name || formData.location_name || ''
+                        }]}
                         partners={partners}
                         expense={expenseModal.data}
+                        galleryFiles={galleryFiles}
+                        onOpenQRModal={async () => {
+                            const rootId = await ensureJobFolder();
+                            const expenseFolderId = await getOrCreateFolder(getStoredToken(), 'Expenses & Bills', rootId);
+                            setQrModal({ isOpen: true, folderId: expenseFolderId, folderName: 'Expenses & Bills' });
+                        }}
                         onSuccess={(data) => {
                             if (expenseModal.data) {
                                 setExpenses(prev => prev.map(e => e.id === data.id ? data : e));
@@ -6575,6 +7444,62 @@ export default function WorkflowEditor() {
                     prefillData={paymentPrefill}
                     companyId={profile.company_id}
                 />
+            )}
+
+            {qrModal.isOpen && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justify: 'center', zIndex: 10000, padding: '20px' }}>
+                    <div className="glass-panel animate-scale-up" style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
+                        <button 
+                            onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+                            style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                            onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                            onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
+                        >
+                            <X size={24} />
+                        </button>
+
+                        <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justify: 'center', margin: '0 auto 16px' }}>
+                            <Smartphone size={24} />
+                        </div>
+
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Mobile Upload Gateway</h3>
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: '1.4' }}>
+                            Scan this QR code with your smartphone camera to upload files directly to your <strong>{qrModal.folderName}</strong> folder.
+                        </p>
+
+                        {!qrModal.folderId ? (
+                            <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                <Loader2 size={36} className="animate-spin text-primary" />
+                                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
+                            </div>
+                        ) : (
+                            <div>
+                                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block', marginBottom: '24px' }}>
+                                    <img 
+                                        src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
+                                            `${window.location.origin}/upload-media?jobId=${id}&folderId=${qrModal.folderId}&token=${localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent((formData.assigned_job_no || formData.document_no || 'Job') + ' - ' + qrModal.folderName)}`
+                                        )}`}
+                                        alt="Upload QR Code"
+                                        style={{ width: '200px', height: '200px', display: 'block' }}
+                                    />
+                                </div>
+
+                                <div style={{ fontSize: '0.8rem', color: '#94a3b8', background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+                                    <Info size={14} style={{ flexShrink: 0 }} />
+                                    <span>Session active. QR code is valid for temporary uploading.</span>
+                                </div>
+                            </div>
+                        )}
+
+                        <button 
+                            className="btn btn-primary" 
+                            style={{ width: '100%', marginTop: '24px', padding: '12px', borderRadius: '12px', fontWeight: 700 }}
+                            onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+                        >
+                            Done
+                        </button>
+                    </div>
+                </div>
             )}
         </div>
     );

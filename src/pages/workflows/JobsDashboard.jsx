@@ -5,7 +5,8 @@ import {
     Search, Grid, List, ArrowRight, ExternalLink, ShieldCheck, 
     AlertCircle, CheckCircle2, Activity, FileText, Printer, Eye, 
     RefreshCcw, FolderOpen, Copy, Trash2, MoreVertical,
-    Package, CreditCard, Calculator, Image, Info
+    Package, CreditCard, Calculator, Image, Info,
+    Briefcase, Truck, ClipboardList, Receipt, CheckSquare, Book, Ship, MapPin
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -27,6 +28,22 @@ export default function JobsDashboard() {
     const [searchQuery, setSearchQuery] = useState('');
     const [viewMode, setViewMode] = useState('card'); // 'card' or 'table'
     const navigate = useNavigate();
+    const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'operations'
+
+    const jobsTools = [
+        { title: 'Quote2Customers', description: 'Create and manage sales quotations sent to customers.', icon: <Briefcase size={24} />, color: '#6366f1', path: '/quotations' },
+        { title: 'JOBS Master Board', description: 'Full master list of all jobs with status tracking and timeline views.', icon: <ShieldCheck size={24} />, color: '#10b981', path: '/workflows?type=Job' },
+        { title: 'Invoices Portal', description: 'Generate tax invoices, track billings, and manage receivables.', icon: <DollarSign size={24} />, color: '#14b8a6', path: '/invoices' },
+        { title: 'Payment Received', description: 'Record and view incoming payments and customer deposits.', icon: <CheckCircle2 size={24} />, color: '#22c55e', path: '/workflows?type=Payment+Received' },
+        { title: 'Delivery Orders', description: 'Generate DOs and dispatch cargo transit documents.', icon: <Truck size={24} />, color: '#10b981', path: '/delivery-orders' },
+        { title: 'Service Reports', description: 'Record technician task sheets and services performed.', icon: <ClipboardList size={24} />, color: '#ec4899', path: '/service-reports' },
+        { title: 'Packing Lists', description: 'Create manifest sheets for cargo shipping and crates.', icon: <Package size={24} />, color: '#f97316', path: '/packing-lists' },
+        { title: 'Proforma Invoices', description: 'Issue advance invoices for deposit collections.', icon: <Receipt size={24} />, color: '#ef4444', path: '/proforma-invoices' },
+        { title: 'Calibration Lab', description: 'Access calibration test reports and instrument logs.', icon: <CheckSquare size={24} />, color: '#059669', path: '/forms/calibration-lab' },
+        { title: 'Manuals & Ref. Books', description: 'Search and view system manuals and maritime references.', icon: <Book size={24} />, color: '#f97316', path: '/manuals' },
+        { title: 'Vessels Directory', description: 'Manage ships, vessels, and their specific engineering details.', icon: <Ship size={24} />, color: '#94a3b8', path: '/vessels' },
+        { title: 'Work Locations', description: 'View geographic workplaces and shipyard coordinates.', icon: <MapPin size={24} />, color: '#94a3b8', path: '/work-locations' }
+    ];
 
     const handleNavigateToTab = (job, tabName) => {
         const masterId = job.masterJob?.id || job.allDocs[0]?.id;
@@ -50,14 +67,48 @@ export default function JobsDashboard() {
     // Fetch User Settings and Workflow Documents based on Active Company
     useEffect(() => {
         const loadInitialData = async () => {
-            if (!profile?.company_id) return;
+            if (!profile?.company_id) {
+                setLoading(false);
+                return;
+            }
             try {
                 setLoading(true);
+
+                // One-time database correction for CEL-2606-6081 issue date
+                try {
+                    const { data: fixDoc } = await supabase
+                        .from('workflow_documents')
+                        .select('id, issue_date')
+                        .eq('document_no', 'CEL-2606-6081')
+                        .eq('issue_date', '2025-11-30')
+                        .maybeSingle();
+                    if (fixDoc) {
+                        await supabase
+                            .from('workflow_documents')
+                            .update({ issue_date: '2026-06-19' })
+                            .eq('id', fixDoc.id);
+                        console.log("Successfully corrected CEL-2606-6081 issue date to 2026-06-19");
+                    }
+                } catch (fixErr) {
+                    console.error("Error executing one-time correction:", fixErr);
+                }
+
+                // Temporary debug log for CEL-2606-6051
+                try {
+                    const { data: suite6051 } = await supabase
+                        .from('workflow_documents')
+                        .select('id, document_type, document_no, assigned_job_no, total_amount, is_job, revision_no')
+                        .eq('assigned_job_no', 'CEL-2606-6051');
+                    console.log("=== CEL-2606-6051 Suite Documents ===", suite6051);
+                } catch (err) {
+                    console.error("Error querying suite6051:", err);
+                }
+
                 const docSettings = await getDocumentSettings(profile.company_id);
                 setSettings(docSettings);
                 
-                // Load All Workflow Documents for the active company workspace
-                const { data: docs, error } = await getWorkflowDocuments(profile.company_id);
+                // Load All Workflow Documents for the active company workspace (filtering for job documents at DB level)
+                const { data: docs, error } = await getWorkflowDocuments(profile.company_id, null, true);
                 if (error) throw error;
                 setDocuments(docs || []);
             } catch (err) {
@@ -140,8 +191,12 @@ export default function JobsDashboard() {
 
             // Financial Calculations
             if (doc.document_type === 'Tax Invoice') {
-                group.customerInvoiceAmount += parseFloat(doc.total_amount) || 0;
-                group.customerPaidStatus = doc.status || 'Unpaid';
+                if (doc.status !== 'Draft') {
+                    group.customerInvoiceAmount += parseFloat(doc.total_amount) || 0;
+                    group.customerPaidStatus = doc.status || 'Unpaid';
+                } else if (group.customerPaidStatus === 'No Invoice') {
+                    group.customerPaidStatus = 'Draft';
+                }
             } else if (doc.document_type === 'Purchase Order') {
                 group.supplierInvoiceAmount += parseFloat(doc.total_amount) || 0;
                 group.supplierPaidStatus = doc.status || 'Pending';
@@ -154,10 +209,23 @@ export default function JobsDashboard() {
         // Convert grouped objects to array and do final mapping
         return Object.values(jobGroups).map(job => {
             const overdueDays = getOverdueDays(job.expiryDate, job.status);
+            
+            // Fallback to Job value for Billed if no Tax Invoice exists
+            const billedAmount = job.customerInvoiceAmount > 0 
+                ? job.customerInvoiceAmount 
+                : (parseFloat(job.masterJob?.total_amount) || 0);
+
+            // Fallback to PO value if no Purchase Order exists
+            const poAmount = job.supplierInvoiceAmount > 0 
+                ? job.supplierInvoiceAmount 
+                : 0;
+
             return {
                 ...job,
+                customerInvoiceAmount: billedAmount,
+                supplierInvoiceAmount: poAmount,
                 suppliersList: Array.from(job.suppliers).join(', ') || '-',
-                profit: job.customerInvoiceAmount - job.supplierInvoiceAmount,
+                profit: billedAmount - poAmount,
                 overdueDays
             };
         });
@@ -234,7 +302,7 @@ export default function JobsDashboard() {
             toast.success('Folder provisioned successfully!');
             
             // Reload documents
-            const { data: docs } = await getWorkflowDocuments(profile.company_id);
+            const { data: docs } = await getWorkflowDocuments(profile.company_id, null, true);
             setDocuments(docs || []);
 
             window.open(`https://drive.google.com/drive/folders/${projectFolderId}`, '_blank');
@@ -339,7 +407,7 @@ export default function JobsDashboard() {
     const reloadDocuments = async () => {
         if (!profile?.company_id) return;
         try {
-            const { data: docs, error } = await getWorkflowDocuments(profile.company_id);
+            const { data: docs, error } = await getWorkflowDocuments(profile.company_id, null, true);
             if (error) throw error;
             setDocuments(docs || []);
         } catch (err) {
@@ -390,13 +458,24 @@ export default function JobsDashboard() {
 
         try {
             setLoading(true);
-            let deleteErrors = [];
-            for (const doc of job.allDocs) {
+            
+            // Filter out dependent/revision documents whose parents are also being deleted in this batch.
+            // When the parent is deleted, deleteWorkflowDocument recursively deletes its dependents,
+            // so we don't need to call it separately on the child documents.
+            const docIds = new Set(job.allDocs.map(d => d.id));
+            const rootDocs = job.allDocs.filter(doc => !doc.original_document_id || !docIds.has(doc.original_document_id));
+
+            // Run deletions in parallel using Promise.all
+            const deletePromises = rootDocs.map(async (doc) => {
                 const { error } = await deleteWorkflowDocument(doc.id);
                 if (error) {
-                    deleteErrors.push(error.message || `Error deleting document ID ${doc.id}`);
+                    return error.message || `Error deleting document ID ${doc.id}`;
                 }
-            }
+                return null;
+            });
+
+            const results = await Promise.all(deletePromises);
+            const deleteErrors = results.filter(Boolean);
 
             if (deleteErrors.length > 0) {
                 toast.error(`Some documents failed to delete: ${deleteErrors.join(', ')}`);
@@ -570,8 +649,110 @@ export default function JobsDashboard() {
                 </div>
             </div>
 
-            {/* Google Drive Integration card */}
-            <div className="glass-panel animate-fade-in" style={{ padding: '20px', borderRadius: '16px', border: '1px solid var(--border-color)', marginBottom: '24px', background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.04) 0%, rgba(16, 185, 129, 0.04) 100%)', backdropFilter: 'blur(8px)' }}>
+            {/* Tab Selector */}
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', background: '#f1f5f9', padding: '6px', borderRadius: '14px', width: 'fit-content' }}>
+                <button
+                    onClick={() => setActiveTab('dashboard')}
+                    style={{
+                        padding: '10px 20px',
+                        borderRadius: '10px',
+                        border: 'none',
+                        background: activeTab === 'dashboard' ? '#fff' : 'transparent',
+                        color: activeTab === 'dashboard' ? 'var(--accent)' : '#64748b',
+                        fontWeight: 700,
+                        fontSize: '0.9rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        boxShadow: activeTab === 'dashboard' ? '0 4px 6px -1px rgba(0,0,0,0.1)' : 'none',
+                        transition: 'all 0.2s'
+                    }}
+                >
+                    <LayoutDashboard size={18} />
+                    Active Jobs Dashboard
+                </button>
+                <button
+                    onClick={() => setActiveTab('operations')}
+                    style={{
+                        padding: '10px 20px',
+                        borderRadius: '10px',
+                        border: 'none',
+                        background: activeTab === 'operations' ? '#fff' : 'transparent',
+                        color: activeTab === 'operations' ? 'var(--accent)' : '#64748b',
+                        fontWeight: 700,
+                        fontSize: '0.9rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        boxShadow: activeTab === 'operations' ? '0 4px 6px -1px rgba(0,0,0,0.1)' : 'none',
+                        transition: 'all 0.2s'
+                    }}
+                >
+                    <Briefcase size={18} />
+                    Operations &amp; Navigation
+                </button>
+            </div>
+
+            {activeTab === 'operations' ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '24px', width: '100%', marginBottom: '40px' }}>
+                    {jobsTools.map((tool, idx) => (
+                        <div 
+                            key={idx}
+                            onClick={() => navigate(tool.path)}
+                            style={{
+                                background: '#ffffff',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '20px',
+                                padding: '24px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '16px',
+                                cursor: 'pointer',
+                                transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                            }}
+                            onMouseOver={(e) => {
+                                e.currentTarget.style.transform = 'translateY(-4px)';
+                                e.currentTarget.style.boxShadow = '0 12px 20px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+                                e.currentTarget.style.borderColor = tool.color + '44';
+                            }}
+                            onMouseOut={(e) => {
+                                e.currentTarget.style.transform = 'none';
+                                e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.05)';
+                                e.currentTarget.style.borderColor = '#e2e8f0';
+                            }}
+                        >
+                            <div style={{
+                                width: '48px',
+                                height: '48px',
+                                borderRadius: '12px',
+                                background: `${tool.color}15`,
+                                color: tool.color,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                            }}>
+                                {tool.icon}
+                            </div>
+                            <div>
+                                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 6px 0' }}>
+                                    {tool.title}
+                                </h3>
+                                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                                    {tool.description}
+                                </p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <>
+
+
+                    {/* Google Drive Integration card */}
+                    <div className="glass-panel animate-fade-in" style={{ padding: '20px', borderRadius: '16px', border: '1px solid var(--border-color)', marginBottom: '24px', background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.04) 0%, rgba(16, 185, 129, 0.04) 100%)', backdropFilter: 'blur(8px)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                         <div style={{ background: '#fef3c7', padding: '12px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1461,6 +1642,8 @@ export default function JobsDashboard() {
                         </tbody>
                     </table>
                 </div>
+            )}
+                </>
             )}
         </div>
     );

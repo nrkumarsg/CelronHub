@@ -26,9 +26,20 @@ export const getMyCompanies = async (userId) => {
     }
 
     // Fetch all companies to join in-memory
-    const { data: allCompanies, error: cError } = await supabase
+    let { data: allCompanies, error: cError } = await supabase
         .from('companies')
         .select('id, name, slug, logo_url, enabled_modules');
+
+    if (cError && (cError.code === '42703' || String(cError.message).includes('enabled_modules'))) {
+        console.warn('enabled_modules column is missing. Querying without it...');
+        const retry = await supabase
+            .from('companies')
+            .select('id, name, slug, logo_url');
+        if (!retry.error) {
+            allCompanies = retry.data;
+            cError = null;
+        }
+    }
 
     if (cError) {
         console.error('Error fetching companies for join fallback:', cError);

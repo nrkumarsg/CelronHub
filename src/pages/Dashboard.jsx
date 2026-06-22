@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Users, DollarSign, Activity, FileSpreadsheet, Ship, MapPin, Brain, MessageSquare, FileText, Briefcase, ShoppingCart, Truck, Receipt, Award, CheckCircle, List, ClipboardCheck, Package, Layers, RefreshCw, FileDigit, Clock, HardDrive, Sparkles } from 'lucide-react';
+import { Search, Users, DollarSign, Activity, FileSpreadsheet, Ship, MapPin, Brain, MessageSquare, FileText, Briefcase, ShoppingCart, Truck, Receipt, Award, CheckCircle, List, ClipboardCheck, Package, Layers, RefreshCw, FileDigit, Clock, HardDrive, Sparkles, Wrench } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getPartners, getContacts } from '../lib/store';
 import { supabase } from '../lib/supabase';
@@ -158,7 +158,7 @@ export default function Dashboard() {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '24px', marginBottom: '32px' }}>
-                <div className="stat-card">
+                <div className="stat-card" onClick={() => navigate('/partners')} style={{ cursor: 'pointer', transition: 'transform 0.2s' }} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
                         <span>Total Partners</span>
                         <Users size={20} color="var(--accent)" />
@@ -166,7 +166,7 @@ export default function Dashboard() {
                     <div className="stat-value">{loading ? '...' : stats.totalPartners}</div>
                 </div>
 
-                <div className="stat-card">
+                <div className="stat-card" onClick={() => navigate('/partners?type=Customer')} style={{ cursor: 'pointer', transition: 'transform 0.2s' }} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
                         <span>Customers</span>
                         <DollarSign size={20} color="#4ade80" />
@@ -174,7 +174,7 @@ export default function Dashboard() {
                     <div className="stat-value">{loading ? '...' : stats.customers}</div>
                 </div>
 
-                <div className="stat-card">
+                <div className="stat-card" onClick={() => navigate('/partners?type=Supplier')} style={{ cursor: 'pointer', transition: 'transform 0.2s' }} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
                         <span>Suppliers</span>
                         <Activity size={20} color="#facc15" />
@@ -182,7 +182,7 @@ export default function Dashboard() {
                     <div className="stat-value">{loading ? '...' : stats.suppliers}</div>
                 </div>
 
-                <div className="stat-card">
+                <div className="stat-card" onClick={() => navigate('/contacts')} style={{ cursor: 'pointer', transition: 'transform 0.2s' }} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
                         <span>Total Contacts</span>
                         <FileSpreadsheet size={20} color="#c084fc" />
@@ -200,12 +200,19 @@ export default function Dashboard() {
                 </div>
                 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
-                    <div className="stat-card" style={{ 
-                        background: 'linear-gradient(135deg, #ffffff 0%, #eff6ff 100%)',
-                        borderLeft: '4px solid #3b82f6',
-                        position: 'relative',
-                        overflow: 'hidden'
-                    }}>
+                    <div className="stat-card" 
+                        onClick={() => navigate('/vessels')}
+                        style={{ 
+                            background: 'linear-gradient(135deg, #ffffff 0%, #eff6ff 100%)',
+                            borderLeft: '4px solid #3b82f6',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            cursor: 'pointer',
+                            transition: 'transform 0.2s'
+                        }}
+                        onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                        onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}
+                    >
                         <div style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b', fontWeight: 600 }}>
                             <span>Total Vessels</span>
                             <Ship size={24} color="#3b82f6" />
@@ -215,12 +222,19 @@ export default function Dashboard() {
                         <Ship size={80} color="#3b82f6" style={{ position: 'absolute', right: '-10px', bottom: '-20px', opacity: 0.05 }} />
                     </div>
 
-                    <div className="stat-card" style={{ 
-                        background: 'linear-gradient(135deg, #ffffff 0%, #fff7ed 100%)',
-                        borderLeft: '4px solid #f97316',
-                        position: 'relative',
-                        overflow: 'hidden'
-                    }}>
+                    <div className="stat-card" 
+                        onClick={() => navigate('/work-locations')}
+                        style={{ 
+                            background: 'linear-gradient(135deg, #ffffff 0%, #fff7ed 100%)',
+                            borderLeft: '4px solid #f97316',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            cursor: 'pointer',
+                            transition: 'transform 0.2s'
+                        }}
+                        onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                        onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}
+                    >
                         <div style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b', fontWeight: 600 }}>
                             <span>Work Locations</span>
                             <MapPin size={24} color="#f97316" />
@@ -299,6 +313,8 @@ export default function Dashboard() {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
                     {[
                         { label: 'Storage Hub', icon: HardDrive, path: '/storage?tab=explorer', color: '#6366f1' },
+                        { label: 'Corporate Vault', icon: HardDrive, path: '/vault', color: '#f43f5e' },
+                        { label: 'Scanner & Tools', icon: Wrench, path: '/tools', color: '#ec4899' },
                         { label: 'All Documents', icon: Layers, path: '/workflows', color: '#64748b' },
                         { label: 'Jobs', icon: Briefcase, path: '/workflows?type=Jobs', color: '#0f172a' },
                         { label: 'Enquiry from customer', icon: FileText, path: '/workflows?type=Enquiry', color: '#3b82f6' },

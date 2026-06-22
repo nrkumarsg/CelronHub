@@ -7,24 +7,78 @@ export default function OAuthCallback() {
 
     useEffect(() => {
         const handleCallback = async () => {
-            // Extract tokens from URL hash (Implicit Flow)
+            // Extract tokens from URL hash
             const hash = window.location.hash.substring(1);
             const params = new URLSearchParams(hash);
 
             const accessToken = params.get('access_token');
-            const state = params.get('state'); // This contains our accountId
-            const expiresIn = params.get('expires_in') || '3600'; // Default to 1 hour if missing
+            const stateRaw = params.get('state'); // Custom state for Drive flows
+            const state = stateRaw || '';
+            const expiresIn = params.get('expires_in') || '3600';
 
+            console.log('[OAuthCallback] hash params:', { hasToken: !!accessToken, state });
+
+            // ─── CASE 1: Supabase Auth Login (Google Sign-In) ────────────────────
+            // When a user signs in with Google for authentication, Supabase returns
+            // an access_token in the hash but with NO custom state.
+            // We let Supabase SDK process the session automatically via onAuthStateChange.
+            if (accessToken && !state) {
+                try {
+                    // Supabase automatically picks up the session from the URL hash.
+                    const { data: { session }, error } = await supabase.auth.getSession();
+                    if (error) throw error;
+
+                    if (session?.user) {
+                        console.log('[OAuthCallback] Auth login successful for:', session.user.email);
+                        navigate('/', { replace: true });
+                    } else {
+                        // Try PKCE code exchange from query params
+                        const urlParams = new URLSearchParams(window.location.search);
+                        const code = urlParams.get('code');
+                        if (code) {
+                            const { error: exchangeErr } = await supabase.auth.exchangeCodeForSession(code);
+                            if (exchangeErr) throw exchangeErr;
+                            navigate('/', { replace: true });
+                        } else {
+                            console.warn('[OAuthCallback] No session and no code found.');
+                            navigate('/login', { replace: true });
+                        }
+                    }
+                } catch (err) {
+                    console.error('[OAuthCallback] Auth login error:', err);
+                    navigate('/login', { replace: true });
+                }
+                return;
+            }
+
+            // ─── CASE 2: PKCE Code Exchange (code in query params, no hash token) ─
+            const urlSearchParams = new URLSearchParams(window.location.search);
+            const code = urlSearchParams.get('code');
+            if (code && !state) {
+                try {
+                    const { error } = await supabase.auth.exchangeCodeForSession(code);
+                    if (error) throw error;
+                    console.log('[OAuthCallback] PKCE session exchange successful');
+                    navigate('/', { replace: true });
+                } catch (err) {
+                    console.error('[OAuthCallback] PKCE exchange error:', err);
+                    navigate('/login', { replace: true });
+                }
+                return;
+            }
+
+            // ─── CASE 3: Google Drive / Feature OAuth (has state) ────────────────
             if (accessToken && state) {
                 try {
-                    console.log('Processing callback for state:', state);
+                    console.log('Processing Drive/feature callback for state:', state);
 
                     // Store token globally for Vault/OCR/Drive integration
                     localStorage.setItem('google_access_token', accessToken);
                     localStorage.setItem('google_token_expiry', new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString());
 
-                    if (state === 'contacts_sync' || state === 'manual_upload' || state === 'enquiry_form' || state === 'catalog_photo_upload' || state === 'calibration_lab' || state === 'scanner_module' || state === 'apk_management' || state === 'drive_status_tray' || state === 'drive_card_sync' || state === 'drive_bill_sync') {
-                        // Temp store token for the sync process
+                    const baseState = state.split(':')[0];
+
+                    if (['contacts_sync','manual_upload','enquiry_form','catalog_photo_upload','calibration_lab','scanner_module','apk_management','drive_status_tray','drive_card_sync','drive_bill_sync'].includes(baseState)) {
                         sessionStorage.setItem('google_contacts_token', accessToken);
                         sessionStorage.setItem('google_contacts_expires', new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString());
 
@@ -58,7 +112,7 @@ export default function OAuthCallback() {
                         const target = returnUrl || targetMap[state] || '/dashboard';
                         if (returnUrl) sessionStorage.removeItem('google_auth_return_url');
 
-                        alert(messageMap[state] || 'Google Connected Successfully!');
+                        alert(messageMap[baseState] || 'Google Connected Successfully!');
                         navigate(target);
                         return;
                     }
@@ -79,41 +133,60 @@ export default function OAuthCallback() {
                         return;
                     }
 
-                    // Update the communication account with the auth data
-                    const { data, error, count } = await supabase
-                        .from('communication_accounts')
-                        .update({
-                            auth_data: {
-                                access_token: accessToken,
-                                expires_at: new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString(),
+                    try {
+                        if (state.includes(':')) {
+                            const [base, companyId] = state.split(':');
+                            if (companyId) {
+                                localStorage.setItem('google_access_token_company_' + companyId, accessToken);
+                                localStorage.setItem('google_token_expiry_company_' + companyId, new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString());
+                                localStorage.setItem('google_access_token', accessToken);
+                                localStorage.setItem('google_token_expiry', new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString());
                             }
-                        })
-                        .eq('id', state)
-                        .select(); // Select back to verify it worked
+                        }
 
-                    if (error) {
-                        console.error('Database update error:', error);
-                        throw error;
+                        if (!state.includes(':')) {
+                            const { data, error } = await supabase
+                                .from('communication_accounts')
+                                .update({
+                                    auth_data: {
+                                        access_token: accessToken,
+                                        expires_at: new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString(),
+                                    }
+                                })
+                                .eq('id', state)
+                                .select();
+
+                            if (error) {
+                                console.error('Database update error:', error);
+                                throw error;
+                            }
+
+                            if (!data || data.length === 0) {
+                                console.warn('Update matched 0 rows. State/ID might be wrong:', state);
+                                alert('Warning: Account not found in database. Please try adding the account again.');
+                                navigate('/messaging');
+                                return;
+                            }
+
+                            console.log('Successfully updated account:', state);
+                            alert('Google API Connected Successfully!');
+                            navigate('/messaging');
+                            return;
+                        }
+                    } catch (e) {
+                        console.warn('Partial callback handling:', e);
                     }
-
-                    if (!data || data.length === 0) {
-                        console.warn('Update matched 0 rows. State/ID might be wrong:', state);
-                        alert('Warning: Account not found in database. Please try adding the account again.');
-                        navigate('/messaging');
-                        return;
-                    }
-
-                    console.log('Successfully updated account:', state);
                     alert('Google API Connected Successfully!');
-                    navigate('/messaging');
+                    navigate('/dashboard');
                 } catch (err) {
                     console.error('Callback error:', err);
                     alert(`Failed to save authentication data: ${err.message}`);
                     navigate('/messaging');
                 }
             } else {
-                console.warn('Callback missing token or state:', { hasToken: !!accessToken, state });
-                navigate('/messaging');
+                // No token, no code — unexpected
+                console.warn('[OAuthCallback] No token or code found in callback URL');
+                navigate('/login', { replace: true });
             }
         };
 

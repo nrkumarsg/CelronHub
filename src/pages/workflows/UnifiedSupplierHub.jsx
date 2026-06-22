@@ -26,9 +26,16 @@ import {
     Building2,
     Calendar,
     Loader2,
-    Camera
+    Camera,
+    Users,
+    Smartphone,
+    Sparkles,
+    FileCheck,
+    Receipt,
+    Wrench,
+    Layers
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import FastFloatModal from '../../components/workflows/FastFloatModal';
 
@@ -37,14 +44,39 @@ export default function UnifiedSupplierHub() {
         { id: 'customer_enquiries', label: 'Customer Enquiries', icon: <FileText size={18} />, color: '#6366f1' },
         { id: 'rfq_floats', label: 'RFQ Floats', icon: <ArrowRightLeft size={18} />, color: '#f59e0b' },
         { id: 'supplier_quotes', label: 'Supplier Quotes', icon: <Clock size={18} />, color: '#10b981' },
-        { id: 'orders_to_suppliers', label: 'Order to Suppliers', icon: <ShoppingCart size={18} />, color: '#ef4444' }
+        { id: 'orders_to_suppliers', label: 'Order to Suppliers', icon: <ShoppingCart size={18} />, color: '#ef4444' },
+        { id: 'supplier_tools', label: 'Supplier Directory & Tools', icon: <Building2 size={18} />, color: '#8b5cf6' }
+    ];
+
+    const supplierTools = [
+        { title: 'Partners Directory', description: 'Manage vendor and supplier profiles, payment terms, and organizational details.', icon: <Building2 size={24} />, color: '#f97316', path: '/partners' },
+        { title: 'Contacts Registry', description: 'Access key contact persons, emails, and direct phone numbers.', icon: <Users size={24} />, color: '#6366f1', path: '/contacts' },
+        { title: 'AI Drive Card Scanner', description: 'Upload business cards to Google Drive and auto-extract vendor metadata.', icon: <Smartphone size={24} />, color: '#ec4899', path: '/partners/ai-drive-parser' },
+        { title: 'AI Email Parser', description: 'Extract supplier contact info automatically from copy-pasted emails.', icon: <Sparkles size={24} />, color: '#a855f7', path: '/partners/ai-parser' },
+        { title: 'Business Card Merger', description: 'Combine scanned business cards using third-party web automation.', icon: <Layers size={24} />, color: '#e11d48', path: 'https://business-card-merger.vercel.app', isExternal: true },
+        { title: 'Float Supplier Order', description: 'Cross-reference enquiries and dispatch quote requests to suppliers.', icon: <ArrowRightLeft size={24} />, color: '#f97316', path: '/workflows/float-supplier-order' },
+        { title: 'RFQ Depository', description: 'Centralized repository for floated Requests for Quotes.', icon: <FileText size={24} />, color: '#f59e0b', path: '/workflows?type=Enquiry&view=depository' },
+        { title: 'Stationery Directory', description: 'Access print templates, letterheads, and formal document frameworks.', icon: <FileCheck size={24} />, color: '#10b981', path: '/forms' },
+        { title: 'Accounts Payable', description: 'Monitor vendor invoices, pending bills, and payments.', icon: <Receipt size={24} />, color: '#ef4444', path: '/accounts/bills' },
+        { title: 'Weblinks & Resources', description: 'Access external maritime tools, calculators, and helpful resources.', icon: <Wrench size={24} />, color: '#db2777', path: '/tools' }
     ];
 
     const { profile } = useAuth();
     const navigate = useNavigate();
-    const [activeTab, setActiveTab] = useState('customer_enquiries');
+    const [searchParams] = useSearchParams();
+    const tabParam = searchParams.get('tab');
+    const [activeTab, setActiveTab] = useState(tabParam || 'customer_enquiries');
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        const tab = searchParams.get('tab');
+        if (tab) {
+            setActiveTab(tab);
+        } else {
+            setActiveTab('customer_enquiries');
+        }
+    }, [searchParams]);
     const [stats, setStats] = useState({ activeEnquiries: 0, pendingRFQs: 0, receivedQuotes: 0, totalPOValue: 0 });
     const [selectedEnquiry, setSelectedEnquiry] = useState(null);
     const [isFloatModalOpen, setIsFloatModalOpen] = useState(false);
@@ -79,6 +111,11 @@ export default function UnifiedSupplierHub() {
     };
 
     const fetchData = async () => {
+        if (activeTab === 'supplier_tools') {
+            setData([]);
+            setLoading(false);
+            return;
+        }
         setLoading(true);
         try {
             let result;
@@ -322,7 +359,14 @@ export default function UnifiedSupplierHub() {
                 {TABS.map(tab => (
                     <button
                         key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
+                        onClick={() => {
+                            setActiveTab(tab.id);
+                            if (tab.id === 'supplier_tools') {
+                                navigate('/unified-supplier-hub?tab=supplier_tools', { replace: true });
+                            } else {
+                                navigate('/unified-supplier-hub', { replace: true });
+                            }
+                        }}
                         style={{ 
                             padding: '10px 20px', 
                             borderRadius: '10px', 
@@ -362,136 +406,197 @@ export default function UnifiedSupplierHub() {
                 ))}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '24px' }}>
-                {loading ? (
-                    <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '100px' }}>
-                        <Loader2 className="animate-spin" size={48} color="#6366f1" style={{ margin: '0 auto' }} />
-                        <p style={{ marginTop: '16px', color: '#64748b', fontWeight: 600 }}>Syncing workspace...</p>
-                    </div>
-                ) : filteredData.length === 0 ? (
-                    <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '80px', background: '#fff', borderRadius: '24px', border: '2px dashed #e2e8f0' }}>
-                        <div style={{ opacity: 0.3, marginBottom: '20px' }}><LayoutDashboard size={64} style={{ margin: '0 auto' }} /></div>
-                        <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1e293b' }}>No Records Found</h3>
-                        <p style={{ color: '#64748b' }}>Try adjusting your search or check another tab.</p>
-                    </div>
-                ) : (
-                    filteredData.map((item) => (
-                        <div key={item.id} style={{ 
-                            background: '#fff', 
-                            borderRadius: '24px', 
-                            border: '1px solid #f1f5f9', 
-                            padding: '24px', 
-                            boxShadow: '0 10px 15px -3px rgba(0,0,0,0.04)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            transition: 'transform 0.2s, box-shadow 0.2s',
-                            cursor: 'default'
-                        }} className="hub-card-hover">
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
-                                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>
-                                    {activeTab === 'customer_enquiries' ? item.enquiry_no : 
-                                     activeTab === 'rfq_floats' ? item.document_no : 
-                                     activeTab === 'orders_to_suppliers' ? item.document_no :
-                                     `Quote: ${item.enquiry?.enquiry_no || 'N/A'}`}
-                                </div>
-                                {getStatusBadge(item.status)}
-                            </div>
-
-                            <h3 style={{ 
-                                fontSize: '1.1rem', 
-                                fontWeight: 700, 
-                                color: '#1e293b', 
-                                margin: '0 0 12px 0', 
-                                minHeight: '3rem',
-                                display: '-webkit-box',
-                                WebkitLineClamp: 2,
-                                WebkitBoxOrient: 'vertical',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                lineHeight: '1.5rem'
+            {activeTab === 'supplier_tools' ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '24px', width: '100%', marginBottom: '40px' }}>
+                    {supplierTools.map((tool, idx) => (
+                        <div 
+                            key={idx}
+                            onClick={() => {
+                                if (tool.isExternal) {
+                                    window.open(tool.path, '_blank');
+                                } else {
+                                    navigate(tool.path);
+                                }
+                            }}
+                            style={{
+                                background: '#ffffff',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '20px',
+                                padding: '24px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '16px',
+                                cursor: 'pointer',
+                                transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                            }}
+                            onMouseOver={(e) => {
+                                e.currentTarget.style.transform = 'translateY(-4px)';
+                                e.currentTarget.style.boxShadow = '0 12px 20px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+                                e.currentTarget.style.borderColor = tool.color + '44';
+                            }}
+                            onMouseOut={(e) => {
+                                e.currentTarget.style.transform = 'none';
+                                e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.05)';
+                                e.currentTarget.style.borderColor = '#e2e8f0';
+                            }}
+                        >
+                            <div style={{
+                                width: '48px',
+                                height: '48px',
+                                borderRadius: '12px',
+                                background: `${tool.color}15`,
+                                color: tool.color,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
                             }}>
-                                {activeTab === 'supplier_quotes' ? item.supplier?.name : 
-                                 activeTab === 'orders_to_suppliers' ? (item.subject || `Order to ${item.partners?.name}`) :
-                                 (stripHtml(item.subject) || item.customer?.name || 'Untitled Enquiry')}
-                            </h3>
-
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '24px', flex: 1 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: '#64748b' }}>
-                                    <Building2 size={14} />
-                                    {activeTab === 'customer_enquiries' ? item.customer?.name : 
-                                     activeTab === 'rfq_floats' ? item.partners?.name : 
-                                     activeTab === 'orders_to_suppliers' ? item.partners?.name :
-                                     `Source: ${item.enquiry?.customer_ref || 'Direct'}`}
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: '#64748b' }}>
-                                    <Calendar size={14} />
-                                    {new Date(item.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
-                                </div>
-                                {activeTab === 'supplier_quotes' && (
-                                    <div style={{ marginTop: '8px', padding: '12px', background: '#f8fafc', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b' }}>Bid Amount</div>
-                                        <div style={{ fontSize: '1rem', fontWeight: 800, color: '#10b981' }}>${(item.quote_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                                    </div>
-                                )}
-                                {activeTab === 'orders_to_suppliers' && (
-                                    <div style={{ marginTop: '8px', padding: '12px', background: '#fef2f2', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#991b1b' }}>Order Value</div>
-                                        <div style={{ fontSize: '1rem', fontWeight: 800, color: '#ef4444' }}>${(item.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                                    </div>
-                                )}
+                                {tool.icon}
                             </div>
-
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                                 {activeTab === 'customer_enquiries' && (
-                                    <button 
-                                        onClick={() => { setSelectedEnquiry(item); setIsFloatModalOpen(true); }}
-                                        style={{ flex: 1, background: '#6366f1', color: '#fff', border: 'none', padding: '10px', borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-                                    >
-                                        <Send size={14} /> Float RFQ
-                                    </button>
-                                )}
-                                {activeTab === 'supplier_quotes' && (
-                                    <button 
-                                        onClick={() => handleCreatePO(item.id)}
-                                        style={{ flex: 1, background: '#10b981', color: '#fff', border: 'none', padding: '10px', borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-                                    >
-                                        <ShoppingCart size={14} /> Order from Supplier
-                                    </button>
-                                )}
-                                <button 
-                                    onClick={() => {
-                                        if (activeTab === 'customer_enquiries') navigate(`/workflows/enquiry/${item.id}`);
-                                        else if (activeTab === 'rfq_floats') navigate(`/workflows/editor/Enquiry/${item.id}`);
-                                        else if (activeTab === 'orders_to_suppliers') navigate(`/workflows/editor/purchase-order/${item.id}`);
-                                        else if (activeTab === 'supplier_quotes') navigate(`/workflows/enquiry/${item.enquiry_id}`);
-                                    }}
-                                    style={{ flex: activeTab === 'customer_enquiries' ? 0.4 : 1, background: '#f1f5f9', color: '#475569', border: 'none', padding: '10px', borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
-                                >
-                                    View
-                                </button>
-                                {(activeTab === 'rfq_floats' || activeTab === 'orders_to_suppliers') && (
-                                    <button 
-                                        onClick={() => {
-                                            const type = activeTab === 'rfq_floats' ? 'Enquiry' : 'purchase-order';
-                                            navigate(`/workflows/editor/${type}/${item.id}?tab=gallery`);
-                                        }}
-                                        title="Gallery / Photos"
-                                        style={{ padding: '10px', background: '#f5f3ff', color: '#7c3aed', border: '1px solid #ddd6fe', borderRadius: '12px', cursor: 'pointer' }}
-                                    >
-                                        <Camera size={14} />
-                                    </button>
-                                )}
-                                <button 
-                                    onClick={() => handleDelete(item.id, activeTab === 'customer_enquiries' ? 'customer_enquiries' : (activeTab === 'rfq_floats' || activeTab === 'orders_to_suppliers' ? 'workflow_documents' : 'supplier_quotes'))}
-                                    style={{ padding: '10px', background: '#fff', color: '#ef4444', border: '1px solid #fee2e2', borderRadius: '12px', cursor: 'pointer' }}
-                                >
-                                    <Trash2 size={14} />
-                                </button>
+                            <div>
+                                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1e293b', margin: '0 0 6px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    {tool.title}
+                                    {tool.isExternal && <ExternalLink size={14} style={{ opacity: 0.6 }} />}
+                                </h3>
+                                <p style={{ fontSize: '0.85rem', color: '#64748b', margin: 0, lineHeight: 1.5 }}>
+                                    {tool.description}
+                                </p>
                             </div>
                         </div>
-                    ))
-                )}
-            </div>
+                    ))}
+                </div>
+            ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '24px' }}>
+                    {loading ? (
+                        <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '100px' }}>
+                            <Loader2 className="animate-spin" size={48} color="#6366f1" style={{ margin: '0 auto' }} />
+                            <p style={{ marginTop: '16px', color: '#64748b', fontWeight: 600 }}>Syncing workspace...</p>
+                        </div>
+                    ) : filteredData.length === 0 ? (
+                        <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '80px', background: '#fff', borderRadius: '24px', border: '2px dashed #e2e8f0' }}>
+                            <div style={{ opacity: 0.3, marginBottom: '20px' }}><LayoutDashboard size={64} style={{ margin: '0 auto' }} /></div>
+                            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1e293b' }}>No Records Found</h3>
+                            <p style={{ color: '#64748b' }}>Try adjusting your search or check another tab.</p>
+                        </div>
+                    ) : (
+                        filteredData.map((item) => (
+                            <div key={item.id} style={{ 
+                                background: '#fff', 
+                                borderRadius: '24px', 
+                                border: '1px solid #f1f5f9', 
+                                padding: '24px', 
+                                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.04)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                transition: 'transform 0.2s, box-shadow 0.2s',
+                                cursor: 'default'
+                            }} className="hub-card-hover">
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+                                    <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>
+                                        {activeTab === 'customer_enquiries' ? item.enquiry_no : 
+                                         activeTab === 'rfq_floats' ? item.document_no : 
+                                         activeTab === 'orders_to_suppliers' ? item.document_no :
+                                         `Quote: ${item.enquiry?.enquiry_no || 'N/A'}`}
+                                    </div>
+                                    {getStatusBadge(item.status)}
+                                </div>
+
+                                <h3 style={{ 
+                                    fontSize: '1.1rem', 
+                                    fontWeight: 700, 
+                                    color: '#1e293b', 
+                                    margin: '0 0 12px 0', 
+                                    minHeight: '3rem',
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    lineHeight: '1.5rem'
+                                }}>
+                                    {activeTab === 'supplier_quotes' ? item.supplier?.name : 
+                                     activeTab === 'orders_to_suppliers' ? (item.subject || `Order to ${item.partners?.name}`) :
+                                     (stripHtml(item.subject) || item.customer?.name || 'Untitled Enquiry')}
+                                </h3>
+
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '24px', flex: 1 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: '#64748b' }}>
+                                        <Building2 size={14} />
+                                        {activeTab === 'customer_enquiries' ? item.customer?.name : 
+                                         activeTab === 'rfq_floats' ? item.partners?.name : 
+                                         activeTab === 'orders_to_suppliers' ? item.partners?.name :
+                                         `Source: ${item.enquiry?.customer_ref || 'Direct'}`}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: '#64748b' }}>
+                                        <Calendar size={14} />
+                                        {new Date(item.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                    </div>
+                                    {activeTab === 'supplier_quotes' && (
+                                        <div style={{ marginTop: '8px', padding: '12px', background: '#f8fafc', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b' }}>Bid Amount</div>
+                                            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#10b981' }}>${(item.quote_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                                        </div>
+                                    )}
+                                    {activeTab === 'orders_to_suppliers' && (
+                                        <div style={{ marginTop: '8px', padding: '12px', background: '#fef2f2', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#991b1b' }}>Order Value</div>
+                                            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#ef4444' }}>${(item.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                     {activeTab === 'customer_enquiries' && (
+                                        <button 
+                                            onClick={() => { setSelectedEnquiry(item); setIsFloatModalOpen(true); }}
+                                            style={{ flex: 1, background: '#6366f1', color: '#fff', border: 'none', padding: '10px', borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                                        >
+                                            <Send size={14} /> Float RFQ
+                                        </button>
+                                    )}
+                                    {activeTab === 'supplier_quotes' && (
+                                        <button 
+                                            onClick={() => handleCreatePO(item.id)}
+                                            style={{ flex: 1, background: '#10b981', color: '#fff', border: 'none', padding: '10px', borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                                        >
+                                            <ShoppingCart size={14} /> Order from Supplier
+                                        </button>
+                                    )}
+                                    <button 
+                                        onClick={() => {
+                                            if (activeTab === 'customer_enquiries') navigate(`/workflows/enquiry/${item.id}`);
+                                            else if (activeTab === 'rfq_floats') navigate(`/workflows/editor/Enquiry/${item.id}`);
+                                            else if (activeTab === 'orders_to_suppliers') navigate(`/workflows/editor/purchase-order/${item.id}`);
+                                            else if (activeTab === 'supplier_quotes') navigate(`/workflows/enquiry/${item.enquiry_id}`);
+                                        }}
+                                        style={{ flex: activeTab === 'customer_enquiries' ? 0.4 : 1, background: '#f1f5f9', color: '#475569', border: 'none', padding: '10px', borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+                                    >
+                                        View
+                                    </button>
+                                    {(activeTab === 'rfq_floats' || activeTab === 'orders_to_suppliers') && (
+                                        <button 
+                                            onClick={() => {
+                                                const type = activeTab === 'rfq_floats' ? 'Enquiry' : 'purchase-order';
+                                                navigate(`/workflows/editor/${type}/${item.id}?tab=gallery`);
+                                            }}
+                                            title="Gallery / Photos"
+                                            style={{ padding: '10px', background: '#f5f3ff', color: '#7c3aed', border: '1px solid #ddd6fe', borderRadius: '12px', cursor: 'pointer' }}
+                                        >
+                                            <Camera size={14} />
+                                        </button>
+                                    )}
+                                    <button 
+                                        onClick={() => handleDelete(item.id, activeTab === 'customer_enquiries' ? 'customer_enquiries' : (activeTab === 'rfq_floats' || activeTab === 'orders_to_suppliers' ? 'workflow_documents' : 'supplier_quotes'))}
+                                        style={{ padding: '10px', background: '#fff', color: '#ef4444', border: '1px solid #fee2e2', borderRadius: '12px', cursor: 'pointer' }}
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            )}
 
             <FastFloatModal 
                 isOpen={isFloatModalOpen}

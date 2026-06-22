@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import { HardDrive, CheckCircle2, AlertCircle, RefreshCw, LogOut, Link2, GripVertical, ChevronRight, ChevronLeft } from 'lucide-react';
 import { validateToken, connectGoogleAPI, getStoredToken } from '../../lib/googleAuthService';
+import { getCommunicationAccounts } from '../../lib/communicationService';
 
 const GDriveConnectionTray = () => {
     const [status, setStatus] = useState('checking'); // 'checking', 'connected', 'disconnected'
@@ -100,10 +102,38 @@ const GDriveConnectionTray = () => {
         localStorage.setItem('gdrive_tray_collapsed', newState);
     };
 
+    const { activeCompanyId } = useAuth();
+    const [loginHint, setLoginHint] = useState(null);
+
     const handleConnect = () => {
         sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
-        connectGoogleAPI('drive_status_tray');
+        const state = activeCompanyId ? `drive_status_tray:${activeCompanyId}` : 'drive_status_tray';
+        connectGoogleAPI(state, null, loginHint);
     };
+
+    // Attempt to find a company-specific gmail communication account to use as login_hint
+    useEffect(() => {
+        let mounted = true;
+        const fetchComm = async () => {
+            try {
+                const res = await getCommunicationAccounts();
+                const accounts = res?.data || [];
+                // Prefer gmail provider entries scoped to the active company
+                const match = accounts.find(a => (a.provider === 'gmail' || a.provider === 'Gmail') && (a.company_id === activeCompanyId));
+                if (mounted && match && match.email_address) {
+                    setLoginHint(match.email_address);
+                } else if (mounted) {
+                    // Fallback: any gmail account for the user
+                    const anyG = accounts.find(a => (a.provider === 'gmail' || a.provider === 'Gmail') && a.email_address);
+                    if (anyG) setLoginHint(anyG.email_address);
+                }
+            } catch (err) {
+                // ignore
+            }
+        };
+        if (activeCompanyId) fetchComm();
+        return () => { mounted = false; };
+    }, [activeCompanyId]);
 
     const handleDisconnect = () => {
         localStorage.removeItem('google_access_token');

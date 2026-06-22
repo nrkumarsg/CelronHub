@@ -274,6 +274,12 @@ app.post('/api/send-email', async (req, res) => {
                 user: senderEmail,
                 pass: smtpPassword,
             },
+            connectionTimeout: 10000, // 10s timeout
+            greetingTimeout: 10000,
+            socketTimeout: 20000,
+            tls: {
+                rejectUnauthorized: false
+            }
         });
 
         // Convert attached base64 files back to buffer form

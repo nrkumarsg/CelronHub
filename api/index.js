@@ -357,7 +357,10 @@ app.post('/api/send-email', async (req, res) => {
             },
             connectionTimeout: 10000, // 10s timeout
             greetingTimeout: 10000,
-            socketTimeout: 20000
+            socketTimeout: 20000,
+            tls: {
+                rejectUnauthorized: false
+            }
         });
 
         // 3. Process Attachments
