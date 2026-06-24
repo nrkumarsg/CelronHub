@@ -123,7 +123,7 @@ export const Modal = ({ isOpen, onClose, title, children, icon: Icon, size = 'md
 };
 
 // Quick Partner Add
-export const QuickPartnerAdd = ({ company_id, initialData, onSuccess, onCancel, hideActions = false, onDataChange, title: propTitle, defaultType = 'Supplier' }) => {
+export const QuickPartnerAdd = ({ company_id, initialData, onSuccess, onCancel, hideActions = false, onDataChange, title: propTitle, defaultType = 'Supplier', aiDisabled = false }) => {
     const [formData, setFormData] = useState(initialData || {
         name: '',
         uen: '',
@@ -554,131 +554,133 @@ export const QuickPartnerAdd = ({ company_id, initialData, onSuccess, onCancel, 
             </div>
 
             {/* AI Research Section */}
-            <div className="glass-panel" style={{ marginBottom: '24px', padding: '16px', background: 'linear-gradient(to right, #f8fafc, #f1f5f9)', border: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ position: 'relative' }}>
-                            <Sparkles size={18} color="#6366f1" />
-                            {isAiResearching && <div className="ai-pulse" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: '50%' }} />}
+            {!aiDisabled && (
+                <div className="glass-panel" style={{ marginBottom: '24px', padding: '16px', background: 'linear-gradient(to right, #f8fafc, #f1f5f9)', border: '1px solid #e2e8f0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ position: 'relative' }}>
+                                <Sparkles size={18} color="#6366f1" />
+                                {isAiResearching && <div className="ai-pulse" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: '50%' }} />}
+                            </div>
+                            <span style={{ fontWeight: 600, fontSize: '0.9rem', color: '#4338ca', letterSpacing: '0.02em' }}>Intelligent Auto-fill</span>
                         </div>
-                        <span style={{ fontWeight: 600, fontSize: '0.9rem', color: '#4338ca', letterSpacing: '0.02em' }}>Intelligent Auto-fill</span>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                                onClick={handleAiAutofill}
+                                disabled={isAiResearching || isMapsResearching || !formData.name}
+                                className="btn"
+                                style={{
+                                    background: isAiResearching ? '#f1f5f9' : 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                                    color: 'white',
+                                    padding: '8px 16px',
+                                    borderRadius: '12px',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 600,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.3s ease',
+                                    boxShadow: isAiResearching ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.2)'
+                                }}
+                            >
+                                {isAiResearching ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
+                                {isAiResearching ? 'AI Researching...' : 'Research with AI'}
+                            </button>
+                            <button
+                                onClick={handleGoogleMapsResearch}
+                                disabled={isAiResearching || isMapsResearching || !formData.name}
+                                className="btn"
+                                style={{
+                                    background: isMapsResearching ? '#f1f5f9' : '#fff',
+                                    color: '#1e293b',
+                                    padding: '8px 16px',
+                                    borderRadius: '12px',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 600,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    border: '1px solid #e2e8f0',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.3s ease'
+                                }}
+                            >
+                                {isMapsResearching ? <Loader2 className="animate-spin" size={16} /> : <MapPin size={16} color="#ef4444" />}
+                                {isMapsResearching ? 'Mapping...' : 'Search Google Maps'}
+                            </button>
+                        </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <button
-                            onClick={handleAiAutofill}
-                            disabled={isAiResearching || isMapsResearching || !formData.name}
-                            className="btn"
-                            style={{
-                                background: isAiResearching ? '#f1f5f9' : 'linear-gradient(135deg, #6366f1, #4f46e5)',
-                                color: 'white',
-                                padding: '8px 16px',
-                                borderRadius: '12px',
-                                fontSize: '0.85rem',
-                                fontWeight: 600,
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                border: 'none',
-                                cursor: 'pointer',
-                                transition: 'all 0.3s ease',
-                                boxShadow: isAiResearching ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.2)'
-                            }}
-                        >
-                            {isAiResearching ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
-                            {isAiResearching ? 'AI Researching...' : 'Research with AI'}
-                        </button>
-                        <button
-                            onClick={handleGoogleMapsResearch}
-                            disabled={isAiResearching || isMapsResearching || !formData.name}
-                            className="btn"
-                            style={{
-                                background: isMapsResearching ? '#f1f5f9' : '#fff',
-                                color: '#1e293b',
-                                padding: '8px 16px',
-                                borderRadius: '12px',
-                                fontSize: '0.85rem',
-                                fontWeight: 600,
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                border: '1px solid #e2e8f0',
-                                cursor: 'pointer',
-                                transition: 'all 0.3s ease'
-                            }}
-                        >
-                            {isMapsResearching ? <Loader2 className="animate-spin" size={16} /> : <MapPin size={16} color="#ef4444" />}
-                            {isMapsResearching ? 'Mapping...' : 'Search Google Maps'}
-                        </button>
-                    </div>
+
+                    {/* AI Research Findings Card */}
+                    {(aiPreview || isAiResearching) && (
+                        <div className="ai-card-premium animate-fade-in" style={{ padding: '20px', borderRadius: '16px', marginBottom: '20px' }}>
+                            {isAiResearching && <div className="ai-scanning-line" />}
+                            
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <div style={{ padding: '4px 10px', background: aiPreview?.error ? '#fee2e2' : 'rgba(16, 185, 129, 0.1)', color: aiPreview?.error ? '#ef4444' : '#059669', borderRadius: '20px', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                        {aiPreview?.error ? 'Failure' : (aiPreview?.source || 'Research Findings')}
+                                    </div>
+                                    {aiPreview && !aiPreview.error && !isAiResearching && (
+                                        <div style={{ 
+                                            padding: '4px 10px', 
+                                            background: aiPreview.confidence > 80 ? '#dcfce7' : aiPreview.confidence > 50 ? '#fef3c7' : '#fee2e2', 
+                                            color: aiPreview.confidence > 80 ? '#15803d' : aiPreview.confidence > 50 ? '#92400e' : '#ef4444', 
+                                            borderRadius: '20px', 
+                                            fontSize: '0.7rem', 
+                                            fontWeight: 800, 
+                                            textTransform: 'uppercase', 
+                                            letterSpacing: '0.05em' 
+                                        }}>
+                                            {aiPreview.confidence}% Confidence
+                                        </div>
+                                    )}
+                                </div>
+                                <button onClick={() => setAiPreview(null)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}><X size={16} /></button>
+                            </div>
+
+                            {isAiResearching ? (
+                                <div style={{ textAlign: 'center', padding: '20px' }}>
+                                    <div style={{ fontSize: '1rem', color: '#6366f1', fontWeight: 700, marginBottom: '8px' }}>{aiStatus}</div>
+                                    <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Traversing SGP registries and global industrial data...</div>
+                                </div>
+                            ) : aiPreview?.error ? (
+                                <div style={{ padding: '12px', background: '#fef2f2', borderRadius: '12px', border: '1px solid #fecaca', color: '#991b1b', fontSize: '0.85rem' }}>
+                                    <strong>Research Loop Terminated:</strong><br/>
+                                    {aiPreview.error}
+                                    <div style={{ marginTop: '8px', fontSize: '0.75rem', color: '#b91c1c' }}>
+                                        Check your Google Cloud credentials or quota.
+                                    </div>
+                                </div>
+                            ) : aiPreview && (
+                                <div style={{ fontSize: '0.85rem', color: '#334155', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                    <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>UEN:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.uen || '-'}</span></div>
+                                    <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Pincode:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.pincode || '-'}</span></div>
+                                    <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Email:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.email1 || '-'}</span></div>
+                                    <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Phone:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.phone1 || '-'}</span></div>
+                                    <div style={{ gridColumn: 'span 2', background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Website:</strong> <span style={{ color: '#4338ca', fontWeight: 600, textDecoration: 'underline' }}>{aiPreview.website || '-'}</span></div>
+                                    <div style={{ gridColumn: 'span 2', background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Address:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.address || '-'}</span></div>
+                                    <div style={{ gridColumn: 'span 2', background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Brands Represented:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.brands || '-'}</span></div>
+                                    
+                                    {aiPreview.activity_summary && (
+                                        <div style={{ gridColumn: 'span 2', background: 'linear-gradient(to right, #f5f3ff, #ede9fe)', padding: '14px', borderRadius: '12px', border: '1px dashed #c7d2fe' }}>
+                                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#6366f1', textTransform: 'uppercase', marginBottom: '4px' }}>Business Activity Insight</div>
+                                            <span style={{ fontSize: '0.85rem', color: '#4338ca', fontStyle: 'italic', lineHeight: 1.6 }}>"{aiPreview.activity_summary}"</span>
+                                        </div>
+                                    )}
+
+                                    <div style={{ gridColumn: 'span 2', display: 'flex', gap: '10px', marginTop: '4px' }}>
+                                        <button onClick={applyAiResults} className="btn" style={{ flex: 1, background: '#10b981', color: 'white', fontWeight: 600 }}><Check size={16} /> Apply Results to Form</button>
+                                        <button onClick={() => setAiPreview(null)} className="btn" style={{ background: '#f1f5f9', color: '#64748b' }}><RotateCcw size={16} /> Reject</button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
-
-                {/* AI Research Findings Card */}
-                {(aiPreview || isAiResearching) && (
-                    <div className="ai-card-premium animate-fade-in" style={{ padding: '20px', borderRadius: '16px', marginBottom: '20px' }}>
-                        {isAiResearching && <div className="ai-scanning-line" />}
-                        
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <div style={{ padding: '4px 10px', background: aiPreview?.error ? '#fee2e2' : 'rgba(16, 185, 129, 0.1)', color: aiPreview?.error ? '#ef4444' : '#059669', borderRadius: '20px', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                    {aiPreview?.error ? 'Failure' : (aiPreview?.source || 'Research Findings')}
-                                </div>
-                                {aiPreview && !aiPreview.error && !isAiResearching && (
-                                    <div style={{ 
-                                        padding: '4px 10px', 
-                                        background: aiPreview.confidence > 80 ? '#dcfce7' : aiPreview.confidence > 50 ? '#fef3c7' : '#fee2e2', 
-                                        color: aiPreview.confidence > 80 ? '#15803d' : aiPreview.confidence > 50 ? '#92400e' : '#ef4444', 
-                                        borderRadius: '20px', 
-                                        fontSize: '0.7rem', 
-                                        fontWeight: 800, 
-                                        textTransform: 'uppercase', 
-                                        letterSpacing: '0.05em' 
-                                    }}>
-                                        {aiPreview.confidence}% Confidence
-                                    </div>
-                                )}
-                            </div>
-                            <button onClick={() => setAiPreview(null)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}><X size={16} /></button>
-                        </div>
-
-                        {isAiResearching ? (
-                            <div style={{ textAlign: 'center', padding: '20px' }}>
-                                <div style={{ fontSize: '1rem', color: '#6366f1', fontWeight: 700, marginBottom: '8px' }}>{aiStatus}</div>
-                                <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Traversing SGP registries and global industrial data...</div>
-                            </div>
-                        ) : aiPreview?.error ? (
-                            <div style={{ padding: '12px', background: '#fef2f2', borderRadius: '12px', border: '1px solid #fecaca', color: '#991b1b', fontSize: '0.85rem' }}>
-                                <strong>Research Loop Terminated:</strong><br/>
-                                {aiPreview.error}
-                                <div style={{ marginTop: '8px', fontSize: '0.75rem', color: '#b91c1c' }}>
-                                    Check your Google Cloud credentials or quota.
-                                </div>
-                            </div>
-                        ) : aiPreview && (
-                            <div style={{ fontSize: '0.85rem', color: '#334155', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                                <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>UEN:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.uen || '-'}</span></div>
-                                <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Pincode:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.pincode || '-'}</span></div>
-                                <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Email:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.email1 || '-'}</span></div>
-                                <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Phone:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.phone1 || '-'}</span></div>
-                                <div style={{ gridColumn: 'span 2', background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Website:</strong> <span style={{ color: '#4338ca', fontWeight: 600, textDecoration: 'underline' }}>{aiPreview.website || '-'}</span></div>
-                                <div style={{ gridColumn: 'span 2', background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Address:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.address || '-'}</span></div>
-                                <div style={{ gridColumn: 'span 2', background: '#f8fafc', padding: '10px', borderRadius: '12px' }}><strong>Brands Represented:</strong> <span style={{ color: '#0f172a', fontWeight: 600 }}>{aiPreview.brands || '-'}</span></div>
-                                
-                                {aiPreview.activity_summary && (
-                                    <div style={{ gridColumn: 'span 2', background: 'linear-gradient(to right, #f5f3ff, #ede9fe)', padding: '14px', borderRadius: '12px', border: '1px dashed #c7d2fe' }}>
-                                        <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#6366f1', textTransform: 'uppercase', marginBottom: '4px' }}>Business Activity Insight</div>
-                                        <span style={{ fontSize: '0.85rem', color: '#4338ca', fontStyle: 'italic', lineHeight: 1.6 }}>"{aiPreview.activity_summary}"</span>
-                                    </div>
-                                )}
-
-                                <div style={{ gridColumn: 'span 2', display: 'flex', gap: '10px', marginTop: '4px' }}>
-                                    <button onClick={applyAiResults} className="btn" style={{ flex: 1, background: '#10b981', color: 'white', fontWeight: 600 }}><Check size={16} /> Apply Results to Form</button>
-                                    <button onClick={() => setAiPreview(null)} className="btn" style={{ background: '#f1f5f9', color: '#64748b' }}><RotateCcw size={16} /> Reject</button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
+            )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '7fr 3fr', gap: '20px', marginBottom: '20px' }}>
                 <div className="form-group">
@@ -704,6 +706,7 @@ export const QuickPartnerAdd = ({ company_id, initialData, onSuccess, onCancel, 
                         }}
                         onSelect={handleCompanySelect}
                         placeholder="Enter company name..."
+                        aiDisabled={aiDisabled}
                     />
                 </div>
                 <div className="form-group">
@@ -906,38 +909,40 @@ export const QuickPartnerAdd = ({ company_id, initialData, onSuccess, onCancel, 
                 </div>
             )}
 
-            <div style={{ marginBottom: '24px', padding: '20px', background: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
-                <BusinessCardUpload
-                    frontValue={formData.business_card_url}
-                    backValue={formData.business_card_back_url}
-                    onFrontChange={(url) => setFormData(prev => ({ ...prev, business_card_url: url }))}
-                    onBackChange={(url) => setFormData(prev => ({ ...prev, business_card_back_url: url }))}
-                    onOCR={handleOCR}
-                    onSmartOCR={() => setShowOCRModal(true)}
-                    label="Business Card Scan (Auto-fills Form)"
-                />
-                
-                <SmartOCRModal 
-                    isOpen={showOCRModal}
-                    onClose={() => setShowOCRModal(false)}
-                    onApply={(res) => {
-                        if (res.structured) {
-                            setFormData(prev => ({
-                                ...prev,
-                                name: prev.name || res.structured.company_name || '',
-                                uen: prev.uen || res.structured.uen || '',
-                                email1: prev.email1 || res.structured.email || '',
-                                phone1: prev.phone1 || res.structured.phone || res.structured.mobile || '',
-                                address: prev.address || res.structured.address || '',
-                                weblink: prev.weblink || res.structured.website || '',
-                                notes: (prev.notes || '') + '\n\n' + (res.rawText || '')
-                            }));
-                        } else if (res.rawText) {
-                            handleOCR(res.rawText);
-                        }
-                    }}
-                />
-            </div>
+            {!aiDisabled && (
+                <div style={{ marginBottom: '24px', padding: '20px', background: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                    <BusinessCardUpload
+                        frontValue={formData.business_card_url}
+                        backValue={formData.business_card_back_url}
+                        onFrontChange={(url) => setFormData(prev => ({ ...prev, business_card_url: url }))}
+                        onBackChange={(url) => setFormData(prev => ({ ...prev, business_card_back_url: url }))}
+                        onOCR={handleOCR}
+                        onSmartOCR={() => setShowOCRModal(true)}
+                        label="Business Card Scan (Auto-fills Form)"
+                    />
+                    
+                    <SmartOCRModal 
+                        isOpen={showOCRModal}
+                        onClose={() => setShowOCRModal(false)}
+                        onApply={(res) => {
+                            if (res.structured) {
+                                setFormData(prev => ({
+                                    ...prev,
+                                    name: prev.name || res.structured.company_name || '',
+                                    uen: prev.uen || res.structured.uen || '',
+                                    email1: prev.email1 || res.structured.email || '',
+                                    phone1: prev.phone1 || res.structured.phone || res.structured.mobile || '',
+                                    address: prev.address || res.structured.address || '',
+                                    weblink: prev.weblink || res.structured.website || '',
+                                    notes: (prev.notes || '') + '\n\n' + (res.rawText || '')
+                                }));
+                            } else if (res.rawText) {
+                                handleOCR(res.rawText);
+                            }
+                        }}
+                    />
+                </div>
+            )}
 
             <div className="form-group" style={{ marginBottom: '24px' }}>
                 <label className="form-label" style={{ fontWeight: 700, fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b', marginBottom: '8px' }}>Notes & Business Profile</label>
@@ -972,7 +977,7 @@ export const QuickPartnerAdd = ({ company_id, initialData, onSuccess, onCancel, 
     );
 };
 
-export const QuickContactAdd = ({ company_id, partner_id, partners, initialData, onSuccess, onCancel, hideActions = false, onDataChange }) => {
+export const QuickContactAdd = ({ company_id, partner_id, partners, initialData, onSuccess, onCancel, hideActions = false, onDataChange, aiDisabled = false }) => {
     const [formData, setFormData] = useState(initialData || {
         name: '',
         email: '',
@@ -1089,44 +1094,46 @@ export const QuickContactAdd = ({ company_id, partner_id, partners, initialData,
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {/* AI Research Banner */}
-            <div style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center', 
-                padding: '12px 20px', 
-                background: 'linear-gradient(90deg, #f0f9ff 0%, #e0f2fe 100%)', 
-                borderRadius: '12px',
-                border: '1px solid #bae6fd'
-            }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <Sparkles size={18} className={isAiResearching ? 'ai-pulse text-accent' : 'text-accent'} />
-                    <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#0369a1' }}>
-                        {isAiResearching ? 'AI is profiling contact...' : 'Contact Intelligence'}
-                    </span>
+            {!aiDisabled && (
+                <div style={{ 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center', 
+                    padding: '12px 20px', 
+                    background: 'linear-gradient(90deg, #f0f9ff 0%, #e0f2fe 100%)', 
+                    borderRadius: '12px',
+                    border: '1px solid #bae6fd'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <Sparkles size={18} className={isAiResearching ? 'ai-pulse text-accent' : 'text-accent'} />
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#0369a1' }}>
+                            {isAiResearching ? 'AI is profiling contact...' : 'Contact Intelligence'}
+                        </span>
+                    </div>
+                    <button 
+                        type="button" 
+                        onClick={handleAiAutofill}
+                        disabled={isAiResearching || !formData.name}
+                        style={{ 
+                            padding: '6px 12px', 
+                            borderRadius: '8px', 
+                            background: '#fff', 
+                            border: '1px solid #bae6fd', 
+                            color: '#0ea5e9', 
+                            fontSize: '0.85rem', 
+                            fontWeight: 600, 
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                        }}
+                    >
+                        {isAiResearching ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                        Profile with AI
+                    </button>
                 </div>
-                <button 
-                    type="button" 
-                    onClick={handleAiAutofill}
-                    disabled={isAiResearching || !formData.name}
-                    style={{ 
-                        padding: '6px 12px', 
-                        borderRadius: '8px', 
-                        background: '#fff', 
-                        border: '1px solid #bae6fd', 
-                        color: '#0ea5e9', 
-                        fontSize: '0.85rem', 
-                        fontWeight: 600, 
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                    }}
-                >
-                    {isAiResearching ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                    Profile with AI
-                </button>
-            </div>
+            )}
 
             <div className="grid-2">
                 <div className="form-item full-width">
@@ -1223,38 +1230,40 @@ export const QuickContactAdd = ({ company_id, partner_id, partners, initialData,
                 </div>
             </div>
 
-            <div style={{ marginTop: '20px', padding: '16px', background: 'rgba(99, 102, 241, 0.05)', borderRadius: '12px' }}>
-                <BusinessCardUpload
-                    frontValue={formData.business_card_url}
-                    backValue={formData.business_card_back_url}
-                    onFrontChange={(url) => setFormData(prev => ({ ...prev, business_card_url: url }))}
-                    onBackChange={(url) => setFormData(prev => ({ ...prev, business_card_back_url: url }))}
-                    onOCR={handleOCR}
-                    onSmartOCR={() => setShowOCRModal(true)}
-                    label="Contact Business Card (Auto-fills Fields)"
-                />
+            {!aiDisabled && (
+                <div style={{ marginTop: '20px', padding: '16px', background: 'rgba(99, 102, 241, 0.05)', borderRadius: '12px' }}>
+                    <BusinessCardUpload
+                        frontValue={formData.business_card_url}
+                        backValue={formData.business_card_back_url}
+                        onFrontChange={(url) => setFormData(prev => ({ ...prev, business_card_url: url }))}
+                        onBackChange={(url) => setFormData(prev => ({ ...prev, business_card_back_url: url }))}
+                        onOCR={handleOCR}
+                        onSmartOCR={() => setShowOCRModal(true)}
+                        label="Contact Business Card (Auto-fills Fields)"
+                    />
 
-                <SmartOCRModal 
-                    isOpen={showOCRModal}
-                    onClose={() => setShowOCRModal(false)}
-                    title="Smart Contact OCR"
-                    onApply={(res) => {
-                        if (res.structured) {
-                            setFormData(prev => ({
-                                ...prev,
-                                name: prev.name || res.structured.person_name || '',
-                                email: prev.email || res.structured.email || '',
-                                handphone: prev.handphone || res.structured.mobile || res.structured.phone || '',
-                                post: prev.post || res.structured.designation || '',
-                                department: prev.department || res.structured.department || '',
-                                address: prev.address || res.structured.address || ''
-                            }));
-                        } else if (res.rawText) {
-                            handleOCR(res.rawText);
-                        }
-                    }}
-                />
-            </div>
+                    <SmartOCRModal 
+                        isOpen={showOCRModal}
+                        onClose={() => setShowOCRModal(false)}
+                        title="Smart Contact OCR"
+                        onApply={(res) => {
+                            if (res.structured) {
+                                setFormData(prev => ({
+                                    ...prev,
+                                    name: prev.name || res.structured.person_name || '',
+                                    email: prev.email || res.structured.email || '',
+                                    handphone: prev.handphone || res.structured.mobile || res.structured.phone || '',
+                                    post: prev.post || res.structured.designation || '',
+                                    department: prev.department || res.structured.department || '',
+                                    address: prev.address || res.structured.address || ''
+                                }));
+                            } else if (res.rawText) {
+                                handleOCR(res.rawText);
+                            }
+                        }}
+                    />
+                </div>
+            )}
 
             {!hideActions && (
                 <div className="quick-form-actions">
@@ -1456,6 +1465,46 @@ export const QuickPartnerContactDualAdd = ({ company_id, initialPartner, initial
         if (!partnerData.name) return alert('Partner Name is required');
         setLoading(true);
         try {
+            // Bypass all AI validation, auto-fills, and API requests during submission if AI features are disabled (smartPasteEnabled is false)
+            if (!smartPasteEnabled) {
+                console.log('[SaveAll] AI features disabled. Bypassing all AI validation, auto-fills, and API requests. Executing clean database write.');
+                
+                // Sanitize payload and perform direct, instant database write
+                const partnerPayload = { ...partnerData, company_id };
+                delete partnerPayload.contacts;
+                delete partnerPayload.isAiResearching;
+                delete partnerPayload.isMapsResearching;
+                delete partnerPayload.aiStatus;
+                delete partnerPayload.aiPreview;
+
+                const { data: pData, error: pError } = partnerData.id
+                    ? await supabase.from('partners').update(partnerPayload).eq('id', partnerData.id).select()
+                    : await supabase.from('partners').insert([partnerPayload]).select();
+                
+                if (pError) throw pError;
+                const savedPartner = pData[0];
+
+                let savedContact = null;
+                if (contactData.name) {
+                    const contactPayload = { ...contactData, partnerId: savedPartner.id };
+                    delete contactPayload.isAiResearching;
+                    delete contactPayload.aiPreview;
+
+                    if (!contactData.id) {
+                        contactPayload.company_id = company_id;
+                    }
+                    const { data: cData, error: cError } = contactData.id
+                        ? await supabase.from('contacts').update(contactPayload).eq('id', contactData.id).select()
+                        : await supabase.from('contacts').insert([contactPayload]).select();
+                    
+                    if (cError) throw cError;
+                    savedContact = cData[0];
+                }
+
+                onSuccess({ partner: savedPartner, contact: savedContact });
+                return;
+            }
+
             // 1. Save Partner
             const isPartnerExisting = !!partnerData.id;
             
@@ -1661,6 +1710,7 @@ export const QuickPartnerContactDualAdd = ({ company_id, initialPartner, initial
                                 onDataChange={setPartnerData} 
                                 title={title}
                                 defaultType={defaultType}
+                                aiDisabled={!smartPasteEnabled}
                             />
                         </div>
                         <div>
@@ -1800,6 +1850,7 @@ export const QuickPartnerContactDualAdd = ({ company_id, initialPartner, initial
                                 initialData={contactData} 
                                 hideActions={true} 
                                 onDataChange={setContactData} 
+                                aiDisabled={!smartPasteEnabled}
                             />
 
                             {showLookupModal && (

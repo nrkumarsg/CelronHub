@@ -3,7 +3,7 @@ import { Search, Building2, MapPin, X, Loader2, Sparkles } from 'lucide-react';
 import { cleanSearchQuery } from '../../lib/geminiService';
 
 
-const CompanyAutocomplete = ({ value, onChange, onSelect, className }) => {
+const CompanyAutocomplete = ({ value, onChange, onSelect, className, aiDisabled }) => {
     const [inputValue, setInputValue] = useState(value || '');
     const [suggestions, setSuggestions] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -67,10 +67,15 @@ const CompanyAutocomplete = ({ value, onChange, onSelect, className }) => {
         setApiError(null);
         
         // STAGE 1: LLM Query Cleaning (User Recommendation)
-        setIsCleaning(true);
-        const cleaned = await cleanSearchQuery(input);
-        setCleanedQuery(cleaned);
-        setIsCleaning(false);
+        let cleaned = input;
+        if (!aiDisabled) {
+            setIsCleaning(true);
+            cleaned = await cleanSearchQuery(input);
+            setCleanedQuery(cleaned);
+            setIsCleaning(false);
+        } else {
+            setCleanedQuery(input);
+        }
 
         // Wait up to 3 seconds for SDK if not ready
         let ready = sdkReady;
