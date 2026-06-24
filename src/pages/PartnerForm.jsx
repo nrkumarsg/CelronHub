@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { Save, ArrowLeft, X, Plus, ExternalLink, Globe, Building2, MessageSquare, Sparkles, Search, Loader2, Check, RotateCcw, UserPlus, Mail, Phone, MapPin } from 'lucide-react';
-import { getPartners, savePartner, getContactsByPartner, deleteContact, uploadFile, saveContact, getCategories } from '../lib/store';
+import { getPartners, savePartner, getContactsByPartner, deleteContact, uploadFile, saveContact, getCategories, saveCategory } from '../lib/store';
 import { useAuth } from '../contexts/AuthContext';
 import { smartSearchCompany } from '../lib/geminiService';
 import BusinessCardUpload from '../components/common/BusinessCardUpload';
@@ -59,6 +59,7 @@ export default function PartnerForm() {
     const [isAiResearching, setIsAiResearching] = useState(false);
     const [aiPreview, setAiPreview] = useState(null);
     const [showQuickContact, setShowQuickContact] = useState(false);
+    const aiTimeoutRef = useRef(null);
 
     const [typeInput, setTypeInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -75,10 +76,24 @@ export default function PartnerForm() {
         ]
     };
 
+    const SAFETY_TIMEOUT_MS = 10000; // 10 seconds max for any AI research
+
     const handleAiAutofill = async () => {
         if (!formData.name) return alert('Please enter a Company Name first.');
         
         setIsAiResearching(true);
+
+        // Safety timeout: force-unblock the UI after 10 seconds regardless
+        aiTimeoutRef.current = setTimeout(() => {
+            console.warn('[AI Safety] Research timed out after 10s. Unblocking UI.');
+            setIsAiResearching(false);
+            setAiPreview({
+                error: 'Registry search timed out. You can still fill in details manually and save.',
+                confidence: 'none',
+                manual_verification_required: true
+            });
+        }, SAFETY_TIMEOUT_MS);
+
         try {
             // Gather live context using Universal Search
             let searchContext = '';
@@ -134,6 +149,7 @@ export default function PartnerForm() {
                 manual_verification_required: true
             });
         } finally {
+            clearTimeout(aiTimeoutRef.current);
             setIsAiResearching(false);
         }
     };
@@ -142,6 +158,18 @@ export default function PartnerForm() {
         if (!formData.weblink && !formData.name) return alert('Please enter a Website or Company Name.');
         
         setIsAiResearching(true);
+
+        // Safety timeout: force-unblock the UI after 10 seconds regardless
+        aiTimeoutRef.current = setTimeout(() => {
+            console.warn('[AI Safety] Photon research timed out after 10s. Unblocking UI.');
+            setIsAiResearching(false);
+            setAiPreview({
+                error: 'Research timed out. You can still fill in details manually and save.',
+                confidence: 'none',
+                manual_verification_required: true
+            });
+        }, SAFETY_TIMEOUT_MS);
+
         try {
             const response = await fetch('/api/research/photon', {
                 method: 'POST',
@@ -170,6 +198,7 @@ export default function PartnerForm() {
             console.error('Photon Research Error:', err);
             alert('Photon service error: ' + err.message);
         } finally {
+            clearTimeout(aiTimeoutRef.current);
             setIsAiResearching(false);
         }
     };

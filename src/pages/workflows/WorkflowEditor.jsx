@@ -127,7 +127,7 @@ export default function WorkflowEditor() {
     }, [id]);
 
     // Concurrency control for Google Drive folder provisioning
-    const isEnsuringFolderRef = useRef(false);
+    const activeProvisioningPromiseRef = useRef(null);
     const ensuredFolderIdRef = useRef(null);
     const isProvisioningFolderRef = useRef(false);
 
@@ -683,7 +683,7 @@ export default function WorkflowEditor() {
 
     useEffect(() => {
         // Reset Google Drive provisioning refs when the document ID or job number changes
-        isEnsuringFolderRef.current = false;
+        activeProvisioningPromiseRef.current = null;
         ensuredFolderIdRef.current = null;
         isProvisioningFolderRef.current = false;
     }, [id, formData?.assigned_job_no]);
@@ -852,38 +852,40 @@ export default function WorkflowEditor() {
         if (explorerFolderId) return explorerFolderId;
         if (ensuredFolderIdRef.current) return ensuredFolderIdRef.current;
 
-        if (isEnsuringFolderRef.current) {
-            // Wait for the active provisioning to complete
-            while (isEnsuringFolderRef.current) {
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
-            if (ensuredFolderIdRef.current) return ensuredFolderIdRef.current;
-            if (explorerFolderId) return explorerFolderId;
+        // If there's an active provisioning promise running, return/await it
+        if (activeProvisioningPromiseRef.current) {
+            return activeProvisioningPromiseRef.current;
         }
 
-        isEnsuringFolderRef.current = true;
-        setLoadingExplorer(true);
-        try {
-            const token = getStoredToken();
-            const year = new Date(formData.issue_date || new Date()).getFullYear().toString();
-            const projName = getProjectFolderName();
-            const folderId = await provisionFullProjectStructure(
-                token, 
-                settings?.gdrive_celron_root_id || settings?.google_drive_folder_id, 
-                year, 
-                projName
-            );
-            ensuredFolderIdRef.current = folderId;
-            setExplorerFolderId(folderId);
-            setExplorerPath([{ id: folderId, name: projName }]);
-            return folderId;
-        } catch (err) {
-            console.error('Error ensuring project folder:', err);
-            setExplorerError('Failed to connect to Google Drive project folder.');
-        } finally {
-            isEnsuringFolderRef.current = false;
-            setLoadingExplorer(false);
-        }
+        // Create the provisioning promise
+        const provisioningPromise = (async () => {
+            setLoadingExplorer(true);
+            try {
+                const token = getStoredToken();
+                const year = new Date(formData.issue_date || new Date()).getFullYear().toString();
+                const projName = getProjectFolderName();
+                const folderId = await provisionFullProjectStructure(
+                    token, 
+                    settings?.gdrive_celron_root_id || settings?.google_drive_folder_id, 
+                    year, 
+                    projName
+                );
+                ensuredFolderIdRef.current = folderId;
+                setExplorerFolderId(folderId);
+                setExplorerPath([{ id: folderId, name: projName }]);
+                return folderId;
+            } catch (err) {
+                console.error('Error ensuring project folder:', err);
+                setExplorerError('Failed to connect to Google Drive project folder.');
+                return null;
+            } finally {
+                setLoadingExplorer(false);
+                activeProvisioningPromiseRef.current = null;
+            }
+        })();
+
+        activeProvisioningPromiseRef.current = provisioningPromise;
+        return provisioningPromise;
     };
 
     useEffect(() => {
@@ -1158,7 +1160,8 @@ export default function WorkflowEditor() {
                     ...floatDoc,
                     partners: floatDoc.partners || partners.find(p => p.id === floatDoc.partner_id),
                     vessels: floatDoc.vessels || vessels.find(v => v.id === floatDoc.vessel_id),
-                    work_locations: floatDoc.work_locations || workLocations.find(wl => wl.id === floatDoc.work_location_id)
+                    work_locations: floatDoc.work_locations || workLocations.find(wl => wl.id === floatDoc.work_location_id),
+                    contacts: floatDoc.contacts || contacts.find(c => c.id === floatDoc.contact_id)
                 }, settings, 'blob');
             } else {
                 console.log('Generating PDF for current document preview...');
@@ -1167,7 +1170,8 @@ export default function WorkflowEditor() {
                     items: lineItems,
                     partners: partners.find(p => p.id === formData.partner_id),
                     vessels: vessels.find(v => v.id === formData.vessel_id),
-                    work_locations: workLocations.find(wl => wl.id === formData.work_location_id)
+                    work_locations: workLocations.find(wl => wl.id === formData.work_location_id),
+                    contacts: contacts.find(c => c.id === formData.contact_id)
                 }, settings, 'blob');
             }
             
@@ -1178,6 +1182,16 @@ export default function WorkflowEditor() {
             alert('Failed to preview PDF: ' + err.message);
         } finally {
             setSaving(false);
+        }
+    };
+
+    const viewAttachedFile = (file) => {
+        try {
+            const fileURL = URL.createObjectURL(file);
+            window.open(fileURL, '_blank');
+        } catch (err) {
+            console.error('Failed to view file:', err);
+            alert('Failed to view file: ' + err.message);
         }
     };
 
@@ -1561,7 +1575,8 @@ export default function WorkflowEditor() {
                 items: lineItems,
                 partners: partners.find(p => p.id === docData.partner_id),
                 vessels: vessels.find(v => v.id === docData.vessel_id),
-                work_locations: workLocations.find(wl => wl.id === docData.work_location_id)
+                work_locations: workLocations.find(wl => wl.id === docData.work_location_id),
+                contacts: contacts.find(c => c.id === docData.contact_id)
             }, settings, 'blob');
             
             // Provision folder
@@ -2238,22 +2253,38 @@ export default function WorkflowEditor() {
                             const token = getStoredToken();
                             if (!token) return; // Skip if not connected to Google
 
-                            console.log('[Amendment] Generating amendment PDF for', data.document_no);
-                            const now = new Date();
-                            const timestamp = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
-                            const filename = `${data.document_no}_Amendment_${timestamp}.pdf`;
+                            const rootId = await ensureJobFolder();
+                            if (!rootId) return;
+                            const worksuiteFolderId = await getOrCreateFolder(token, 'Worksuite', rootId);
+                            const wFiles = await listFolderContent(token, worksuiteFolderId);
+
+                            let maxVer = 0;
+                            const prefixStr = `${data.document_no}_Amendment_v`;
+                            if (Array.isArray(wFiles)) {
+                                wFiles.forEach(f => {
+                                    if (f.name && f.name.startsWith(prefixStr) && f.name.endsWith('.pdf')) {
+                                        const verPart = f.name.substring(prefixStr.length).replace('.pdf', '');
+                                        const verNum = parseInt(verPart, 10);
+                                        if (!isNaN(verNum) && verNum > maxVer) {
+                                            maxVer = verNum;
+                                        }
+                                    }
+                                });
+                            }
+                            const nextVer = maxVer + 1;
+                            const filename = `${data.document_no}_Amendment_v${nextVer}.pdf`;
+
+                            console.log(`[Amendment] Generating versioned amendment PDF for ${data.document_no} as ${filename}...`);
 
                             const pdfBlob = await generateSleekPDF({
                                 ...data,
                                 items: uniqueItems,
                                 partners: partners.find(p => p.id === data.partner_id),
                                 vessels: vessels.find(v => v.id === data.vessel_id),
-                                work_locations: workLocations.find(wl => wl.id === data.work_location_id)
+                                work_locations: workLocations.find(wl => wl.id === data.work_location_id),
+                                contacts: contacts.find(c => c.id === data.contact_id)
                             }, settings, 'blob');
 
-                            const rootId = await ensureJobFolder();
-                            if (!rootId) return;
-                            const worksuiteFolderId = await getOrCreateFolder(token, 'Worksuite', rootId);
                             const uploadResult = await uploadFileToDrive(
                                 token,
                                 new File([pdfBlob], filename, { type: 'application/pdf' }),
@@ -2273,6 +2304,88 @@ export default function WorkflowEditor() {
                             console.log('[Amendment] PDF uploaded to Drive:', driveUrl);
                         } catch (amendErr) {
                             console.warn('[Amendment] PDF generation failed (non-blocking):', amendErr.message);
+                        }
+                    })();
+                }
+
+                // ─── Enquiry PDF Auto-Routing ─────────────────────────────────────────────
+                // When a Quotation or Purchase Order has an enquiry_id, auto-save a copy
+                // of the generated PDF to the Enquiry's Quote2Cust / Order2Supplier subfolder.
+                // Runs in background — does NOT block the UI.
+                const isEnquiryLinkedDoc = data.enquiry_id && (
+                    data.document_type === 'Quotation' ||
+                    data.document_type === 'Purchase Order'
+                );
+
+                if (isEnquiryLinkedDoc) {
+                    (async () => {
+                        try {
+                            const token = getStoredToken();
+                            if (!token) {
+                                console.log('[EnquiryPDF] No Drive token — skipping auto-route');
+                                return;
+                            }
+
+                            // 1. Fetch the linked enquiry (for folder info)
+                            const { data: enqData } = await supabase
+                                .from('customer_enquiries')
+                                .select('id, enquiry_no, customer_name, gdrive_folder_id, partners:customer_id(name)')
+                                .eq('id', data.enquiry_id)
+                                .single();
+
+                            if (!enqData) {
+                                console.warn('[EnquiryPDF] Enquiry not found for ID:', data.enquiry_id);
+                                return;
+                            }
+
+                            // 2. Generate PDF blob using the same sleek PDF engine
+                            const now = new Date();
+                            const filename = `${data.document_type.replace(/\s+/g, '_')}_${data.document_no}_${now.toISOString().slice(0, 10)}.pdf`;
+
+                            const pdfBlob = await generateSleekPDF({
+                                ...data,
+                                items: uniqueItems,
+                                partners: partners.find(p => p.id === data.partner_id),
+                                vessels: vessels.find(v => v.id === data.vessel_id),
+                                work_locations: workLocations.find(wl => wl.id === data.work_location_id)
+                            }, settings, 'blob');
+
+                            if (!pdfBlob) {
+                                console.warn('[EnquiryPDF] PDF blob generation returned null');
+                                return;
+                            }
+
+                            // 3. Route to correct subfolder
+                            const rootFolderId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
+                            const { routePdfToEnquiryFolder } = await import('../../lib/enquiryPdfService');
+                            const result = await routePdfToEnquiryFolder({
+                                pdfBlob,
+                                filename,
+                                enquiryId: data.enquiry_id,
+                                documentType: data.document_type,
+                                driveToken: token,
+                                rootFolderId,
+                                enquiry: enqData
+                            });
+
+                            if (result?.url) {
+                                // 4. Save the Drive URL back to the workflow document
+                                const existingUrls = Array.isArray(data.attachment_urls) ? data.attachment_urls : [];
+                                if (!existingUrls.includes(result.url)) {
+                                    await supabase
+                                        .from('workflow_documents')
+                                        .update({ attachment_urls: [...existingUrls, result.url] })
+                                        .eq('id', data.id);
+                                }
+                                toast.success(
+                                    `📁 PDF saved to Enquiry ${enqData.enquiry_no} → ${result.subfolderName}`,
+                                    { duration: 5000, icon: '✅' }
+                                );
+                                console.log(`[EnquiryPDF] Routed to ${result.subfolderName}:`, result.url);
+                            }
+                        } catch (enqPdfErr) {
+                            // Non-blocking — just log the error
+                            console.warn('[EnquiryPDF] Auto-routing failed (non-blocking):', enqPdfErr.message);
                         }
                     })();
                 }
@@ -2931,7 +3044,7 @@ export default function WorkflowEditor() {
         }
 
         setSaving(true);
-        const apiUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/send-email`;
+        const apiUrl = `${import.meta.env.VITE_API_URL || ''}/api/send-email`;
         console.log('[Email] Sending to API:', apiUrl, '| Recipient:', recipientTo);
         try {
             // Determine if we are in a floating process
@@ -2954,48 +3067,37 @@ export default function WorkflowEditor() {
                 await supabase.from('workflow_documents').update({ status: 'Sent' }).eq('id', targetDocId);
             }
 
-            // High Fidelity PDF Generation
-            let pdfBlob;
+            // High Fidelity PDF Generation (Only for float)
+            let systemPdf = null;
             if (isFloat) {
                 console.log('Generating PDF for floated RFQ...');
                 const { data: floatDoc } = await getWorkflowDocumentById(targetDocId);
-                pdfBlob = await generateSleekPDF({
+                const pdfBlob = await generateSleekPDF({
                     ...floatDoc,
                     partners: floatDoc.partners || partners.find(p => p.id === floatDoc.partner_id),
                     vessels: floatDoc.vessels || vessels.find(v => v.id === floatDoc.vessel_id),
-                    work_locations: floatDoc.work_locations || workLocations.find(wl => wl.id === floatDoc.work_location_id)
+                    work_locations: floatDoc.work_locations || workLocations.find(wl => wl.id === floatDoc.work_location_id),
+                    contacts: floatDoc.contacts || contacts.find(c => c.id === floatDoc.contact_id)
                 }, settings, 'blob');
-            } else {
-                console.log('Generating high-fidelity PDF from layout...');
-                const element = printRef.current;
-                const opt = {
-                    margin: 0,
-                    filename: `${getDocumentDisplayName(isFloat ? { ...formData, document_type: targetDocType, document_no: targetDocNo } : null)}.pdf`,
-                    image: { type: 'jpeg', quality: 0.92 },
-                    html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, logging: false, windowWidth: 1000 },
-                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
-                    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
-                };
-                pdfBlob = await html2pdf().set(opt).from(element).output('blob');
-            }
 
-            const reader = new FileReader();
-            const b64Pdf = await new Promise((resolve) => {
-                reader.onloadend = () => resolve(reader.result.split(',')[1]);
-                reader.readAsDataURL(pdfBlob);
-            });
+                const reader = new FileReader();
+                const b64Pdf = await new Promise((resolve) => {
+                    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                    reader.readAsDataURL(pdfBlob);
+                });
+
+                systemPdf = {
+                    name: `${targetDocType}_${targetDocNo || 'Draft'}.pdf`,
+                    content: `base64,${b64Pdf}`,
+                    type: 'application/pdf'
+                };
+            }
 
             // Determine sender
             const isAccountDoc = ['Invoice', 'Receipt', 'Credit Note'].includes(targetDocType);
             const fallbackSalesEmail = settings?.sales_email || 'sales@celron.net';
             const fallbackAccountsEmail = settings?.accounts_email || 'accounts@celron.net';
             const fromEmail = isAccountDoc ? fallbackAccountsEmail : fallbackSalesEmail;
-
-            const systemPdf = {
-                name: `${targetDocType}_${targetDocNo || 'Draft'}.pdf`,
-                content: `base64,${b64Pdf}`,
-                type: 'application/pdf'
-            };
 
             const customAttachments = await Promise.all((emailPreview.attachments || []).map(async (file) => {
                 return new Promise((resolve) => {
@@ -3005,9 +3107,13 @@ export default function WorkflowEditor() {
                 });
             }));
 
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 35000);
+
             const response = await fetch(apiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
                 body: JSON.stringify({
                     company_id: profile.company_id,
                     from_email: fromEmail,
@@ -3016,9 +3122,11 @@ export default function WorkflowEditor() {
                     bcc: emailPreview.bcc,
                     subject: emailPreview.subject,
                     body: emailPreview.body,
-                    attachments: [systemPdf, ...customAttachments]
+                    attachments: systemPdf ? [systemPdf, ...customAttachments] : customAttachments
                 })
             });
+
+            clearTimeout(timeoutId);
 
             const contentType = response.headers.get("content-type");
             if (contentType && contentType.indexOf("application/json") !== -1) {
@@ -6204,43 +6312,7 @@ export default function WorkflowEditor() {
                                     style={{ width: '100%', minHeight: '200px', padding: '14px', border: '1px solid #cbd5e1', borderRadius: '8px', outline: 'none', resize: 'vertical', fontFamily: 'monospace', fontSize: '13px', lineHeight: '1.5', boxSizing: 'border-box' }}
                                     value={emailPreview.body}
                                     onChange={(e) => setEmailPreview(prev => ({ ...prev, body: e.target.value }))}
-                                />                                {/* Automatically Attached Document Info */}
-                                <div style={{ background: '#f0fdf4', padding: '12px 16px', borderRadius: '10px', border: '1px solid #bbf7d0', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                    <div style={{ background: '#dcfce7', borderRadius: '50%', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px' }}>
-                                        <FileCheck size={18} color="#16a34a" />
-                                    </div>
-                                    <div style={{ flex: 1 }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <span style={{ fontSize: '13px', fontWeight: 700, color: '#14532d' }}>Auto-Generated Document PDF</span>
-                                            <span style={{ fontSize: '10px', background: '#16a34a', color: '#fff', padding: '2px 6px', borderRadius: '4px', fontWeight: 700, textTransform: 'uppercase' }}>Auto</span>
-                                        </div>
-                                        <p style={{ fontSize: '11px', color: '#166534', margin: '2px 0 0 0', opacity: 0.9 }}>The {formData.document_type || 'Document'} PDF is automatically compiled and attached to this email.</p>
-                                    </div>
-                                    <div>
-                                        <button
-                                            type="button"
-                                            onClick={viewAutoAttachedPDF}
-                                            disabled={saving}
-                                            style={{
-                                                padding: '6px 12px',
-                                                fontSize: '11px',
-                                                fontWeight: 700,
-                                                color: '#166534',
-                                                background: '#dcfce7',
-                                                border: '1px solid #bbf7d0',
-                                                borderRadius: '6px',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '4px',
-                                                transition: 'all 0.2s',
-                                                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                                            }}
-                                        >
-                                            <Eye size={12} /> View PDF
-                                        </button>
-                                    </div>
-                                </div>
+                                />
 
                                 {/* ATTACHMENTS MANAGER */}
                                 <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', background: '#fff', marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -6257,15 +6329,27 @@ export default function WorkflowEditor() {
                                                 </div>
                                             )}
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={fetchDriveAttachments}
-                                            disabled={loadingDriveFiles}
-                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
-                                        >
-                                            <RefreshCw size={12} className={loadingDriveFiles ? 'animate-spin' : ''} style={{ animation: loadingDriveFiles ? 'spin 1s linear infinite' : 'none' }} />
-                                            Refresh Drive
-                                        </button>
+                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                            {(formData.drive_folder_id || formData.gdrive_folder_id) && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => window.open(`https://drive.google.com/drive/folders/${formData.drive_folder_id || formData.gdrive_folder_id}`, '_blank')}
+                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
+                                                >
+                                                    <FolderOpen size={12} />
+                                                    Open Job Drive
+                                                </button>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={fetchDriveAttachments}
+                                                disabled={loadingDriveFiles}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
+                                            >
+                                                <RefreshCw size={12} className={loadingDriveFiles ? 'animate-spin' : ''} style={{ animation: loadingDriveFiles ? 'spin 1s linear infinite' : 'none' }} />
+                                                Refresh Drive
+                                            </button>
+                                        </div>
                                     </div>
 
                                     {/* Tabs */}
@@ -6512,28 +6596,9 @@ export default function WorkflowEditor() {
                                     {/* Currently Attached Files List */}
                                     <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
                                         <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>
-                                            Currently Attached ({1 + (emailPreview.attachments?.length || 0)})
+                                            Currently Attached ({emailPreview.attachments?.length || 0})
                                         </label>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                            {/* Special row for the main auto-generated PDF */}
-                                            <div style={{ background: '#f0fdf4', padding: '8px 12px', borderRadius: '8px', border: '1px solid #bbf7d0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderLeft: '4px solid #10b981' }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-                                                    <FileCheck size={16} color="#16a34a" />
-                                                    <span style={{ fontSize: '12px', color: '#14532d', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                        {formData.document_type || 'Document'}_{formData.document_no || 'Draft'}.pdf
-                                                    </span>
-                                                    <span style={{ fontSize: '10px', color: '#166534', background: '#dcfce7', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>Auto-Generated</span>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={viewAutoAttachedPDF}
-                                                    disabled={saving}
-                                                    style={{ background: 'none', border: 'none', color: '#166534', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', fontWeight: 700 }}
-                                                    title="Preview auto-generated PDF"
-                                                >
-                                                    <Eye size={14} /> View
-                                                </button>
-                                            </div>
 
                                             {/* Other attachments (GDrive, suite, local upload) */}
                                             {emailPreview.attachments?.map((file, idx) => (
@@ -6543,14 +6608,24 @@ export default function WorkflowEditor() {
                                                         <span style={{ fontSize: '12px', color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
                                                         <span style={{ fontSize: '11px', color: '#94a3b8' }}>({Math.round(file.size / 1024)} KB)</span>
                                                     </div>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setEmailPreview(prev => ({ ...prev, attachments: prev.attachments.filter((_, i) => i !== idx) }))}
-                                                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
-                                                        title="Remove attachment"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </button>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => viewAttachedFile(file)}
+                                                            style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', fontWeight: 700 }}
+                                                            title="Preview attachment"
+                                                        >
+                                                            <Eye size={14} /> View
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setEmailPreview(prev => ({ ...prev, attachments: prev.attachments.filter((_, i) => i !== idx) }))}
+                                                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
+                                                            title="Remove attachment"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -7229,7 +7304,7 @@ export default function WorkflowEditor() {
             <div style={{ position: 'fixed', left: 0, top: 0, zIndex: -9999, pointerEvents: 'none' }}>
                 <div ref={printRef}>
                     <WorkflowDocumentLayout 
-                        doc={{ ...formData, items: lineItems, partners: partners.find(p => p.id === formData.partner_id) }} 
+                        doc={{ ...formData, items: lineItems, partners: partners.find(p => p.id === formData.partner_id), contacts: contacts.find(c => c.id === formData.contact_id) }} 
                         settings={settings}
                         logoBase64={logoBase64}
                         signatureBase64={signatureBase64}

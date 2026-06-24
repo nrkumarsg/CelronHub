@@ -910,9 +910,13 @@ export default function StatementOfAccount() {
 
                     const fromEmail = settings?.accounts_email || 'accounts@celron.net';
 
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 35000);
+
                     const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/send-email`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
+                        signal: controller.signal,
                         body: JSON.stringify({
                             company_id: profile?.company_id,
                             from_email: fromEmail,
@@ -924,6 +928,8 @@ export default function StatementOfAccount() {
                             attachments: attachments
                         })
                     });
+
+                    clearTimeout(timeoutId);
 
                     const contentType = response.headers.get("content-type");
                     if (contentType && contentType.indexOf("application/json") !== -1) {
@@ -1101,9 +1107,13 @@ export default function StatementOfAccount() {
 
                 // 9. Call send-email API
                 setDispatchProgress(prev => ({ ...prev, status: `Sending Email to ${recipient}...` }));
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 35000);
+
                 const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/send-email`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    signal: controller.signal,
                     body: JSON.stringify({
                         company_id: profile?.company_id,
                         from_email: fromEmail,
@@ -1115,6 +1125,8 @@ export default function StatementOfAccount() {
                         attachments: attachments
                     })
                 });
+
+                clearTimeout(timeoutId);
 
                 if (!response.ok) {
                     const errData = await response.json().catch(() => ({}));

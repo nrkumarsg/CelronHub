@@ -45,6 +45,8 @@ async function chatWithModel(model, prompt, history = [], useJson = true, keyInd
     const currentKey = API_KEYS[keyIndex];
     const url = `https://api.groq.com/openai/v1/chat/completions`;
     
+    const TIMEOUT_MS = 8000; // 8-second hard timeout per model attempt
+    
     try {
         const messages = [...history];
         messages.push({ role: 'user', content: prompt });
@@ -61,14 +63,20 @@ async function chatWithModel(model, prompt, history = [], useJson = true, keyInd
             body.response_format = { type: "json_object" };
         }
 
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
         const response = await fetch(url, {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${currentKey}`
             },
-            body: JSON.stringify(body)
+            body: JSON.stringify(body),
+            signal: controller.signal
         });
+
+        clearTimeout(timeoutId);
 
         const data = await response.json();
         

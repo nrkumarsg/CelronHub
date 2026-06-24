@@ -385,7 +385,12 @@ app.post('/api/send-email', async (req, res) => {
         };
 
         console.log(`[EmailAPI] Sending mail via ${smtpHost}:${smtpPort}...`);
-        const info = await transporter.sendMail(mailOptions);
+        const sendMailPromise = transporter.sendMail(mailOptions);
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('SMTP connection timed out after 15 seconds')), 15000)
+        );
+
+        const info = await Promise.race([sendMailPromise, timeoutPromise]);
         console.log(`[EmailAPI] Success! Message ID: ${info.messageId}`);
         
         res.json({ success: true, messageId: info.messageId });

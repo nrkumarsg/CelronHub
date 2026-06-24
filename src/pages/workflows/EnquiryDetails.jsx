@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { updateEnquiry, shortlistSupplierQuote } from '../../lib/workflowService';
 import { convertEnquiryToV2Document } from '../../lib/workflowV2Service';
@@ -7,11 +7,13 @@ import toast from 'react-hot-toast';
 
 import { getPartners, getDocumentSettings, saveVessel, saveWorkLocation } from '../../lib/store';
 import { getCatalogItems, createCatalogItem, updateCatalogItem } from '../../lib/catalogService';
-import { ArrowLeft, ArrowRight, Send, Ship, Mail, Phone, ExternalLink, Database, FolderPlus, ArrowRightLeft, FileText, CheckCircle2, Clock, DollarSign, BadgeDollarSign, ShieldCheck, Plus, Search, Trash, Save, Edit, AlertTriangle, Users, Eye, MailCheck, Download, Calendar, ChevronDown, PlusCircle, MapPin, MessageSquare, Sparkles, Building2, Upload, ImageIcon, Copy, Loader2, Hash, X, Crop as CropIcon } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Send, Ship, Mail, Phone, ExternalLink, Database, FolderPlus, ArrowRightLeft, FileText, CheckCircle2, Clock, DollarSign, BadgeDollarSign, ShieldCheck, Plus, Search, Trash, Save, Edit, AlertTriangle, Users, Eye, MailCheck, Download, Calendar, ChevronDown, PlusCircle, MapPin, MessageSquare, Sparkles, Building2, Upload, ImageIcon, Copy, Loader2, Hash, X, Crop as CropIcon, QrCode, ClipboardList, Inbox, Package } from 'lucide-react';
 import UploadOverlay from '../../components/common/UploadOverlay';
 import SafeDriveLink from '../../components/common/SafeDriveLink';
 import EmailPreviewModal from '../../components/workflows/EmailPreviewModal';
+import FastFloatModal from '../../components/workflows/FastFloatModal';
 import html2pdf from 'html2pdf.js';
+import { buildRFQMailtoUrl, buildRFQWhatsAppUrl, buildQuotationMailtoUrl, openEmailUrl } from '../../lib/enquiryEmailService';
 
 import { useEnquiry } from '../../hooks/useEnquiry';
 import { useSupplierActions } from '../../hooks/useSupplierActions';
@@ -64,6 +66,7 @@ export default function EnquiryDetails() {
     } = useSupplierActions(profile?.company_id, id, enquiry);
 
     const [showNewSupplierForm, setShowNewSupplierForm] = useState(false);
+    const [searchParams] = useSearchParams();
 
     // Local UI State
     const [settings, setSettings] = useState(null);
@@ -88,6 +91,25 @@ export default function EnquiryDetails() {
     const [whatsappShareModal, setWhatsappShareModal] = useState({ isOpen: false });
     const [isOCRLoading, setIsOCRLoading] = useState(false);
     const [showOCRModal, setShowOCRModal] = useState(false);
+
+    // ─── Paste-in parser ─────────────────────────────────────────────────────
+    const [pasteText, setPasteText] = useState('');
+    const [showPastePanel, setShowPastePanel] = useState(false);
+    const [parsedPreview, setParsedPreview] = useState([]);
+    const [showParsedPreview, setShowParsedPreview] = useState(false);
+
+    // ─── Float RFQ (detail page FAB) ─────────────────────────────────────────
+    const [isFloatRFQOpen, setIsFloatRFQOpen] = useState(false);
+
+    // ─── QR Code ─────────────────────────────────────────────────────────────
+    const [showQrPanel, setShowQrPanel] = useState(false);
+    const [qrUrl, setQrUrl] = useState('');
+
+    // ─── Supplier Quote Log ───────────────────────────────────────────────────
+    const [showQuoteLogPanel, setShowQuoteLogPanel] = useState(false);
+    const [quoteLogForm, setQuoteLogForm] = useState({ supplier_name: '', unit_price: '', currency: 'SGD', lead_time: '', remarks: '', quote_date: new Date().toISOString().split('T')[0] });
+    const [isSavingQuoteLog, setIsSavingQuoteLog] = useState(false);
+    const [localQuoteLogs, setLocalQuoteLogs] = useState([]);
 
     useEffect(() => {
         if (profile?.company_id) {
@@ -160,18 +182,44 @@ export default function EnquiryDetails() {
             ? `Dear ${recipientOverrides[selectedSuppliers[0].id]?.attn_name || 'Supplier'},\n\n`
             : `Dear Supplier,\n\n`;
 
-        const body = encodeURIComponent(`${greeting}We are pleased to invite you to quote for the following items:\n\n${itemRows}\n\n${enquiry.gdrive_file_link ? `You can view photos and additional attachments here: ${enquiry.gdrive_file_link}\n\n` : ''}Please revert with your best price and lead time at your earliest convenience.\n\nThank you,\nN.R.KUMAR HP:+65 97685891\nCELRON ENTERPRISES PTE LTD\n10, Jln, Besar,"Sim Lim Tower", #03-05, Singapore 208787\nEmail: sales@celron.net | Tel: +6597685891/81962270 Web : https://www.celron.net    / https://celron.shop`);
+        const gdriveNote = enquiry.gdrive_file_link ? `You can view photos and additional attachments here: ${enquiry.gdrive_file_link}\n\n` : '';
+        const body = encodeURIComponent(`${greeting}We are pleased to invite you to quote for the following items:\n\n${itemRows}\n\n${gdriveNote}Please revert with your best price and lead time at your earliest convenience.\n\nThank you,\nN.R.KUMAR HP:+65 97685891\nCELRON ENTERPRISES PTE LTD\n10, Jln, Besar,"Sim Lim Tower", #03-05, Singapore 208787\nEmail: sales@celron.net | Tel: +6597685891/81962270 Web : https://www.celron.net    / https://celron.shop`);
 
         setEmailPreviewData({ emails, subject, body });
     };
 
     const handleWhatsApp = () => {
-        if (selectedSuppliers.length === 0) {
-            alert("Please select at least one supplier.");
+        // Customer-facing WhatsApp — share enquiry summary with the customer
+        const customer = allPartners.find(p => p.id === enquiry?.customer_id);
+        if (!customer) {
+            setWhatsappShareModal({ isOpen: true });
             return;
         }
-        setWhatsappShareModal({ isOpen: true });
+        const waUrl = buildRFQWhatsAppUrl(enquiry, customer);
+        if (!waUrl) {
+            setWhatsappShareModal({ isOpen: true }); // Fallback to modal if no phone
+            return;
+        }
+        window.open(waUrl, '_blank');
     };
+
+    /**
+     * handleEmailCustomer — opens a pre-filled mailto to send a quotation to the customer.
+     * Called from the Quote2Cust button after a quotation has been generated.
+     * @param {string} pdfUrl - optional GDrive link to the quotation PDF
+     */
+    const handleEmailCustomer = (pdfUrl = null) => {
+        const customer = allPartners.find(p => p.id === enquiry?.customer_id);
+        if (!customer) { toast.error('Customer not set on enquiry.'); return; }
+        const url = buildQuotationMailtoUrl(
+            { ...enquiry, document_no: enquiry.enquiry_no, enquiry_no: enquiry.enquiry_no },
+            customer,
+            settings,
+            pdfUrl
+        );
+        openEmailUrl(url, 'Could not build email — check customer email address.');
+    };
+
 
     const confirmFloat = async () => {
         const success = await handleFloatQuotation(selectedItems, enquiry);
@@ -262,6 +310,76 @@ export default function EnquiryDetails() {
         }
     };
 
+
+    // ─── Paste & Parse Items ──────────────────────────────────────────────────
+    const handlePasteAndParse = () => {
+        if (!pasteText.trim()) return;
+        const lines = pasteText.split('\n').map(l => l.trim()).filter(Boolean);
+        const parsed = [];
+        lines.forEach((line) => {
+            // Skip pure numeric lines (like item numbers alone)
+            if (/^\d+\.?$/.test(line)) return;
+            // Remove leading number prefix like "1." or "1)" or "(1)"
+            const cleaned = line.replace(/^[\(]?\d+[\)\.]?\s*/, '').trim();
+            if (!cleaned) return;
+            // Try to detect qty pattern at end: "xxx - 2 pcs" or "xxx (qty:3)"
+            let name = cleaned;
+            let qty = '';
+            let uom = 'pcs';
+            const qtyMatch = cleaned.match(/[\s\-]+([\d.]+)\s*(pcs|sets?|nos?|units?|kgs?|mtrs?|rolls?|pairs?|lots?)?\s*$/i);
+            if (qtyMatch) {
+                qty = qtyMatch[1];
+                uom = qtyMatch[2] || 'pcs';
+                name = cleaned.substring(0, cleaned.lastIndexOf(qtyMatch[0])).trim();
+            }
+            parsed.push({ name, qty: qty || '1', uom, is_section: false, is_note: false });
+        });
+        setParsedPreview(parsed);
+        setShowParsedPreview(true);
+    };
+
+    const handleConfirmParsedItems = () => {
+        parsedPreview.forEach(item => handleAddItem({ name: item.name, quantity: item.qty, qty: item.qty, uom: item.uom, unit: item.uom }));
+        setPasteText('');
+        setParsedPreview([]);
+        setShowParsedPreview(false);
+        setShowPastePanel(false);
+        toast.success(`${parsedPreview.length} item(s) added from paste!`);
+    };
+
+    // ─── QR Code ─────────────────────────────────────────────────────────────
+    const handleShowQr = () => {
+        const folderId = enquiry?.gdrive_folder_id;
+        if (!folderId) { toast('No Drive folder linked to this enquiry yet. Save first.', { icon: '💡' }); return; }
+        const driveLink = `https://drive.google.com/drive/folders/${folderId}`;
+        setQrUrl(`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(driveLink)}`);
+        setShowQrPanel(true);
+    };
+
+    // ─── Log Supplier Quote ───────────────────────────────────────────────────
+    const handleSaveQuoteLog = async () => {
+        if (!quoteLogForm.supplier_name) { toast.error('Please enter a supplier name.'); return; }
+        setIsSavingQuoteLog(true);
+        try {
+            const { supabase } = await import('../../lib/supabase');
+            const logEntry = {
+                enquiry_id: id,
+                company_id: profile.company_id,
+                ...quoteLogForm,
+                unit_price: parseFloat(quoteLogForm.unit_price) || null
+            };
+            const { data, error } = await supabase.from('supplier_quotes').insert([logEntry]).select().single();
+            if (error) throw error;
+            setLocalQuoteLogs(prev => [...prev, data]);
+            setQuoteLogForm({ supplier_name: '', unit_price: '', currency: 'SGD', lead_time: '', remarks: '', quote_date: new Date().toISOString().split('T')[0] });
+            toast.success('Supplier quote logged!');
+        } catch (err) {
+            console.error(err);
+            toast.error('Failed to save quote: ' + (err.message || 'Check if supplier_quotes table exists'));
+        } finally {
+            setIsSavingQuoteLog(false);
+        }
+    };
 
     const [isSavingMaster, setIsSavingMaster] = useState(false);
     const [attachment, setAttachment] = useState(null);
@@ -423,33 +541,47 @@ export default function EnquiryDetails() {
             </div>
 
             {/* 2. Page Header Actions */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <Link to="/enquiries" style={{ color: '#94a3b8' }}><ArrowLeft size={20} /></Link>
-                    <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>Enquiry {enquiry.enquiry_no}</h2>
+                    <Link to="/unified-supplier-hub" style={{ color: '#94a3b8', display: 'flex' }}><ArrowLeft size={20} /></Link>
+                    <div>
+                        <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Enquiry</div>
+                        <h2 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#4f46e5', margin: 0 }}>{enquiry.enquiry_no || 'Draft'}</h2>
+                    </div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
                     <button 
                         onClick={handleSaveMaster}
                         disabled={isSavingMaster}
                         className="btn btn-sm btn-primary" 
-                        style={{ background: '#6366f1', display: 'flex', alignItems: 'center', gap: '6px' }}
+                        style={{ background: '#6366f1', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700 }}
                     >
                         {isSavingMaster ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} 
-                        {id === 'new' ? 'Create Enquiry' : 'Save Changes'}
+                        {id === 'new' ? 'Create Enquiry' : 'Save'}
                     </button>
                     {id !== 'new' && (
                         <>
-                            <button onClick={() => window.open(`/workflows/enquiry/print/${id}`, '_blank')} className="btn btn-sm btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Download size={16} /> Print PDF</button>
-                            <button onClick={handleFloatQuotation} className="btn btn-sm btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Mail size={16} /> Send by email</button>
-                            <button onClick={handleWhatsApp} className="btn btn-sm btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#25D366', color: '#fff', border: 'none' }}><MessageSquare size={16} /> WhatsApp Share</button>
-                            <button onClick={handleConvertToV2} className="btn btn-sm btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#6366f1', borderColor: '#6366f1' }}><ArrowRightLeft size={16} /> Convert to Quote</button>
-                            <button onClick={handleConvertToOrder} className="btn btn-sm btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#059669', borderColor: '#059669' }}><BadgeDollarSign size={16} /> Convert to Order</button>
+                            <button onClick={() => window.open(`/workflows/enquiry/print/${id}`, '_blank')} className="btn btn-sm btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}><Download size={14} /> Print</button>
+                            <button onClick={() => setIsFloatRFQOpen(true)} className="btn btn-sm" style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#6366f1', color: '#fff', border: 'none', borderRadius: '8px', padding: '7px 14px', fontWeight: 700, cursor: 'pointer' }}><Send size={14} /> Float RFQ</button>
+                            <button onClick={handleWhatsApp} className="btn btn-sm btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#25D366', color: '#fff', border: 'none' }}><MessageSquare size={14} /> WhatsApp</button>
+                            <button onClick={handleConvertToV2} className="btn btn-sm btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#6366f1', borderColor: '#6366f1' }}><ArrowRightLeft size={14} /> Quote2Cust</button>
+                            <button onClick={handleConvertToOrder} className="btn btn-sm btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#059669', borderColor: '#059669' }}><BadgeDollarSign size={14} /> Order2Supp</button>
+                            <button onClick={handleShowQr} className="btn btn-sm btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#0891b2', borderColor: '#0891b2' }} title="QR Code — Mobile file transfer"><QrCode size={14} /> QR</button>
                         </>
                     )}
-                    <button className="btn btn-sm btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Plus size={16} /> Create Revision</button>
                 </div>
             </div>
+            {/* QR Panel */}
+            {showQrPanel && qrUrl && (
+                <div style={{ background: '#ecfeff', border: '1px solid #a5f3fc', borderRadius: '12px', padding: '16px', marginBottom: '16px', display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
+                    <img src={qrUrl} alt="QR Drive Link" style={{ width: 90, height: 90, borderRadius: '8px' }} />
+                    <div>
+                        <div style={{ fontWeight: 700, color: '#164e63', marginBottom: '4px' }}>📱 Scan to open Enquiry Drive Folder on your mobile</div>
+                        <div style={{ fontSize: '0.78rem', color: '#0e7490' }}>Use your phone camera to scan. Upload documents or photos directly from mobile to the enquiry folder.</div>
+                        <button onClick={() => setShowQrPanel(false)} style={{ marginTop: '8px', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}><X size={12} /> Close</button>
+                    </div>
+                </div>
+            )}
 
             {/* 3. Info Grid (Enquiry Template) */}
             <div className="glass-panel" style={{ padding: '24px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', marginBottom: '24px' }}>
@@ -598,8 +730,49 @@ export default function EnquiryDetails() {
                     </div>
                 </div>
 
-            {/* 4. Content Area */}
+            {/* 4. Content Area — Enquiry Lines */}
             <div style={{ marginBottom: '24px' }}>
+
+                {/* ── Paste-in Quick Import Panel ── */}
+                <div style={{ marginBottom: '12px' }}>
+                    <button onClick={() => setShowPastePanel(!showPastePanel)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', borderRadius: '10px', border: '1.5px dashed #6366f1', background: showPastePanel ? '#eef2ff' : '#fafafa', color: '#4f46e5', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.2s' }}>
+                        <ClipboardList size={16} /> {showPastePanel ? 'Hide' : '📋 Paste-in Items'} — Quick import from email/PDF/WhatsApp text
+                    </button>
+                    {showPastePanel && (
+                        <div style={{ marginTop: '8px', background: '#fff', border: '1.5px solid #c7d2fe', borderRadius: '14px', padding: '16px', boxShadow: '0 4px 8px rgba(99,102,241,0.08)' }}>
+                            <div style={{ fontSize: '0.78rem', color: '#64748b', marginBottom: '8px', fontWeight: 600 }}>Paste your enquiry items below (one per line). Format: item name - quantity uom OR numbered list.</div>
+                            <textarea
+                                value={pasteText}
+                                onChange={e => { setPasteText(e.target.value); setShowParsedPreview(false); }}
+                                placeholder={`Example:\n1. Bilge pump impeller - 2 pcs\n2. Sea water strainer basket\n3. Shaft seal kit (type: XR-200) - 1 set\nHeat exchanger tube bundle - 4 nos`}
+                                rows={8}
+                                style={{ width: '100%', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '10px', fontSize: '0.85rem', fontFamily: 'monospace', lineHeight: 1.6, resize: 'vertical', boxSizing: 'border-box', color: '#1e293b' }}
+                            />
+                            <div style={{ display: 'flex', gap: '10px', marginTop: '10px', alignItems: 'center' }}>
+                                <button onClick={handlePasteAndParse} style={{ padding: '9px 18px', borderRadius: '10px', background: '#6366f1', color: '#fff', border: 'none', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}>Parse & Preview Lines →</button>
+                                <button onClick={() => { setPasteText(''); setParsedPreview([]); setShowParsedPreview(false); }} style={{ padding: '9px 14px', borderRadius: '10px', background: '#f1f5f9', color: '#64748b', border: 'none', fontWeight: 600, cursor: 'pointer', fontSize: '0.82rem' }}>Clear</button>
+                                <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{pasteText.split('\n').filter(Boolean).length} line(s)</span>
+                            </div>
+                            {showParsedPreview && parsedPreview.length > 0 && (
+                                <div style={{ marginTop: '14px', border: '1px solid #bbf7d0', borderRadius: '12px', background: '#f0fdf4', padding: '14px' }}>
+                                    <div style={{ fontWeight: 700, color: '#065f46', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}><CheckCircle2 size={16} /> {parsedPreview.length} items parsed — review below:</div>
+                                    {parsedPreview.map((item, i) => (
+                                        <div key={i} style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '6px', background: '#fff', padding: '8px 12px', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
+                                            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', width: '20px' }}>{i+1}</span>
+                                            <input value={item.name} onChange={e => { const p = [...parsedPreview]; p[i].name = e.target.value; setParsedPreview(p); }} style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '0.85rem', fontWeight: 600, color: '#1e293b', outline: 'none' }} />
+                                            <input value={item.qty} onChange={e => { const p = [...parsedPreview]; p[i].qty = e.target.value; setParsedPreview(p); }} style={{ width: '50px', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '4px 6px', fontSize: '0.82rem', textAlign: 'center' }} />
+                                            <input value={item.uom} onChange={e => { const p = [...parsedPreview]; p[i].uom = e.target.value; setParsedPreview(p); }} style={{ width: '55px', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '4px 6px', fontSize: '0.82rem' }} />
+                                            <button onClick={() => setParsedPreview(parsedPreview.filter((_, ii) => ii !== i))} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer' }}><X size={14} /></button>
+                                        </div>
+                                    ))}
+                                    <button onClick={handleConfirmParsedItems} style={{ marginTop: '10px', padding: '10px 20px', borderRadius: '10px', background: '#10b981', color: '#fff', border: 'none', fontWeight: 700, cursor: 'pointer', fontSize: '0.88rem', display: 'flex', alignItems: 'center', gap: '8px' }}><CheckCircle2 size={16} /> Add {parsedPreview.length} Items to Enquiry Lines</button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+
                 <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', overflow: 'visible', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
@@ -786,9 +959,66 @@ export default function EnquiryDetails() {
                         </div>
                     </div>
                 </div>
-            
 
+            {/* ── Supplier Quote Log Panel ── */}
+            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '20px', marginBottom: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#1e293b' }}>Supplier Quotes Received</h4>
+                        {localQuoteLogs.length > 0 && <span style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: '20px', padding: '2px 10px', fontSize: '0.72rem', fontWeight: 700 }}>{localQuoteLogs.length} quote(s)</span>}
+                    </div>
+                    <button onClick={() => setShowQuoteLogPanel(!showQuoteLogPanel)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '10px', border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4f46e5', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
+                        <Plus size={14} /> Log Received Quote
+                    </button>
+                </div>
 
+                {showQuoteLogPanel && (
+                    <div style={{ background: '#f8fafc', borderRadius: '12px', padding: '16px', marginBottom: '12px', border: '1px solid #e2e8f0' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>SUPPLIER NAME *</label>
+                                <input value={quoteLogForm.supplier_name} onChange={e => setQuoteLogForm(f => ({...f, supplier_name: e.target.value}))} placeholder="e.g. ABC Marine Pte Ltd" style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
+                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>UNIT PRICE</label>
+                                <input type="number" value={quoteLogForm.unit_price} onChange={e => setQuoteLogForm(f => ({...f, unit_price: e.target.value}))} placeholder="0.00" style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
+                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>CURRENCY</label>
+                                <select value={quoteLogForm.currency} onChange={e => setQuoteLogForm(f => ({...f, currency: e.target.value}))} style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem' }}>
+                                    {['SGD','USD','EUR','GBP','MYR','AED'].map(c => <option key={c} value={c}>{c}</option>)}
+                                </select></div>
+                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>LEAD TIME</label>
+                                <input value={quoteLogForm.lead_time} onChange={e => setQuoteLogForm(f => ({...f, lead_time: e.target.value}))} placeholder="e.g. 2 weeks" style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: '10px', marginBottom: '10px' }}>
+                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>REMARKS / NOTES</label>
+                                <input value={quoteLogForm.remarks} onChange={e => setQuoteLogForm(f => ({...f, remarks: e.target.value}))} placeholder="Brand, part no, conditions, etc." style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
+                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>QUOTE DATE</label>
+                                <input type="date" value={quoteLogForm.quote_date} onChange={e => setQuoteLogForm(f => ({...f, quote_date: e.target.value}))} style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <button onClick={handleSaveQuoteLog} disabled={isSavingQuoteLog} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 18px', borderRadius: '10px', background: '#10b981', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
+                                {isSavingQuoteLog ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />} Save Quote Log
+                            </button>
+                            <button onClick={() => setShowQuoteLogPanel(false)} style={{ padding: '9px 14px', borderRadius: '10px', background: '#f1f5f9', color: '#64748b', border: 'none', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer' }}>Cancel</button>
+                        </div>
+                    </div>
+                )}
+
+                {localQuoteLogs.length > 0 && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '10px' }}>
+                        {localQuoteLogs.map((q, i) => (
+                            <div key={i} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '14px' }}>
+                                <div style={{ fontWeight: 700, color: '#065f46', marginBottom: '4px' }}>{q.supplier_name}</div>
+                                {q.unit_price && <div style={{ fontSize: '0.82rem', color: '#374151' }}>Price: <strong>{q.currency} {q.unit_price}</strong></div>}
+                                {q.lead_time && <div style={{ fontSize: '0.82rem', color: '#374151' }}>Lead Time: {q.lead_time}</div>}
+                                {q.remarks && <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>{q.remarks}</div>}
+                                <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '6px' }}>{q.quote_date}</div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                {localQuoteLogs.length === 0 && !showQuoteLogPanel && (
+                    <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: 0, fontStyle: 'italic' }}>No supplier quotes logged yet. Click "Log Received Quote" to add one.</p>
+                )}
+            </div>
 
             {/* 6. Advanced Workflow Section (50/50 Split) */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginTop: '24px', alignItems: 'start' }}>
@@ -1318,84 +1548,106 @@ export default function EnquiryDetails() {
                 </div>
             </div>
 
-            <WhatsAppShareModal 
-                isOpen={whatsappShareModal.isOpen}
-                onClose={() => setWhatsappShareModal({ isOpen: false })}
-                contacts={allPartners.find(p => p.id === enquiry.customer_id)?.contacts || []}
-                partner={allPartners.find(p => p.id === enquiry.customer_id)}
-                documentData={{
-                    document_type: 'Enquiry',
-                    document_no: enquiry.enquiry_no,
-                    subject: enquiry.customer_ref,
-                    currency: 'SGD',
-                    total_amount: 0,
-                    salesperson_name: profile?.full_name || 'CEL-RON Team'
-                }}
-            />
-
-            {/* Supplier Management Modal (Image 2 style) */}
-            <Modal 
-                isOpen={supplierModalOpen} 
-                onClose={() => setSupplierModalOpen(false)}
-                title={editingSupplier ? "Edit Supplier Details" : "Add New Supplier"}
-                icon={Users}
-                size="xl"
-            >
-                <QuickPartnerContactDualAdd 
-                    company_id={profile.company_id}
-                    initialPartner={editingSupplier || { types: ['Supplier'] }}
-                    partners={suppliers}
-                    onSuccess={async ({ partner, contact }) => {
-                        await fetchSuppliers();
-                        setSupplierModalOpen(false);
+                <WhatsAppShareModal 
+                    isOpen={whatsappShareModal.isOpen}
+                    onClose={() => setWhatsappShareModal({ isOpen: false })}
+                    contacts={allPartners.find(p => p.id === enquiry.customer_id)?.contacts || []}
+                    partner={allPartners.find(p => p.id === enquiry.customer_id)}
+                    documentData={{
+                        document_type: 'Enquiry',
+                        document_no: enquiry.enquiry_no,
+                        subject: enquiry.customer_ref,
+                        currency: 'SGD',
+                        total_amount: 0,
+                        salesperson_name: profile?.full_name || 'CEL-RON Team'
                     }}
-                    onCancel={() => setSupplierModalOpen(false)}
-                    title={editingSupplier ? "Edit Supplier Details" : "Add New Supplier"}
-                    defaultType="Supplier"
                 />
-            </Modal>
 
-            {/* Premium AI Enquiry Document Parser Modal */}
-            <SmartEnquiryParserModal 
-                isOpen={showOCRModal}
-                onClose={() => setShowOCRModal(false)}
-                partners={allPartners}
-                onApply={({ header, items: scannedItems, file: uploadedFile }) => {
-                    // 1. Update Enquiry Header fields
-                    const headerUpdates = {};
-                    if (header.customer_id) headerUpdates.customer_id = header.customer_id;
-                    if (header.customer_ref) headerUpdates.customer_ref = header.customer_ref;
-                    if (header.enquiry_date) headerUpdates.enquiry_date = header.enquiry_date;
-                    if (header.due_date) headerUpdates.due_date = header.due_date;
-                    if (header.subject) headerUpdates.description = header.subject;
-                    
-                    if (Object.keys(headerUpdates).length > 0) {
-                        handleUpdateHeader(headerUpdates);
-                    }
+                {/* Supplier Management Modal (Image 2 style) */}
+                <Modal 
+                    isOpen={supplierModalOpen} 
+                    onClose={() => setSupplierModalOpen(false)}
+                    title={editingSupplier ? "Edit Supplier Details" : "Add New Supplier"}
+                    icon={Users}
+                    size="xl"
+                >
+                    <QuickPartnerContactDualAdd 
+                        company_id={profile.company_id}
+                        initialPartner={editingSupplier || { types: ['Supplier'] }}
+                        partners={suppliers}
+                        onSuccess={async ({ partner, contact }) => {
+                            await fetchSuppliers();
+                            setSupplierModalOpen(false);
+                        }}
+                        onCancel={() => setSupplierModalOpen(false)}
+                        title={editingSupplier ? "Edit Supplier Details" : "Add New Supplier"}
+                        defaultType="Supplier"
+                    />
+                </Modal>
 
-                    // 2. Append parsed products to line items list (Zero data loss)
-                    const newItems = [...selectedItems];
-                    scannedItems.forEach(item => {
-                        if (!newItems.some(i => i.name.toLowerCase() === item.name.toLowerCase())) {
-                            newItems.push(item);
-                        }
-                    });
-                    setSelectedItems(newItems);
-                    if (id !== 'new') {
-                        import('../../lib/workflowService').then(({ updateEnquiry }) => {
-                            updateEnquiry(id, { catalog_items: newItems });
+                {/* Premium AI Enquiry Document Parser Modal */}
+                <SmartEnquiryParserModal 
+                    isOpen={showOCRModal}
+                    onClose={() => setShowOCRModal(false)}
+                    partners={allPartners}
+                    onApply={({ header, items: scannedItems, file: uploadedFile }) => {
+                        const headerUpdates = {};
+                        if (header.customer_id) headerUpdates.customer_id = header.customer_id;
+                        if (header.customer_ref) headerUpdates.customer_ref = header.customer_ref;
+                        if (header.enquiry_date) headerUpdates.enquiry_date = header.enquiry_date;
+                        if (header.due_date) headerUpdates.due_date = header.due_date;
+                        if (header.subject) headerUpdates.description = header.subject;
+                        if (Object.keys(headerUpdates).length > 0) handleUpdateHeader(headerUpdates);
+                        const newItems = [...selectedItems];
+                        scannedItems.forEach(item => {
+                            if (!newItems.some(i => i.name.toLowerCase() === item.name.toLowerCase())) newItems.push(item);
                         });
-                    }
-                    setEnquiry(prev => ({ ...prev, catalog_items: newItems }));
+                        setSelectedItems(newItems);
+                        if (id !== 'new') {
+                            import('../../lib/workflowService').then(({ updateEnquiry }) => updateEnquiry(id, { catalog_items: newItems }));
+                        }
+                        setEnquiry(prev => ({ ...prev, catalog_items: newItems }));
+                        if (uploadedFile) setAttachment(uploadedFile);
+                        toast.success(`Successfully loaded ${scannedItems.length} items and header fields!`);
+                    }}
+                />
 
-                    // 3. Queue file as Enquiry attachment for Google Drive backup
-                    if (uploadedFile) {
-                        setAttachment(uploadedFile);
-                    }
+                {/* Fast Float RFQ Modal */}
+                <FastFloatModal
+                    isOpen={isFloatRFQOpen}
+                    onClose={() => setIsFloatRFQOpen(false)}
+                    onConfirm={async (suppliers, sentCount) => {
+                        setIsFloatRFQOpen(false);
+                        if (sentCount > 0) {
+                            const { supabase } = await import('../../lib/supabase');
+                            await supabase.from('customer_enquiries').update({ status: 'RFQ Floated' }).eq('id', id);
+                            toast.success(`RFQ floated to ${sentCount} supplier(s)! Status updated.`);
+                            refreshEnquiry();
+                        }
+                    }}
+                    enquiry={enquiry}
+                />
 
-                    toast.success(`Successfully loaded ${scannedItems.length} items and header fields! Click "Save Changes" to archive enquiry document in Google Drive.`);
-                }}
-            />
+                {/* Float RFQ FAB */}
+                {id !== 'new' && (
+                    <button
+                        onClick={() => setIsFloatRFQOpen(true)}
+                        style={{
+                            position: 'fixed', bottom: '32px', right: '32px', zIndex: 500,
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            padding: '14px 22px', borderRadius: '50px',
+                            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                            color: '#fff', border: 'none', cursor: 'pointer',
+                            fontSize: '0.92rem', fontWeight: 800,
+                            boxShadow: '0 8px 24px rgba(99,102,241,0.4)',
+                            transition: 'all 0.2s', letterSpacing: '0.01em'
+                        }}
+                        onMouseOver={e => { e.currentTarget.style.transform = 'translateY(-3px) scale(1.03)'; e.currentTarget.style.boxShadow = '0 12px 32px rgba(99,102,241,0.5)'; }}
+                        onMouseOut={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(99,102,241,0.4)'; }}
+                    >
+                        <Send size={18} /> Float RFQ
+                    </button>
+                )}
             </div>
         </div>
     );

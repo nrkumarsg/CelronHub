@@ -59,6 +59,7 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
     const companyName = (settings?.company_name || 'CEL-RON ENTERPRISES PTE LTD').replace('CELRON', 'CEL-RON');
     const companyAddress = settings?.address || '10, Jln, Besar, "Sim Lim Tower", #03-05, Singapore 208787';
     const companyUen = settings?.gst_uen || '201436227C';
+    const cleanBankDetails = (settings?.bank_details || '').split('\n').map(line => line.trim()).join('\n');
 
     const formatDate = (d) => {
         if (!d) return '-';
@@ -490,7 +491,7 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                                 <div style={{ flex: 1, padding: '10px', textAlign: 'left', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                                     <div style={{ ...styles.h4, fontSize: '8px', color: '#1e3a8a', marginBottom: '4px' }}>BANK ACCOUNT DETAILS</div>
                                     <div style={{ ...styles.small, fontSize: '8px', whiteSpace: 'pre-wrap', color: '#1e293b', lineHeight: '1.2' }}>
-                                        {settings?.bank_details || 'Please contact us for bank details.'}
+                                        {cleanBankDetails || 'Please contact us for bank details.'}
                                     </div>
                                 </div>
                             </div>

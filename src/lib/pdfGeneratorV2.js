@@ -1,6 +1,37 @@
 import html2pdf from 'html2pdf.js';
 import { getStoredToken } from './googleAuthService';
 
+const amountToWords = (amount, currency = 'SGD') => {
+    const ones = ['', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE'];
+    const tens = ['', '', 'TWENTY', 'THIRTY', 'FORTY', 'FIFTY', 'SIXTY', 'SEVENTY', 'EIGHTY', 'NINETY'];
+    const teens = ['TEN', 'ELEVEN', 'TWELVE', 'THIRTEEN', 'FOURTEEN', 'FIFTEEN', 'SIXTEEN', 'SEVENTEEN', 'EIGHTEEN', 'NINETEEN'];
+
+    const convert = (num) => {
+        if (num === 0) return '';
+        if (num < 10) return ones[num];
+        if (num < 20) return teens[num - 10];
+        if (num < 100) return tens[Math.floor(num / 10)] + (num % 10 !== 0 ? ' ' + ones[num % 10] : '');
+        if (num < 1000) return ones[Math.floor(num / 100)] + ' HUNDRED' + (num % 100 !== 0 ? ' AND ' + convert(num % 100) : '');
+        if (num < 1000000) return convert(Math.floor(num / 1000)) + ' THOUSAND' + (num % 1000 !== 0 ? ' ' + convert(num % 1000) : '');
+        if (num < 1000000000) return convert(Math.floor(num / 1000000)) + ' MILLION' + (num % 1000000 !== 0 ? ' ' + convert(num % 1000000) : '');
+        return '';
+    };
+
+    if (!amount || isNaN(amount)) return '';
+
+    const [integerPart, decimalPart] = parseFloat(amount).toFixed(2).split('.');
+    const intNum = parseInt(integerPart);
+    const decNum = parseInt(decimalPart);
+
+    let result = (currency === 'SGD' ? 'SINGAPORE DOLLARS ' : currency + ' ') + (intNum === 0 ? 'ZERO' : convert(intNum));
+    
+    if (decNum > 0) {
+        result += ' AND CENTS ' + convert(decNum);
+    }
+    
+    return result + ' ONLY';
+};
+
 export const generateSleekPDF = async (documentData, settings, action = 'download') => {
     const {
         document_type = 'Workflow',
@@ -31,6 +62,7 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
     const companyUen = settings?.gst_uen || '201436227C';
     const companySignature = settings?.signature_url || '/nrkumarsign.png';
     const companyPaynow = settings?.paynow_url;
+    const cleanBankDetails = (settings?.bank_details || '').split('\n').map(line => line.trim()).join('\n');
 
     const formatDate = (d) => {
         if (!d) return '-';
@@ -58,6 +90,11 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
     const isDeliveryDoc = document_type?.toUpperCase().includes('DELIVERY') || document_type?.toUpperCase().includes('PACKING');
 
     const isAnithaType = ['Tax Invoice', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(document_type);
+    
+    const isInvoice = document_type?.toUpperCase() === 'TAX INVOICE' || document_type?.toUpperCase() === 'INVOICE';
+    const isProforma = document_type?.toUpperCase() === 'PROFORMA INVOICE' || document_type?.toUpperCase() === 'PRO';
+    const isPayment = document_type?.toUpperCase() === 'PAYMENT RECEIVED' || document_type?.toUpperCase() === 'OFFICIAL RECEIPT';
+    const isFinancial = isInvoice || isProforma || isPayment;
     
     const isKumar = salesperson_name?.toUpperCase() === 'N.R.KUMAR' || salesperson_name?.toUpperCase() === 'KUMAR';
     
@@ -195,10 +232,10 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
                     <div>
                         <div style="border-top: 1px solid #cbd5e1; margin: 8px 0 6px 0;"></div>
                         <div style="font-weight: 700; font-size: 11px; color: #000;">
-                            ATTN: ${contacts?.contact_name || partners?.contact_person || 'N/A'}
+                            ATTN: ${contacts?.name || contacts?.contact_name || partners?.contact_person || 'N/A'}
                         </div>
                         <div style="font-size: 10px; color: #475569; margin-top: 1px;">
-                            HP: ${contacts?.mobile_phone || partners?.phone1 || partners?.phone || 'N/A'} &nbsp; Email: ${contacts?.email || partners?.email1 || partners?.email || 'N/A'}
+                            HP: ${contacts?.handphone || contacts?.mobile_phone || partners?.phone1 || partners?.phone || 'N/A'} &nbsp; Email: ${contacts?.email || partners?.email1 || partners?.email || 'N/A'}
                         </div>
                     </div>
                 </div>
@@ -318,7 +355,7 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
             <div style="display: flex; gap: 20px; align-items: flex-start; margin-bottom: 20px; font-family: 'Segoe UI', Arial, sans-serif;">
                 
                 <!-- NOTES & COMMENTS Box -->
-                <div style="border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; flex: 1.2; box-sizing: border-box; min-height: 145px; background: white;">
+                <div style="border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; flex: 1.2; box-sizing: border-box; min-height: 95px; background: white;">
                     <div style="color: #1e3a8a; font-weight: 700; font-size: 11px; margin-bottom: 6px; text-transform: uppercase;">NOTES & COMMENTS:</div>
                     ${isDeliveryDoc ? `
                         <div style="font-weight: 700; font-size: 9.5px; margin-bottom: 4px; color: #000;">Package Details</div>
@@ -333,7 +370,12 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
                         </ul>
                         ${notes ? `<div style="margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 6px; white-space: pre-wrap; font-size: 9.5px; font-weight: 500; color: #000;">${notes}</div>` : ''}
                     ` : `
-                        <div style="display: flex; gap: 10px; align-items: flex-start;">
+                        ${isFinancial ? `
+                        <div style="color: #000; font-size: 9.5px; line-height: 1.45; text-align: left; width: 100%;">
+                            ${notes ? `<div style="white-space: pre-wrap; font-style: italic; color: #475569;"><strong>NOTES & COMMENTS:</strong><br/>${notes}</div>` : ''}
+                        </div>
+                        ` : `
+                        <div style="display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%;">
                             ${paynowB64 ? `
                             <div style="text-align: center; border: 1px solid #cbd5e1; padding: 4px; border-radius: 4px; background: white; flex-shrink: 0;">
                                 <img src="${paynowB64}" style="width: 80px; height: 80px; object-fit: contain;" />
@@ -349,6 +391,7 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
                                 ${notes ? `<div style="margin-top: 6px; border-top: 1px solid #e2e8f0; padding-top: 4px; white-space: pre-wrap; font-style: italic; color: #475569;">${notes}</div>` : ''}
                             </div>
                         </div>
+                        `}
                     `}
                 </div>
 
@@ -382,6 +425,13 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
 
             </div>
 
+            <!-- Amount in Words -->
+            ${(!isDeliveryDoc && !document_type?.toUpperCase().includes('QUOTE') && !document_type?.toUpperCase().includes('QUOTATION')) ? `
+            <div style="margin-top: 15px; font-family: 'Segoe UI', Arial, sans-serif; font-size: 9px; color: #000; font-weight: 600; text-transform: uppercase;">
+                AMOUNT IN WORDS: <span style="font-weight: 500;">${amountToWords(total_amount, currency)}</span>
+            </div>
+            ` : ''}
+
             <!-- Signatures Section -->
             <div style="display: flex; gap: 20px; margin-top: 30px; font-family: 'Segoe UI', Arial, sans-serif;">
                 
@@ -396,16 +446,30 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
                     </div>
                 </div>
 
-                <!-- Customer Acknowledgment -->
+                <!-- Customer Acknowledgment (Toggled with Bank details) -->
+                ${isFinancial ? `
+                <div style="border: 1px solid #cbd5e1; border-radius: 8px; flex: 1; display: flex; min-height: 125px; box-sizing: border-box; overflow: hidden; background: #f8fafc;">
+                    <div style="width: 80px; padding: 8px; display: flex; align-items: center; justify-content: center; background: white; border-right: 1px solid #cbd5e1; flex-shrink: 0;">
+                        ${paynowB64 ? `<img src="${paynowB64}" style="max-width: 100%; max-height: 100%; object-fit: contain;" />` : `<div style="font-size: 8px; color: #94a3b8; font-weight: bold; text-align: center;">SCAN TO PAY</div>`}
+                    </div>
+                    <div style="flex: 1; padding: 10px; text-align: left; display: flex; flex-direction: column; justify-content: center;">
+                        <div style="font-weight: 700; font-size: 8.5px; color: #1e3a8a; margin-bottom: 4px; text-transform: uppercase;">BANK ACCOUNT DETAILS</div>
+                        <div style="font-size: 8px; white-space: pre-wrap; color: #1e293b; line-height: 1.25;">
+                            ${cleanBankDetails || 'Please contact us for bank details.'}
+                        </div>
+                    </div>
+                </div>
+                ` : `
                 <div style="border: 1px solid #cbd5e1; border-radius: 8px; flex: 1; padding: 12px; text-align: center; min-height: 125px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; background: white;">
                     <div style="height: 60px; display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 8.5px; font-style: italic; font-weight: 700; text-transform: uppercase;">
-                        RECEIVED IN GOOD ORDER
+                        ${isDeliveryDoc ? 'RECEIVED IN GOOD ORDER' : 'WE AGREE TO SUPPLY AS PER THIS QUOTE'}
                     </div>
                     <div>
                         <div style="border-top: 1px solid #cbd5e1; padding-top: 5px; font-weight: 700; font-size: 9.5px; color: #000; text-transform: uppercase;">CUSTOMER ACKNOWLEDGMENT</div>
                         <div style="font-size: 8.5px; color: #475569; margin-top: 2px; font-weight: 600; text-transform: uppercase;">${partners?.name || 'Customer Name'}</div>
                     </div>
                 </div>
+                `}
 
             </div>
 

@@ -104,35 +104,63 @@ export const deleteEnquiry = async (id) => {
 };
 
 /**
- * Generate next Enquiry No: Enq-YY-MM-XXXX
+ * Generate next Enquiry No: ENQ-CEL-YYMM-XXXX (starting from 1000)
+ * Company-aware: ARKIS → ENQ-ARKIS-YYMM-XXXX, AIS → ENQ-AIS-YYMM-XXXX
  */
 export const generateEnquiryNo = async (companyId) => {
     const today = new Date();
     const yy = String(today.getFullYear()).slice(2);
     const mm = String(today.getMonth() + 1).padStart(2, '0');
-    const prefix = `Enq-${yy}${mm}-`;
+
+    // Determine company prefix
+    let companyPrefix = 'CEL';
+    if (companyId) {
+        try {
+            const { data: company } = await supabase
+                .from('companies')
+                .select('name')
+                .eq('id', companyId)
+                .single();
+            if (company?.name) {
+                const name = company.name.toUpperCase();
+                if (name.includes('ARKIS')) companyPrefix = 'ARKIS';
+                else if (name.includes('ARK INTERNATIONAL')) companyPrefix = 'AIS';
+                else if (name.includes('CEL-RON') || name.includes('CELRON')) companyPrefix = 'CEL';
+                else {
+                    const stopWords = ['PTE', 'LTD', 'LIMITED', 'CO', 'CORP', 'AND', 'THE', 'OF'];
+                    const words = company.name.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/)
+                        .filter(w => w && !stopWords.includes(w.toUpperCase()));
+                    if (words.length >= 2) companyPrefix = words.map(w => w[0].toUpperCase()).join('');
+                    else if (words.length === 1) companyPrefix = words[0].substring(0, 3).toUpperCase();
+                }
+            }
+        } catch (e) { /* use default CEL */ }
+    }
+
+    const prefix = `ENQ-${companyPrefix}-${yy}${mm}-`;
+    const START_NUM = 1000; // Starts from 1000
 
     const { data, error } = await supabase
         .from('customer_enquiries')
         .select('enquiry_no')
         .eq('company_id', companyId)
-        .ilike('enquiry_no', `${prefix}%`)
-        .order('created_at', { ascending: false })
-        .limit(1);
+        .ilike('enquiry_no', `ENQ-${companyPrefix}-%`)
+        .order('created_at', { ascending: false });
 
     if (error) {
         console.error('Error fetching latest enquiry:', error);
-        return `${prefix}0001`;
+        return `${prefix}${String(START_NUM).padStart(4, '0')}`;
     }
 
+    let maxNum = START_NUM - 1;
     if (data && data.length > 0) {
-        const lastNo = data[0].enquiry_no;
-        const parts = lastNo.split('-');
-        const lastIncremental = parseInt(parts[parts.length - 1], 10);
-        if (!isNaN(lastIncremental)) {
-            return `${prefix}${String(lastIncremental + 1).padStart(4, '0')}`;
-        }
+        data.forEach(row => {
+            const parts = (row.enquiry_no || '').split('-');
+            const num = parseInt(parts[parts.length - 1], 10);
+            if (!isNaN(num) && num > maxNum) maxNum = num;
+        });
     }
 
-    return `${prefix}0001`;
+    const nextNum = Math.max(maxNum + 1, START_NUM);
+    return `${prefix}${String(nextNum).padStart(4, '0')}`;
 };
