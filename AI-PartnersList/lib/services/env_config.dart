@@ -13,6 +13,9 @@ class EnvConfig {
   static const String openaiApiKey = 
       String.fromEnvironment('OPENAI_API_KEY', defaultValue: '');
 
+  static const String deepseekApiKey = 
+      String.fromEnvironment('DEEPSEEK_API_KEY', defaultValue: '');
+
   // Google Drive folder ID for CelronBuscards
   static const String driveFolderId = "1FopCXZKCiKTQrwExkB2D_JGm1tVWqOwU";
 }
