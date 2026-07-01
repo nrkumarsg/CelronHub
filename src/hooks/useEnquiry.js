@@ -30,6 +30,12 @@ export function useEnquiry(companyId, enquiryId) {
                 gdrive_file_link: null
             });
             setSelectedItems([]);
+            // Fetch catalog items for new enquiries
+            getCatalogItems(1, 100, {}, '').then(res => {
+                if (res.data) setCatalog(res.data);
+            }).catch(err => {
+                console.error('Error fetching catalog for new enquiry:', err);
+            });
             setLoading(false);
             return;
         }
@@ -81,8 +87,8 @@ export function useEnquiry(companyId, enquiryId) {
             quantity: 1,
             unit: item.unit || 'UNIT(S)',
             uom: item.unit || 'UNIT(S)',
-            unit_price: item.selling_price || 0,
-            amount: item.selling_price || 0,
+            unit_price: item.selling_price || item.price || 0,
+            amount: item.selling_price || item.price || 0,
             tax_rate: 9,
             tax_enabled: true,
             is_section: item.is_section || false,

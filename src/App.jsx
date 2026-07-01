@@ -1,4 +1,4 @@
-import { Routes, Route, useParams, useNavigate } from 'react-router-dom';
+import { Routes, Route, useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useEffect } from 'react';
 import { Smartphone } from 'lucide-react';
 import { downloadApkByIdentifier } from './lib/driveService';
@@ -23,6 +23,7 @@ import WorkLocationForm from './pages/WorkLocationForm';
 import CorporateVault from './pages/CorporateVault';
 import CatalogDirectory from './pages/CatalogDirectory';
 import CatalogForm from './pages/CatalogForm';
+import SystemForm from './pages/SystemForm';
 import PrintLabels from './pages/PrintLabels';
 import WorkflowBoard from './pages/workflows/WorkflowBoard';
 import UniversalFinder from './pages/workflows/UniversalFinder';
@@ -119,7 +120,17 @@ function App() {
         {/* Protected Application Layout and Routes */}
         <Route path="*" element={
           <AppLayout>
-            <Routes>
+            {import.meta.env.VITE_CATALOG_ONLY === 'true' ? (
+              <Routes>
+                <Route path="/" element={<ProtectedRoute requiredModule="catalog"><CatalogDirectory /></ProtectedRoute>} />
+                <Route path="/catalog" element={<ProtectedRoute requiredModule="catalog"><CatalogDirectory /></ProtectedRoute>} />
+                <Route path="/catalog/system/:id" element={<ProtectedRoute requiredModule="catalog"><SystemForm /></ProtectedRoute>} />
+                <Route path="/catalog/:id" element={<ProtectedRoute requiredModule="catalog"><CatalogForm /></ProtectedRoute>} />
+                <Route path="/catalog/labels" element={<ProtectedRoute requiredModule="catalog"><PrintLabels /></ProtectedRoute>} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            ) : (
+              <Routes>
               {/* Base Dashboard (Accessible if logged in and active, handled by wildcard ProtectedRoute) */}
               <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
@@ -237,7 +248,8 @@ function App() {
 
               {/* Fallback */}
               <Route path="*" element={<div style={{ textAlign: 'center', marginTop: '100px' }}><h1>Working on this feature...</h1></div>} />
-            </Routes>
+              </Routes>
+            )}
           </AppLayout>
         } />
       </Routes>

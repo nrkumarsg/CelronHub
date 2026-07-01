@@ -11,7 +11,7 @@ async function createTestUser() {
     console.log('Attempting to create test user...');
     const { data, error } = await supabase.auth.signUp({
         email: 'nrkumarsg@gmail.com',
-        password: 'celron1234',
+        password: 'Mother1973',
     });
 
     if (error) {

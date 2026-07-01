@@ -10,6 +10,7 @@
     "dev": "vite",
     "server": "node server/index.js",
     "build": "vite build",
+    "build:catalog": "set VITE_CATALOG_ONLY=true&& vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "inspect": "node scratch/inspect_purchase_history.mjs",

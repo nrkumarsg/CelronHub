@@ -9,7 +9,7 @@ import puppeteer from 'puppeteer';
     console.log('Typing login credentials...');
     await page.waitForSelector('input[placeholder*="email"]', { timeout: 10000 });
     await page.type('input[placeholder*="email"]', 'nrkumarsg@gmail.com');
-    await page.type('input[type="password"]', 'celron1234');
+    await page.type('input[type="password"]', 'Mother1973');
     await page.click('button[type="submit"]');
 
     console.log('Waiting for login to complete...');

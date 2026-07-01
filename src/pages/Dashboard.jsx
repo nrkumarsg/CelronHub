@@ -144,6 +144,29 @@ export default function Dashboard() {
                     >
                         <HardDrive size={18} /> Storage Hub
                     </button>
+                    <a
+                        href="https://creatorapp.zoho.com/zoho_kumar191/quotations-and-invoices#Page:DashBoard_Invoices"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                            background: '#fff7ed',
+                            border: '1px solid #fed7aa',
+                            borderRadius: '8px',
+                            padding: '8px 12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            fontWeight: 600,
+                            fontSize: '0.9rem',
+                            cursor: 'pointer',
+                            color: '#ea580c',
+                            textDecoration: 'none',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                        }}
+                        title="Open Zoho Quotations & Invoices"
+                    >
+                        <Receipt size={18} /> Zoho Invoices
+                    </a>
                     <div style={{ display: 'flex', alignItems: 'center', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 12px', width: '300px' }}>
                         <Search size={18} color="#94a3b8" />
                         <input

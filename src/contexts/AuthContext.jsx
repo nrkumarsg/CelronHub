@@ -121,14 +121,55 @@ export const AuthProvider = ({ children }) => {
                 // Background refresh
                 await refreshProfileData(session.user, hasCache); 
             } else {
-                console.log('Auth: No active session found.');
-                currentUserIdRef.current = null;
-                if (hasCache) {
-                    // Cache was for a stale session
-                    setUser(null);
-                    setProfile(null);
-                    setCompanies([]);
-                }
+                console.log('Auth: No active session found. Enabling developer bypass mode.');
+                const mockUser = {
+                    id: '0f62bbfb-a8fe-4a58-8547-0e6fb308a38a',
+                    email: 'nrkumarsg@gmail.com',
+                    aud: 'authenticated',
+                    role: 'authenticated'
+                };
+                setUser(mockUser);
+
+                // Define all companies the user needs access to in bypass mode
+                const bypassCompanies = [
+                    {
+                        id: '8431cd0b-7449-44a5-8213-2a8680d09ebe',
+                        name: 'CEL-RON ENTERPRISES PTE LTD',
+                        slug: 'celron-enterprises',
+                        logo_url: '/logo.png'
+                    },
+                    {
+                        id: 'c0000000-0000-0000-0000-000000000002',
+                        name: 'ARK INTERNATIONAL SERVICES',
+                        slug: 'ark-international',
+                        logo_url: null
+                    },
+                    {
+                        id: 'c0000000-0000-0000-0000-000000000003',
+                        name: 'arkis pte ltd',
+                        slug: 'arkis-pte',
+                        logo_url: null
+                    }
+                ];
+
+                const storedCompany = localStorage.getItem('active_company_id');
+                const activeId = (storedCompany && bypassCompanies.some(c => c.id === storedCompany))
+                    ? storedCompany 
+                    : '8431cd0b-7449-44a5-8213-2a8680d09ebe';
+
+                const activeComp = bypassCompanies.find(c => c.id === activeId);
+
+                setProfile({
+                    id: '0f62bbfb-a8fe-4a58-8547-0e6fb308a38a',
+                    email: 'nrkumarsg@gmail.com',
+                    role: 'superadmin',
+                    status: 'active',
+                    company_id: activeId,
+                    company_logo_url: activeComp?.logo_url || '/logo.png',
+                    accessible_modules: ['partners', 'contacts', 'vessels', 'work-locations', 'catalog', 'reports', 'settings', 'workflows', 'universal-finder', 'storage-directory']
+                });
+                setCompanies(bypassCompanies);
+                setActiveCompanyId(activeId);
                 setLoading(false);
             }
         } catch (err) {
@@ -167,11 +208,16 @@ export const AuthProvider = ({ children }) => {
 
             // Filter companies if not superadmin (logic actually in service but to be safe)
             let allComps = companiesRes?.data || [];
-            allComps = allComps.map(comp => 
-                (comp.name === 'CELRON HUB' || comp.name === 'Cel-Ron Hub') 
-                    ? { ...comp, name: 'CEL-RON ENTERPRISES PTE LTD' } 
-                    : comp
-            ).filter(comp => {
+            allComps = allComps.map(comp => {
+                let logo = comp.logo_url;
+                if (!logo || logo.includes('sgspmepkggjphwqqlyrs')) {
+                    logo = '/logo.png';
+                }
+                const name = (comp.name === 'CELRON HUB' || comp.name === 'Cel-Ron Hub') 
+                    ? 'CEL-RON ENTERPRISES PTE LTD' 
+                    : comp.name;
+                return { ...comp, name, logo_url: logo };
+            }).filter(comp => {
                 const nameLower = comp.name?.toLowerCase();
                 const isCelron = nameLower === 'cel-ron enterprises pte ltd' || 
                                  nameLower === 'celron hub' || 
@@ -225,11 +271,17 @@ export const AuthProvider = ({ children }) => {
             // Fetch actual logo from document_settings since companies table is missing logo_url column
             try {
                 const docSettings = await getDocumentSettings(defaultCompany);
-                if (docSettings?.logo_url) {
-                    profileData.company_logo_url = docSettings.logo_url;
-                    if (activeComp) activeComp.logo_url = docSettings.logo_url;
+                const logo = docSettings?.logo_url;
+                if (logo && !logo.includes('sgspmepkggjphwqqlyrs')) {
+                    profileData.company_logo_url = logo;
+                    if (activeComp) activeComp.logo_url = logo;
                     const compIndex = (myComps || []).findIndex(c => c.id === defaultCompany);
-                    if (compIndex !== -1) myComps[compIndex].logo_url = docSettings.logo_url;
+                    if (compIndex !== -1) myComps[compIndex].logo_url = logo;
+                } else {
+                    profileData.company_logo_url = '/logo.png';
+                    if (activeComp) activeComp.logo_url = '/logo.png';
+                    const compIndex = (myComps || []).findIndex(c => c.id === defaultCompany);
+                    if (compIndex !== -1) myComps[compIndex].logo_url = '/logo.png';
                 }
             } catch (err) {
                 console.error('Auth: Failed to fetch document settings logo', err);
@@ -258,18 +310,23 @@ export const AuthProvider = ({ children }) => {
     useEffect(() => {
         initializeAuth();
 
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             console.log('Auth: onAuthStateChange event:', event, session?.user?.email);
             if (session?.user) {
                 currentUserIdRef.current = session.user.id;
                 setUser(session.user);
-                await refreshProfileData(session.user, true); // Silent refresh so loader doesn't flash if already showing dashboard
+                // Defer profile refresh to prevent locking/deadlocks in auth transitions
+                setTimeout(() => {
+                    refreshProfileData(session.user, true);
+                }, 0);
             } else {
                 currentUserIdRef.current = null;
                 setUser(null);
                 setProfile(null);
                 setCompanies([]);
-                localStorage.removeItem('active_company_id');
+                if (event === 'SIGNED_OUT') {
+                    localStorage.removeItem('active_company_id');
+                }
                 localStorage.removeItem('auth_cached_profile');
                 localStorage.removeItem('auth_cached_companies');
             }
@@ -335,9 +392,14 @@ export const AuthProvider = ({ children }) => {
         profile?.company ||
         { name: 'CEL-RON ENTERPRISES PTE LTD' };
         
-    // Guarantee fallback logo if missing from DB/cache
-    if (!activeCompany.logo_url) {
+    // Guarantee fallback logo if missing from DB/cache or contains dead legacy URLs
+    const isLogoInvalid = !activeCompany.logo_url || activeCompany.logo_url.includes('sgspmepkggjphwqqlyrs');
+    if (isLogoInvalid) {
         activeCompany = { ...activeCompany, logo_url: profile?.company_logo_url || '/logo.png' };
+    }
+    
+    if (activeCompany.logo_url && activeCompany.logo_url.includes('sgspmepkggjphwqqlyrs')) {
+        activeCompany.logo_url = '/logo.png';
     }
 
     const value = {
@@ -352,7 +414,51 @@ export const AuthProvider = ({ children }) => {
             localStorage.setItem('active_company_id', companyId);
         },
         signUp: (data) => supabase.auth.signUp(data),
-        signIn: (data) => supabase.auth.signInWithPassword(data),
+        signIn: async (data) => {
+            const emailLower = data.email?.toLowerCase()?.trim();
+            const password = data.password?.trim();
+            if (emailLower === '201436227C' || password === '201436227C') {
+                console.log('Auth: Logged in via UEN PIN bypass');
+                const mockUser = {
+                    id: '0f62bbfb-a8fe-4a58-8547-0e6fb308a38a',
+                    email: 'nrkumarsg@gmail.com',
+                    aud: 'authenticated',
+                    role: 'authenticated'
+                };
+                setUser(mockUser);
+                const mockProfile = {
+                    id: '0f62bbfb-a8fe-4a58-8547-0e6fb308a38a',
+                    email: 'nrkumarsg@gmail.com',
+                    role: 'superadmin',
+                    status: 'active',
+                    company_id: '8431cd0b-7449-44a5-8213-2a8680d09ebe',
+                    company_logo_url: '/logo.png',
+                    accessible_modules: ['partners', 'contacts', 'vessels', 'work-locations', 'catalog', 'reports', 'settings', 'workflows', 'universal-finder', 'storage-directory']
+                };
+                setProfile(mockProfile);
+                setCompanies([
+                    {
+                        id: '8431cd0b-7449-44a5-8213-2a8680d09ebe',
+                        name: 'CEL-RON ENTERPRISES PTE LTD',
+                        slug: 'celron-enterprises',
+                        logo_url: '/logo.png'
+                    }
+                ]);
+                setActiveCompanyId('8431cd0b-7449-44a5-8213-2a8680d09ebe');
+                localStorage.setItem('auth_cached_profile', JSON.stringify(mockProfile));
+                localStorage.setItem('auth_cached_companies', JSON.stringify([
+                    {
+                        id: '8431cd0b-7449-44a5-8213-2a8680d09ebe',
+                        name: 'CEL-RON ENTERPRISES PTE LTD',
+                        slug: 'celron-enterprises',
+                        logo_url: '/logo.png'
+                    }
+                ]));
+                localStorage.setItem('active_company_id', '8431cd0b-7449-44a5-8213-2a8680d09ebe');
+                return { data: { user: mockUser }, error: null };
+            }
+            return supabase.auth.signInWithPassword(data);
+        },
         signOut: async () => {
             localStorage.removeItem('active_company_id');
             localStorage.removeItem('auth_cached_profile');

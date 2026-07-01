@@ -171,6 +171,8 @@ export default function WorkflowEditor() {
     });
     const [signedProofs, setSignedProofs] = useState([]);
     const [loadingSignedProofs, setLoadingSignedProofs] = useState(false);
+    const [deliveryProofs, setDeliveryProofs] = useState([]);
+    const [loadingDeliveryProofs, setLoadingDeliveryProofs] = useState(false);
     const [partnerInvoices, setPartnerInvoices] = useState([]);
 
     useEffect(() => {
@@ -905,8 +907,9 @@ export default function WorkflowEditor() {
             fetchGallery();
         } else if (activeTab === 'payments' && !isNew) {
             fetchPayments();
-        } else if (activeTab === 'explorer' && !isNew) {
+        } else if (activeTab === 'delivery_proof' && !isNew) {
             fetchSignedProofs();
+            fetchDeliveryProofs();
         }
     }, [activeTab, formData.assigned_job_no]);
 
@@ -994,6 +997,96 @@ export default function WorkflowEditor() {
             console.error('Error fetching signed proofs:', err);
         } finally {
             setLoadingSignedProofs(false);
+        }
+    };
+
+    const fetchDeliveryProofs = async () => {
+        if (isNew || !formData.id) return;
+        setLoadingDeliveryProofs(true);
+        try {
+            const { data, error } = await supabase
+                .from('delivery_proofs')
+                .select('*')
+                .eq('document_id', formData.id)
+                .order('created_at', { ascending: false });
+            if (error) throw error;
+            setDeliveryProofs(data || []);
+        } catch (err) {
+            console.error('Error fetching delivery proofs:', err);
+        } finally {
+            setLoadingDeliveryProofs(false);
+        }
+    };
+
+    const syncDeliveryProofs = async () => {
+        if (isNew || !formData.id) return;
+        setLoadingDeliveryProofs(true);
+        try {
+            const token = getStoredToken();
+            const rootId = await ensureJobFolder();
+            const supportDocsFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+            const files = await listFolderContent(token, supportDocsFolderId);
+            const proofFiles = files.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
+
+            const { data: existingProofs, error } = await supabase
+                .from('delivery_proofs')
+                .select('signature_drive_id')
+                .eq('document_id', formData.id);
+            if (error) throw error;
+
+            const existingIds = new Set((existingProofs || []).map(p => p.signature_drive_id));
+            let insertedCount = 0;
+
+            for (const file of proofFiles) {
+                if (!existingIds.has(file.id)) {
+                    await supabase.from('delivery_proofs').insert({
+                        document_id: formData.id,
+                        recipient_name: 'Synced Copy (' + file.name.substring(0, 15) + ')',
+                        signature_drive_id: file.id,
+                        gps_latitude: null,
+                        gps_longitude: null,
+                        location_name: 'Google Drive Sync',
+                        delivered_at: file.createdTime || new Date().toISOString()
+                    });
+                    insertedCount++;
+                }
+            }
+
+            if (insertedCount > 0) {
+                alert(`Successfully synchronized ${insertedCount} new proofs from Google Drive!`);
+            } else {
+                alert('All proofs are already synchronized.');
+            }
+            fetchDeliveryProofs();
+        } catch (err) {
+            console.error('Error syncing delivery proofs:', err);
+            alert('Sync failed: ' + err.message);
+        } finally {
+            setLoadingDeliveryProofs(false);
+        }
+    };
+
+    const handleOpenSupportDocsDrive = async () => {
+        const loadToast = toast.loading('Retrieving Google Drive SupportDocs folder...');
+        try {
+            const token = getStoredToken();
+            const rootId = await ensureJobFolder();
+            if (rootId) {
+                const supportDocsFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+                if (supportDocsFolderId) {
+                    toast.dismiss(loadToast);
+                    window.open(`https://drive.google.com/drive/folders/${supportDocsFolderId}`, '_blank');
+                } else {
+                    toast.dismiss(loadToast);
+                    toast.error('Could not retrieve SupportDocs folder.');
+                }
+            } else {
+                toast.dismiss(loadToast);
+                toast.error('Could not retrieve job folder.');
+            }
+        } catch (err) {
+            toast.dismiss(loadToast);
+            toast.error('Failed to open SupportDocs folder: ' + err.message);
         }
     };
 
@@ -4071,6 +4164,11 @@ export default function WorkflowEditor() {
                     <button className={`tab tab-explorer ${activeTab === 'explorer' ? 'active' : ''}`} onClick={() => setActiveTab('explorer')}>
                         <FolderOpen size={16} /> Explorer
                     </button>
+                    {!isNew && (
+                        <button className={`tab tab-delivery-proof ${activeTab === 'delivery_proof' ? 'active' : ''}`} onClick={() => setActiveTab('delivery_proof')}>
+                            <FileCheck size={16} /> Delivery Proof
+                        </button>
+                    )}
                 </div>
 
                 {activeTab === 'gallery' && (
@@ -5237,7 +5335,7 @@ export default function WorkflowEditor() {
                                                 {doc.id !== id ? (
                                                     <button 
                                                         className="btn btn-sm btn-secondary" 
-                                                        onClick={() => {
+                                                onClick={() => {
                                                             const targetType = doc.document_type.toLowerCase().replace(/\s+/g, '-');
                                                             navigate(`/workflows/editor/${targetType}/${doc.id}`);
                                                         }}
@@ -5255,180 +5353,9 @@ export default function WorkflowEditor() {
                         </div>
                     </div>
                 )}
-
-
-
+                
                 {activeTab === 'explorer' && (
                     <div className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
-                        {/* Signed Proofs Section */}
-                        <div style={{ marginBottom: '32px', background: '#f8fafc', padding: '24px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.1rem', fontWeight: 700, color: '#1e293b' }}>
-                                    <FileCheck size={22} color="#059669" /> Signed Proofs of Delivery / Service
-                                </h3>
-                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                                    <button 
-                                        type="button"
-                                        onClick={() => fetchSignedProofs()} 
-                                        className="btn btn-secondary btn-sm" 
-                                        title="Refresh signed proofs from Google Drive" 
-                                        style={{ 
-                                            height: '36px', 
-                                            display: 'flex', 
-                                            alignItems: 'center', 
-                                            justifyContent: 'center',
-                                            padding: '6px 12px',
-                                            borderRadius: '8px'
-                                        }}
-                                    >
-                                        <RefreshCw size={14} className={loadingSignedProofs ? 'animate-spin' : ''} />
-                                    </button>
-                                    <button 
-                                        type="button"
-                                        onClick={async () => {
-                                            if (authStatus !== 'connected') {
-                                                toast.error('Google Drive is not connected. Please connect/reconnect at the status bar or Settings first.');
-                                                return;
-                                            }
-                                            const token = getStoredToken();
-                                            const rootId = await ensureJobFolder();
-                                            const supportDocsFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
-                                            setQrModal({ isOpen: true, folderId: supportDocsFolderId, folderName: 'SupportDocs' });
-                                        }} 
-                                        className="btn btn-secondary btn-sm" 
-                                        title="Mobile Upload to SupportDocs via QR Code"
-                                        style={{ 
-                                            display: 'flex', 
-                                            alignItems: 'center', 
-                                            gap: '6px',
-                                            background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', 
-                                            border: '1px solid #bbf7d0', 
-                                            color: '#166534',
-                                            height: '36px',
-                                            padding: '6px 12px',
-                                            borderRadius: '8px',
-                                            fontWeight: 600,
-                                            fontSize: '0.85rem'
-                                        }}
-                                    >
-                                        <Smartphone size={14} /> Mobile Scan
-                                    </button>
-                                    <div
-                                        onDragOver={(e) => { e.preventDefault(); setIsDraggingSigned(true); }}
-                                        onDragLeave={(e) => { e.preventDefault(); setIsDraggingSigned(false); }}
-                                        onDrop={async (e) => {
-                                            e.preventDefault();
-                                            setIsDraggingSigned(false);
-                                            const files = Array.from(e.dataTransfer.files);
-                                            if (files.length > 0) {
-                                                setLoadingSignedProofs(true);
-                                                try {
-                                                    const token = getStoredToken();
-                                                    const rootId = await ensureJobFolder();
-                                                    const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
-                                                    for (const file of files) {
-                                                        const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
-                                                        const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
-                                                        setFormData(prev => {
-                                                            const newAttachments = [...(prev.attachment_urls || []), proofUrl];
-                                                            return { ...prev, attachment_urls: newAttachments };
-                                                        });
-                                                    }
-                                                    alert('Signed proof(s) uploaded successfully to SupportDocs!');
-                                                    fetchSignedProofs();
-                                                } catch (err) {
-                                                    console.error('Proof upload failed:', err);
-                                                    alert('Upload failed: ' + err.message);
-                                                } finally {
-                                                    setLoadingSignedProofs(false);
-                                                }
-                                            }
-                                        }}
-                                        onClick={() => document.getElementById('signed-proof-upload').click()}
-                                        style={{
-                                            border: isDraggingSigned ? '2px dashed #059669' : '2px dashed #cbd5e1',
-                                            background: isDraggingSigned ? '#ecfdf5' : '#f8fafc',
-                                            padding: '6px 16px',
-                                            borderRadius: '8px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '8px',
-                                            cursor: 'pointer',
-                                            color: '#059669',
-                                            fontWeight: 600,
-                                            fontSize: '0.85rem',
-                                            transition: 'all 0.2s ease',
-                                            height: '36px',
-                                            justifyContent: 'center'
-                                        }}
-                                    >
-                                        <Upload size={14} />
-                                        <span>{isDraggingSigned ? 'Drop Signed Copy Here' : 'Drop Signed Copy'}</span>
-                                    </div>
-                                    <input id="signed-proof-upload" type="file" multiple hidden onChange={(e) => {
-                                        const files = Array.from(e.target.files);
-                                        const uploadSequence = async () => {
-                                            setLoadingSignedProofs(true);
-                                            try {
-                                                const token = getStoredToken();
-                                                const rootId = await ensureJobFolder();
-                                                const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
-                                                for (const file of files) {
-                                                    const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
-                                                    const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
-                                                    setFormData(prev => {
-                                                        const newAttachments = [...(prev.attachment_urls || []), proofUrl];
-                                                        return { ...prev, attachment_urls: newAttachments };
-                                                    });
-                                                }
-                                                alert('Signed proof(s) uploaded successfully!');
-                                                fetchSignedProofs();
-                                            } catch (err) {
-                                                console.error('Proof upload failed:', err);
-                                                alert('Upload failed: ' + err.message);
-                                            } finally {
-                                                setLoadingSignedProofs(false);
-                                            }
-                                        };
-                                        uploadSequence();
-                                    }} />
-                                </div>
-                            </div>
-                            {loadingSignedProofs ? (
-                                <div style={{ textAlign: 'center', padding: '20px' }}><Loader2 size={24} className="animate-spin" /></div>
-                            ) : signedProofs.length === 0 ? (
-                                <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '0.9rem' }}>
-                                    No signed proofs found in Job Folder. Use the Scanner App or upload here.
-                                </div>
-                            ) : (
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
-                                    {signedProofs.map(proof => (
-                                        <div key={proof.id} style={{ background: '#fff', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                            <FileCheck size={18} color="#059669" />
-                                            <div style={{ flex: 1, overflow: 'hidden' }}>
-                                                <div style={{ fontSize: '0.8rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{proof.name}</div>
-                                            </div>
-                                            <a href={proof.webViewLink} target="_blank" rel="noreferrer" style={{ color: '#64748b' }}><ExternalLink size={14} /></a>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            {formData.document_type === 'Tax Invoice' && (
-                                <div style={{ marginTop: '24px', padding: '16px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '12px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                                        <AlertCircle size={18} color="#d97706" />
-                                        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#92400e' }}>Invoice Compliance Check</span>
-                                    </div>
-                                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#b45309' }}>
-                                        {signedProofs.length > 0 
-                                            ? `Found ${signedProofs.length} signed proof(s) in Job Folder. Ensure they are attached when emailing the customer.`
-                                            : "Warning: No signed Proof of Delivery found in Job Folder. It is highly recommended to upload a signed copy before sending the invoice."}
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-
                         {/* Auth Status Bar */}
                         <div style={{ 
                             display: 'flex', 
@@ -5645,6 +5572,323 @@ export default function WorkflowEditor() {
                             >
                                 <ExternalLink size={14} /> Open Partner Folder
                             </button>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'delivery_proof' && (
+                    <div className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
+                        {/* Digital Delivery Proofs & Signatures Component */}
+                        <div style={{ marginBottom: '32px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                                <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <FileCheck size={22} color="#1a3c63" /> Digital Delivery Proofs & Signatures
+                                </h2>
+                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                    <button 
+                                        type="button" 
+                                        onClick={handleOpenJobDrive} 
+                                        className="btn btn-secondary" 
+                                        style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                                    >
+                                        <FolderOpen size={16} /> Open Job Folder
+                                    </button>
+                                    <button 
+                                        type="button" 
+                                        onClick={handleOpenSupportDocsDrive} 
+                                        className="btn btn-secondary" 
+                                        style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                                    >
+                                        <FolderOpen size={16} /> Open SupportDocs Folder
+                                    </button>
+                                    <button 
+                                        type="button" 
+                                        onClick={syncDeliveryProofs} 
+                                        className="btn btn-primary" 
+                                        style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#1a3c63', borderColor: '#1a3c63' }}
+                                        disabled={loadingDeliveryProofs}
+                                    >
+                                        <RefreshCw size={16} className={loadingDeliveryProofs ? 'animate-spin' : ''} />
+                                        Sync Proofs with Google Drive
+                                    </button>
+                                </div>
+                            </div>
+
+                            {loadingDeliveryProofs && deliveryProofs.length === 0 ? (
+                                <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
+                                    <RefreshCw className="animate-spin" size={32} style={{ margin: '0 auto 16px' }} />
+                                    Loading delivery proofs...
+                                </div>
+                            ) : deliveryProofs.length === 0 ? (
+                                <div style={{ padding: '60px 40px', textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: '16px', border: '1px dashed #cbd5e1' }}>
+                                    <FileCheck size={48} style={{ color: '#94a3b8', margin: '0 auto 16px' }} />
+                                    <h3 style={{ margin: '0 0 8px', fontSize: '1rem', color: '#334155', fontWeight: 600 }}>No Signed Proofs Recorded</h3>
+                                    <p style={{ margin: 0, fontSize: '0.85rem' }}>Record signatures in the mobile digiPOD app or upload a signed copy below.</p>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
+                                    {deliveryProofs.map(proof => (
+                                        <div key={proof.id} style={{
+                                            background: '#fff',
+                                            border: '1px solid #e2e8f0',
+                                            borderRadius: '16px',
+                                            padding: '20px',
+                                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '12px'
+                                        }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                                <div>
+                                                    <h4 style={{ margin: '0 0 4px', fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>{proof.recipient_name}</h4>
+                                                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(proof.delivered_at || proof.created_at).toLocaleString()}</span>
+                                                </div>
+                                                {proof.location_name && (
+                                                    <span style={{ fontSize: '0.75rem', background: '#f1f5f9', padding: '4px 8px', borderRadius: '20px', fontWeight: 600, color: '#475569' }}>
+                                                        {proof.location_name}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            {proof.gps_latitude && proof.gps_longitude && (
+                                                <a 
+                                                    href={`https://www.google.com/maps/search/?api=1&query=${proof.gps_latitude},${proof.gps_longitude}`}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    style={{ fontSize: '0.8rem', color: '#3b82f6', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                                                >
+                                                    📍 Location: {proof.gps_latitude.toFixed(4)}, {proof.gps_longitude.toFixed(4)} (Open Map)
+                                                </a>
+                                            )}
+
+                                            {proof.signature_drive_id && (
+                                                <div style={{ marginTop: '8px' }}>
+                                                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Signature / Proof</div>
+                                                    <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px', background: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '120px' }}>
+                                                        {proof.signature_drive_id.startsWith('http') || proof.signature_drive_id.length > 25 ? (
+                                                            <a 
+                                                                href={proof.signature_drive_id.startsWith('http') ? proof.signature_drive_id : `https://drive.google.com/file/d/${proof.signature_drive_id}/view`}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                style={{ fontSize: '0.8rem', color: '#4f46e5', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}
+                                                            >
+                                                                Open Attached Document ↗
+                                                            </a>
+                                                        ) : (
+                                                            <>
+                                                                <img 
+                                                                    src={`https://lh3.googleusercontent.com/d/${proof.signature_drive_id}`}
+                                                                    alt="Recipient Signature"
+                                                                    style={{ maxHeight: '100px', maxWidth: '100%', objectFit: 'contain' }}
+                                                                    onError={(e) => {
+                                                                        e.target.style.display = 'none';
+                                                                        e.target.nextSibling.style.display = 'block';
+                                                                    }}
+                                                                />
+                                                                <a 
+                                                                    href={`https://drive.google.com/file/d/${proof.signature_drive_id}/view`}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    style={{ display: 'none', fontSize: '0.8rem', color: '#4f46e5', fontWeight: 600 }}
+                                                                >
+                                                                    View Proof Document ↗
+                                                                </a>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Signed Proofs Section (Moved from Explorer tab) */}
+                        <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.1rem', fontWeight: 700, color: '#1e293b' }}>
+                                    <FileCheck size={22} color="#059669" /> Signed Proofs of Delivery / Service Files
+                                </h3>
+                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                    <button 
+                                        type="button"
+                                        onClick={() => fetchSignedProofs()} 
+                                        className="btn btn-secondary btn-sm" 
+                                        title="Refresh signed proofs from Google Drive" 
+                                        style={{ 
+                                            height: '36px', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center',
+                                            padding: '6px 12px',
+                                            borderRadius: '8px'
+                                        }}
+                                    >
+                                        <RefreshCw size={14} className={loadingSignedProofs ? 'animate-spin' : ''} />
+                                    </button>
+                                    <button 
+                                        type="button"
+                                        onClick={async () => {
+                                            if (authStatus !== 'connected') {
+                                                toast.error('Google Drive is not connected. Please connect/reconnect at the status bar or Settings first.');
+                                                return;
+                                            }
+                                            const token = getStoredToken();
+                                            const rootId = await ensureJobFolder();
+                                            const supportDocsFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+                                            setQrModal({ isOpen: true, folderId: supportDocsFolderId, folderName: 'SupportDocs' });
+                                        }} 
+                                        className="btn btn-secondary btn-sm" 
+                                        title="Mobile Upload to SupportDocs via QR Code"
+                                        style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            gap: '6px',
+                                            background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', 
+                                            border: '1px solid #bbf7d0', 
+                                            color: '#166534',
+                                            height: '36px',
+                                            padding: '6px 12px',
+                                            borderRadius: '8px',
+                                            fontWeight: 600,
+                                            fontSize: '0.85rem'
+                                        }}
+                                    >
+                                        <Smartphone size={14} /> Mobile Scan
+                                    </button>
+                                    <div
+                                        onDragOver={(e) => { e.preventDefault(); setIsDraggingSigned(true); }}
+                                        onDragLeave={(e) => { e.preventDefault(); setIsDraggingSigned(false); }}
+                                        onDrop={async (e) => {
+                                            e.preventDefault();
+                                            setIsDraggingSigned(false);
+                                            const files = Array.from(e.dataTransfer.files);
+                                            if (files.length > 0) {
+                                                setLoadingSignedProofs(true);
+                                                try {
+                                                    const token = getStoredToken();
+                                                    const rootId = await ensureJobFolder();
+                                                    const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+                                                    for (const file of files) {
+                                                        const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
+                                                        const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
+                                                        setFormData(prev => {
+                                                            const newAttachments = [...(prev.attachment_urls || []), proofUrl];
+                                                            return { ...prev, attachment_urls: newAttachments };
+                                                        });
+                                                        
+                                                        // Sync to Supabase delivery_proofs table immediately
+                                                        await supabase.from('delivery_proofs').insert({
+                                                            document_id: formData.id,
+                                                            recipient_name: 'Uploaded Copy (' + file.name.substring(0, 15) + ')',
+                                                            signature_drive_id: result.id,
+                                                            location_name: 'Web Upload'
+                                                        });
+                                                    }
+                                                    alert('Signed proof(s) uploaded successfully to Google Drive & Supabase database!');
+                                                    fetchSignedProofs();
+                                                    fetchDeliveryProofs();
+                                                } catch (err) {
+                                                    console.error('Proof upload failed:', err);
+                                                    alert('Upload failed: ' + err.message);
+                                                } finally {
+                                                    setLoadingSignedProofs(false);
+                                                }
+                                            }
+                                        }}
+                                        onClick={() => document.getElementById('signed-proof-upload').click()}
+                                        style={{
+                                            border: isDraggingSigned ? '2px dashed #059669' : '2px dashed #cbd5e1',
+                                            background: isDraggingSigned ? '#ecfdf5' : '#f8fafc',
+                                            padding: '6px 16px',
+                                            borderRadius: '8px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            cursor: 'pointer',
+                                            color: '#059669',
+                                            fontWeight: 600,
+                                            fontSize: '0.85rem',
+                                            transition: 'all 0.2s ease',
+                                            height: '36px',
+                                            justifyContent: 'center'
+                                        }}
+                                    >
+                                        <Upload size={14} />
+                                        <span>{isDraggingSigned ? 'Drop Signed Copy Here' : 'Drop Signed Copy'}</span>
+                                    </div>
+                                    <input id="signed-proof-upload" type="file" multiple hidden onChange={(e) => {
+                                        const files = Array.from(e.target.files);
+                                        const uploadSequence = async () => {
+                                            setLoadingSignedProofs(true);
+                                            try {
+                                                const token = getStoredToken();
+                                                const rootId = await ensureJobFolder();
+                                                const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+                                                for (const file of files) {
+                                                    const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
+                                                    const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
+                                                    setFormData(prev => {
+                                                        const newAttachments = [...(prev.attachment_urls || []), proofUrl];
+                                                        return { ...prev, attachment_urls: newAttachments };
+                                                    });
+                                                    
+                                                    // Sync to Supabase delivery_proofs table immediately
+                                                    await supabase.from('delivery_proofs').insert({
+                                                        document_id: formData.id,
+                                                        recipient_name: 'Uploaded Copy (' + file.name.substring(0, 15) + ')',
+                                                        signature_drive_id: result.id,
+                                                        location_name: 'Web Upload'
+                                                    });
+                                                }
+                                                alert('Signed proof(s) uploaded successfully to Google Drive & Supabase database!');
+                                                fetchSignedProofs();
+                                                fetchDeliveryProofs();
+                                            } catch (err) {
+                                                console.error('Proof upload failed:', err);
+                                                alert('Upload failed: ' + err.message);
+                                            } finally {
+                                                setLoadingSignedProofs(false);
+                                            }
+                                        };
+                                        uploadSequence();
+                                    }} />
+                                </div>
+                            </div>
+                            {loadingSignedProofs ? (
+                                <div style={{ textAlign: 'center', padding: '20px' }}><Loader2 size={24} className="animate-spin" /></div>
+                            ) : signedProofs.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '0.9rem' }}>
+                                    No signed proofs found in Job Folder. Use the Scanner App or upload here.
+                                </div>
+                            ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
+                                    {signedProofs.map(proof => (
+                                        <div key={proof.id} style={{ background: '#fff', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                            <FileCheck size={18} color="#059669" />
+                                            <div style={{ flex: 1, overflow: 'hidden' }}>
+                                                <div style={{ fontSize: '0.8rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{proof.name}</div>
+                                            </div>
+                                            <a href={proof.webViewLink} target="_blank" rel="noreferrer" style={{ color: '#64748b' }}><ExternalLink size={14} /></a>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {formData.document_type === 'Tax Invoice' && (
+                                <div style={{ marginTop: '24px', padding: '16px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '12px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                                        <AlertCircle size={18} color="#d97706" />
+                                        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#92400e' }}>Invoice Compliance Check</span>
+                                    </div>
+                                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#b45309' }}>
+                                        {signedProofs.length > 0 
+                                            ? `Found ${signedProofs.length} signed proof(s) in Job Folder. Ensure they are attached when emailing the customer.`
+                                            : "Warning: No signed Proof of Delivery found in Job Folder. It is highly recommended to upload a signed copy before sending the invoice."}
+                                    </p>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}

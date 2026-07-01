@@ -7,13 +7,15 @@ import toast from 'react-hot-toast';
 
 import { getPartners, getDocumentSettings, saveVessel, saveWorkLocation } from '../../lib/store';
 import { getCatalogItems, createCatalogItem, updateCatalogItem } from '../../lib/catalogService';
-import { ArrowLeft, ArrowRight, Send, Ship, Mail, Phone, ExternalLink, Database, FolderPlus, ArrowRightLeft, FileText, CheckCircle2, Clock, DollarSign, BadgeDollarSign, ShieldCheck, Plus, Search, Trash, Save, Edit, AlertTriangle, Users, Eye, MailCheck, Download, Calendar, ChevronDown, PlusCircle, MapPin, MessageSquare, Sparkles, Building2, Upload, ImageIcon, Copy, Loader2, Hash, X, Crop as CropIcon, QrCode, ClipboardList, Inbox, Package } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Send, Ship, Mail, Phone, ExternalLink, Database, FolderPlus, ArrowRightLeft, FileText, CheckCircle2, Clock, DollarSign, BadgeDollarSign, ShieldCheck, Plus, Search, Trash, Save, Edit, AlertTriangle, Users, Eye, MailCheck, Download, Calendar, ChevronDown, PlusCircle, MapPin, MessageSquare, Sparkles, Building2, Upload, ImageIcon, Copy, Loader2, Hash, X, Crop as CropIcon, QrCode, ClipboardList, Inbox, Package, FolderOpen, Folder, File, RefreshCw, Smartphone } from 'lucide-react';
 import UploadOverlay from '../../components/common/UploadOverlay';
 import SafeDriveLink from '../../components/common/SafeDriveLink';
 import EmailPreviewModal from '../../components/workflows/EmailPreviewModal';
 import FastFloatModal from '../../components/workflows/FastFloatModal';
 import html2pdf from 'html2pdf.js';
 import { buildRFQMailtoUrl, buildRFQWhatsAppUrl, buildQuotationMailtoUrl, openEmailUrl } from '../../lib/enquiryEmailService';
+import { listFolderContent, deleteFile, getOrCreateFolder, uploadFileToDrive } from '../../lib/driveService';
+import { getStoredToken } from '../../lib/googleAuthService';
 
 import { useEnquiry } from '../../hooks/useEnquiry';
 import { useSupplierActions } from '../../hooks/useSupplierActions';
@@ -24,6 +26,7 @@ import { ITEM_UNITS } from '../../utils/units';
 import { WhatsAppShareModal } from '../../components/workflow/WhatsAppShareModal';
 import { Modal, QuickPartnerContactDualAdd } from '../../components/workflow/QuickAddForms';
 import SmartEnquiryParserModal from '../../components/workflow/SmartEnquiryParserModal';
+import SmartOCRModal from '../../components/common/SmartOCRModal';
 
 export default function EnquiryDetails() {
     const { id } = useParams();
@@ -43,6 +46,15 @@ export default function EnquiryDetails() {
     const [editForm, setEditForm] = useState({});
     const [supplierModalOpen, setSupplierModalOpen] = useState(false);
     const [editingSupplier, setEditingSupplier] = useState(null);
+
+    // Gallery / Photos states
+    const [galleryFiles, setGalleryFiles] = useState([]);
+    const [loadingGallery, setLoadingGallery] = useState(false);
+    const [galleryUploadProgress, setGalleryUploadProgress] = useState(0);
+    const [galleryUploadSuccess, setGalleryUploadSuccess] = useState(false);
+    const [galleryFolderId, setGalleryFolderId] = useState(null);
+    const [isDraggingPhotos, setIsDraggingPhotos] = useState(false);
+    const [showGalleryOCRModal, setShowGalleryOCRModal] = useState(false);
 
     const {
         suppliers,
@@ -111,6 +123,104 @@ export default function EnquiryDetails() {
     const [isSavingQuoteLog, setIsSavingQuoteLog] = useState(false);
     const [localQuoteLogs, setLocalQuoteLogs] = useState([]);
 
+    // --- Tabs and Explorer States ---
+    const [activeTab, setActiveTab] = useState('items');
+    const [explorerFiles, setExplorerFiles] = useState([]);
+    const [loadingExplorer, setLoadingExplorer] = useState(false);
+    const [explorerError, setExplorerError] = useState(null);
+    const [explorerPath, setExplorerPath] = useState([]); // [{id, name}]
+    const [explorerFolderId, setExplorerFolderId] = useState(null);
+    const [isDraggingExplorer, setIsDraggingExplorer] = useState(false);
+    const [uploadingExplorer, setUploadingExplorer] = useState(false);
+    const [authStatus, setAuthStatus] = useState('disconnected'); // 'connected' | 'expired' | 'disconnected'
+
+    // Sync supplierQuotes to localQuoteLogs (fix legacy bug)
+    useEffect(() => {
+        if (supplierQuotes && supplierQuotes.length > 0) {
+            setLocalQuoteLogs(supplierQuotes);
+        }
+    }, [supplierQuotes]);
+
+    // Check Drive Connection Status
+    useEffect(() => {
+        const checkAuth = () => {
+            const token = getStoredToken();
+            if (token) {
+                setAuthStatus('connected');
+            } else {
+                setAuthStatus('disconnected');
+            }
+        };
+        checkAuth();
+    }, []);
+
+    // Set initial explorer path when enquiry is loaded
+    useEffect(() => {
+        if (enquiry?.gdrive_folder_id) {
+            setExplorerFolderId(enquiry.gdrive_folder_id);
+            setExplorerPath([{ id: enquiry.gdrive_folder_id, name: enquiry.enquiry_no || 'Enquiry Root' }]);
+        }
+    }, [enquiry]);
+
+    // Auto-fetch gallery files when switching to photos tab
+    useEffect(() => {
+        if (activeTab === 'photos' && enquiry?.gdrive_folder_id) {
+            fetchGallery();
+        }
+    }, [activeTab, enquiry?.gdrive_folder_id]);
+
+    const fetchGallery = async () => {
+        if (!enquiry?.gdrive_folder_id) return;
+        setLoadingGallery(true);
+        try {
+            const token = getStoredToken();
+            const rootId = enquiry.gdrive_folder_id;
+            const mediaFolderId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+            setGalleryFolderId(mediaFolderId);
+            const files = await listFolderContent(token, mediaFolderId);
+            setGalleryFiles(files.filter(f => f.mimeType.startsWith('image/') || f.name.match(/\.(jpg|jpeg|png|gif|webp)$/i)));
+        } catch (err) {
+            console.error('Error fetching gallery:', err);
+        } finally {
+            setLoadingGallery(false);
+        }
+    };
+
+    const handleGalleryUpload = async (file) => {
+        if (!file) return;
+        setLoadingGallery(true);
+        setGalleryUploadProgress(0);
+        setGalleryUploadSuccess(false);
+        try {
+            const token = getStoredToken();
+            const rootId = await ensureEnquiryFolder();
+            if (!rootId) throw new Error("Could not provision or find Google Drive folder.");
+            const mediaFolderId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+            
+            await uploadFileToDrive(token, file, { 
+                folderId: mediaFolderId,
+                onProgress: (pct) => setGalleryUploadProgress(pct)
+            });
+            
+            setGalleryUploadSuccess(true);
+            setTimeout(() => setGalleryUploadSuccess(false), 3000);
+            fetchGallery();
+        } catch (err) {
+            console.error('Gallery upload failed:', err);
+            toast.error('Upload failed: ' + err.message);
+        } finally {
+            setLoadingGallery(false);
+            setGalleryUploadProgress(0);
+        }
+    };
+
+    // Auto-fetch files when switching to explorer tab
+    useEffect(() => {
+        if (activeTab === 'explorer' && explorerFolderId) {
+            fetchExplorerFiles(explorerFolderId, true);
+        }
+    }, [activeTab, explorerFolderId]);
+
     useEffect(() => {
         if (profile?.company_id) {
             fetchLookups();
@@ -160,6 +270,171 @@ export default function EnquiryDetails() {
         } catch (err) {
             console.error("Failed to load secondary lookups", err);
         }
+    };
+
+    // --- Explorer Tab Helpers ---
+    const fetchExplorerFiles = async (folderId = null, forceRoot = false) => {
+        const targetId = folderId || explorerFolderId;
+        if (!targetId) return;
+
+        setLoadingExplorer(true);
+        setExplorerError(null);
+        try {
+            const token = getStoredToken();
+            if (!token) {
+                setAuthStatus('disconnected');
+                throw new Error("Google Drive connection expired or not set. Please reconnect.");
+            }
+            setAuthStatus('connected');
+            let files = await listFolderContent(token, targetId);
+            setExplorerFiles(files);
+        } catch (err) {
+            console.error('Error fetching explorer files:', err);
+            setExplorerError(err.message || 'Failed to load files from Google Drive.');
+        } finally {
+            setLoadingExplorer(false);
+        }
+    };
+
+    const handleExplorerNavigate = (file) => {
+        if (file.mimeType === 'application/vnd.google-apps.folder') {
+            const newPath = [...explorerPath, { id: file.id, name: file.name }];
+            setExplorerPath(newPath);
+            setExplorerFolderId(file.id);
+            fetchExplorerFiles(file.id, false);
+        }
+    };
+
+    const handleExplorerBack = (idx) => {
+        if (idx < 0 || idx >= explorerPath.length) return;
+        const newPath = explorerPath.slice(0, idx + 1);
+        const target = newPath[newPath.length - 1];
+        setExplorerPath(newPath);
+        setExplorerFolderId(target.id);
+        fetchExplorerFiles(target.id, newPath.length === 1);
+    };
+
+    const handleExplorerUpload = async (e) => {
+        const files = Array.from(e.target.files);
+        if (files.length === 0) return;
+
+        setUploadingExplorer(true);
+        setUploadProgress(0);
+        try {
+            const token = getStoredToken();
+            const rootId = await ensureEnquiryFolder();
+            if (!rootId) throw new Error("Could not provision or find Google Drive folder.");
+
+            for (let i = 0; i < files.length; i++) {
+                await uploadFileToDrive(token, files[i], { folderId: rootId });
+                setUploadProgress(((i + 1) / files.length) * 100);
+            }
+            toast.success("File(s) uploaded successfully!");
+            fetchExplorerFiles(rootId, explorerPath.length === 1);
+        } catch (err) {
+            console.error('Upload error:', err);
+            toast.error(err.message || 'Failed to upload files.');
+        } finally {
+            setUploadingExplorer(false);
+            setUploadProgress(0);
+        }
+    };
+
+    const handleExplorerDelete = async (fileId, fileName) => {
+        if (!window.confirm(`Are you sure you want to delete "${fileName}"?`)) return;
+        setLoadingExplorer(true);
+        try {
+            const token = getStoredToken();
+            await deleteFile(token, fileId);
+            toast.success("File deleted successfully!");
+            fetchExplorerFiles(explorerFolderId, explorerPath.length === 1);
+        } catch (err) {
+            console.error('Delete error:', err);
+            toast.error('Failed to delete file.');
+        } finally {
+            setLoadingExplorer(false);
+        }
+    };
+
+    const ensureEnquiryFolder = async () => {
+        if (explorerFolderId) return explorerFolderId;
+        if (enquiry?.gdrive_folder_id) {
+            setExplorerFolderId(enquiry.gdrive_folder_id);
+            return enquiry.gdrive_folder_id;
+        }
+
+        // Provision folder structure if GDrive is connected
+        const token = getStoredToken();
+        if (!token) {
+            toast.error("Please connect Google Drive first.");
+            return null;
+        }
+
+        setLoadingExplorer(true);
+        try {
+            const settings = await getDocumentSettings();
+            let celronRootId = settings?.gdrive_celron_root_id;
+            if (!celronRootId) {
+                let parentId = settings?.google_drive_folder_id || 'root';
+                if (parentId.includes('drive.google.com')) {
+                    const match = parentId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || parentId.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                    if (match) parentId = match[1];
+                    else parentId = 'root';
+                }
+                celronRootId = await getOrCreateFolder(token, 'CELRONHUB', parentId);
+                const { saveDocumentSettings } = await import('../../lib/store');
+                await saveDocumentSettings({
+                    ...settings,
+                    gdrive_celron_root_id: celronRootId
+                });
+            }
+
+            const year = `YEAR${new Date().getFullYear()}`;
+            const partner = allPartners.find(c => c.id === enquiry.customer_id)?.name || 'Unknown Partner';
+            const enq_no = enquiry.enquiry_no === 'Draft' ? 'NEW' : enquiry.enquiry_no;
+            const vesselName = vessels.find(v => v.id === enquiry.vessel_id)?.vessel_name || '';
+            const locationName = locations.find(l => l.id === enquiry.work_location_id)?.location_name || '';
+            const suffix = vesselName || locationName || '';
+            const folderTitle = suffix ? `${enq_no} - ${partner} - ${suffix}` : `${enq_no} - ${partner}`;
+            const cleanTitle = folderTitle.replace(/[/\\?%*:|"<>]/g, '-');
+
+            const folderId = await provisionFullProjectStructure(token, celronRootId, year, cleanTitle);
+            if (folderId) {
+                await updateEnquiry(id, { gdrive_folder_id: folderId });
+                setEnquiry(prev => ({ ...prev, gdrive_folder_id: folderId }));
+                setExplorerFolderId(folderId);
+                setExplorerPath([{ id: folderId, name: enquiry.enquiry_no || 'Enquiry Root' }]);
+                toast.success("Google Drive folder provisioned!");
+                return folderId;
+            }
+        } catch (e) {
+            console.error("Manual provisioning failed:", e);
+            toast.error("Failed to provision folder: " + e.message);
+        } finally {
+            setLoadingExplorer(false);
+        }
+        return null;
+    };
+
+    const handleExplorerReconnect = () => {
+        sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
+        connectGoogleAPI();
+    };
+
+    const getExplorerFileIcon = (mimeType) => {
+        if (mimeType === 'application/vnd.google-apps.folder') {
+            return <Folder size={24} color="#f59e0b" fill="#f59e0b" fillOpacity={0.2} />;
+        }
+        if (mimeType?.includes('pdf')) {
+            return <FileText size={24} color="#ef4444" />;
+        }
+        if (mimeType?.includes('image')) {
+            return <ImageIcon size={24} color="#3b82f6" />;
+        }
+        if (mimeType?.includes('spreadsheet') || mimeType?.includes('excel') || mimeType?.includes('csv')) {
+            return <FileText size={24} color="#10b981" />;
+        }
+        return <File size={24} color="#64748b" />;
     };
 
     const handlePrepareFloat = () => {
@@ -730,8 +1005,31 @@ export default function EnquiryDetails() {
                     </div>
                 </div>
 
+            {/* Main Action Tabs */}
+            <div className="tab-container">
+                <button type="button" className={`tab tab-items ${activeTab === 'items' ? 'active' : ''}`} onClick={() => setActiveTab('items')}>
+                    <Package size={16} /> 1) Line Items
+                </button>
+                <button type="button" className={`tab tab-other ${activeTab === 'upload' ? 'active' : ''}`} onClick={() => setActiveTab('upload')}>
+                    <FolderPlus size={16} /> 2) Supplier Enquiry Upload
+                </button>
+                <button type="button" className={`tab tab-workflow ${activeTab === 'send' ? 'active' : ''}`} onClick={() => setActiveTab('send')}>
+                    <Send size={16} /> 3) Enquiry Send
+                </button>
+                <button type="button" className={`tab tab-payments ${activeTab === 'quotes' ? 'active' : ''}`} onClick={() => setActiveTab('quotes')}>
+                    <BadgeDollarSign size={16} /> 4) Quotations Received
+                </button>
+                <button type="button" className={`tab tab-gallery ${activeTab === 'photos' ? 'active' : ''}`} onClick={() => setActiveTab('photos')}>
+                    <ImageIcon size={16} /> 5) Photos &amp; Media
+                </button>
+                <button type="button" className={`tab tab-explorer ${activeTab === 'explorer' ? 'active' : ''}`} onClick={() => setActiveTab('explorer')}>
+                    <FolderOpen size={16} /> 6) Explorer
+                </button>
+            </div>
+
             {/* 4. Content Area — Enquiry Lines */}
-            <div style={{ marginBottom: '24px' }}>
+            {activeTab === 'items' && (
+                <div style={{ marginBottom: '24px' }} className="animate-fade-in">
 
                 {/* ── Paste-in Quick Import Panel ── */}
                 <div style={{ marginBottom: '12px' }}>
@@ -896,7 +1194,7 @@ export default function EnquiryDetails() {
                                     </button>
                                     
                                      {showCatalogList && (
-                                        <div style={{ position: 'absolute', bottom: '100%', right: 0, zIndex: 10, background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 -10px 15px -3px rgba(0,0,0,0.1)', marginBottom: '8px', minWidth: '400px', maxHeight: '450px', display: 'flex', flexDirection: 'column' }}>
+                                        <div style={{ position: 'absolute', bottom: '100%', right: 0, zIndex: 10, background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 -10px 15px -3px rgba(0,0,0,0.1)', marginBottom: '8px', minWidth: '800px', maxWidth: '90vw', maxHeight: '450px', display: 'flex', flexDirection: 'column' }}>
                                             <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', display: 'flex', gap: '8px' }}>
                                                 <div style={{ position: 'relative', flex: 1 }}>
                                                     <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
@@ -917,30 +1215,52 @@ export default function EnquiryDetails() {
                                                     <Plus size={16} /> New
                                                 </button>
                                             </div>
-                                            <div style={{ overflowY: 'auto', flex: 1 }}>
-                                                {catalog.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase())).map(c => (
-                                                    <div 
-                                                        key={c.id}
-                                                        style={{ width: '100%', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', transition: 'background 0.2s' }}
-                                                        className="catalog-item-row"
-                                                        onMouseOver={e => e.currentTarget.style.background = '#f8fafc'}
-                                                        onMouseOut={e => e.currentTarget.style.background = 'none'}
-                                                    >
-                                                        <button 
-                                                            onClick={() => { handleAddItem({ ...c, unit_price: 0 }); setShowCatalogList(false); }}
-                                                            style={{ flex: 1, textAlign: 'left', border: 'none', background: 'none', cursor: 'pointer', padding: 0 }}
-                                                        >
-                                                            <div style={{ fontWeight: 600, color: '#1e293b' }}>{c.name}</div>
-                                                            <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{c.specification}</div>
-                                                        </button>
-                                                        <button 
-                                                            onClick={(e) => { e.stopPropagation(); setEditingCatalogItem(c); }}
-                                                            style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
-                                                        >
-                                                            <Edit size={14} />
-                                                        </button>
-                                                    </div>
-                                                ))}
+                                            <div style={{ overflowX: 'auto', overflowY: 'auto', flex: 1 }}>
+                                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                                                    <thead>
+                                                        <tr style={{ background: '#f1f5f9', position: 'sticky', top: 0, zIndex: 1, borderBottom: '1.5px solid #cbd5e1' }}>
+                                                            <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 700, color: '#475569' }}>Type</th>
+                                                            <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 700, color: '#475569' }}>Item Name</th>
+                                                            <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 700, color: '#475569' }}>Location</th>
+                                                            <th style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 700, color: '#475569' }}>Qty</th>
+                                                            <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#475569' }}>Price</th>
+                                                            <th style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 700, color: '#475569' }}>Barcode</th>
+                                                            <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 700, color: '#475569' }}>Specification</th>
+                                                            <th style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 700, color: '#475569' }}>Actions</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {catalog.filter(c => c.name?.toLowerCase().includes(searchQuery.toLowerCase()) || c.specification?.toLowerCase().includes(searchQuery.toLowerCase()) || c.barcode?.includes(searchQuery)).map(c => (
+                                                            <tr 
+                                                                key={c.id} 
+                                                                onClick={() => { handleAddItem(c); setShowCatalogList(false); }}
+                                                                style={{ borderBottom: '1px solid #e2e8f0', cursor: 'pointer', transition: 'background 0.15s' }}
+                                                                onMouseOver={e => e.currentTarget.style.background = '#eef2ff'}
+                                                                onMouseOut={e => e.currentTarget.style.background = 'none'}
+                                                            >
+                                                                <td style={{ padding: '10px 12px' }}>
+                                                                    <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, background: c.type?.toLowerCase().includes('service') ? '#faf5ff' : '#eff6ff', color: c.type?.toLowerCase().includes('service') ? '#6d28d9' : '#1d4ed8' }}>
+                                                                        {c.type || 'Supply Part'}
+                                                                    </span>
+                                                                 </td>
+                                                                 <td style={{ padding: '10px 12px', fontWeight: 600, color: '#1e293b' }}>{c.name}</td>
+                                                                 <td style={{ padding: '10px 12px', color: '#64748b' }}>{c.stored_location || '—'}</td>
+                                                                 <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#475569' }}>{c.qty ?? 0}</td>
+                                                                 <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#10b981' }}>${c.price || '0.00'}</td>
+                                                                 <td style={{ padding: '10px 12px', textAlign: 'center', color: '#64748b', fontFamily: 'monospace' }}>{c.barcode || '—'}</td>
+                                                                 <td style={{ padding: '10px 12px', color: '#64748b', maxWidth: '150px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.specification}>{c.specification || '—'}</td>
+                                                                 <td style={{ padding: '10px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                                                                     <button 
+                                                                         onClick={() => setEditingCatalogItem(c)}
+                                                                         style={{ background: 'none', border: 'none', color: '#6366f1', cursor: 'pointer', padding: '4px' }}
+                                                                     >
+                                                                         <Edit size={14} />
+                                                                     </button>
+                                                                 </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
                                             </div>
                                         </div>
                                     )}
@@ -958,157 +1278,161 @@ export default function EnquiryDetails() {
                             </div>
                         </div>
                     </div>
+
+                    {/* Floating Module (Supplier Management) - Pinned to bottom of Line Items */}
+                    <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '24px', display: 'flex', flexDirection: 'column', marginTop: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#1e293b' }}>Floating Module</h4>
+                                <span style={{ fontSize: '0.75rem', color: '#64748b', background: '#f1f5f9', padding: '2px 8px', borderRadius: '10px' }}>Supplier Management</span>
+                            </div>
+                            <button 
+                                onClick={() => { setEditingSupplier(null); setSupplierModalOpen(true); }}
+                                className="btn-vibrant"
+                                style={{ 
+                                    padding: '6px 12px', 
+                                    borderRadius: '10px', 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: '6px',
+                                    background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
+                                    border: 'none',
+                                    color: 'white',
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                    fontSize: '0.8rem'
+                                }}
+                            >
+                                <Plus size={14} /> Add Supplier
+                            </button>
+                        </div>
+
+                        <div style={{ position: 'relative', marginBottom: '12px' }}>
+                            <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                            <input 
+                                type="text"
+                                placeholder="Search suppliers..."
+                                value={supplierSearch}
+                                onChange={(e) => setSupplierSearch(e.target.value)}
+                                style={{ width: '100%', padding: '8px 8px 8px 32px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                            />
+                        </div>
+                        <div className="custom-scrollbar" style={{ maxHeight: '400px', overflowY: 'auto', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {suppliers.filter(s => s.name.toLowerCase().includes(supplierSearch.toLowerCase())).map(supplier => {
+                                const isSelected = selectedSuppliers.some(s => s.id === supplier.id);
+                                return (
+                                    <div key={supplier.id} style={{ 
+                                        border: isSelected ? '1px solid #6366f1' : '1px solid #f1f5f9', 
+                                        borderRadius: '12px', 
+                                        padding: '12px', 
+                                        background: isSelected ? '#f8faff' : '#fff', 
+                                        transition: 'all 0.2s'
+                                    }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1 }}>
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={isSelected}
+                                                    onChange={() => handleToggleSupplier(supplier)}
+                                                    style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#6366f1' }}
+                                                />
+                                                <span style={{ fontSize: '0.9rem', fontWeight: 600, color: isSelected ? '#4f46e5' : '#1e293b' }}>{supplier.name}</span>
+                                            </label>
+                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button onClick={() => { setEditingSupplier(supplier); setSupplierModalOpen(true); }} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}><Edit size={14} /></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                            <button onClick={() => setIsPreviewModalOpen(true)} className="btn btn-sm btn-outline" style={{ flex: 1 }}>Preview</button>
+                            <button onClick={handlePrepareFloat} disabled={selectedSuppliers.length === 0} className="btn btn-sm btn-primary" style={{ flex: 1, background: '#4f46e5' }}>Float RFQ</button>
+                        </div>
+                    </div>
                 </div>
+            )}
 
             {/* ── Supplier Quote Log Panel ── */}
-            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '20px', marginBottom: '24px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#1e293b' }}>Supplier Quotes Received</h4>
-                        {localQuoteLogs.length > 0 && <span style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: '20px', padding: '2px 10px', fontSize: '0.72rem', fontWeight: 700 }}>{localQuoteLogs.length} quote(s)</span>}
-                    </div>
-                    <button onClick={() => setShowQuoteLogPanel(!showQuoteLogPanel)}
-                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '10px', border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4f46e5', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
-                        <Plus size={14} /> Log Received Quote
-                    </button>
-                </div>
-
-                {showQuoteLogPanel && (
-                    <div style={{ background: '#f8fafc', borderRadius: '12px', padding: '16px', marginBottom: '12px', border: '1px solid #e2e8f0' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', gap: '10px', marginBottom: '10px' }}>
-                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>SUPPLIER NAME *</label>
-                                <input value={quoteLogForm.supplier_name} onChange={e => setQuoteLogForm(f => ({...f, supplier_name: e.target.value}))} placeholder="e.g. ABC Marine Pte Ltd" style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
-                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>UNIT PRICE</label>
-                                <input type="number" value={quoteLogForm.unit_price} onChange={e => setQuoteLogForm(f => ({...f, unit_price: e.target.value}))} placeholder="0.00" style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
-                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>CURRENCY</label>
-                                <select value={quoteLogForm.currency} onChange={e => setQuoteLogForm(f => ({...f, currency: e.target.value}))} style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem' }}>
-                                    {['SGD','USD','EUR','GBP','MYR','AED'].map(c => <option key={c} value={c}>{c}</option>)}
-                                </select></div>
-                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>LEAD TIME</label>
-                                <input value={quoteLogForm.lead_time} onChange={e => setQuoteLogForm(f => ({...f, lead_time: e.target.value}))} placeholder="e.g. 2 weeks" style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: '10px', marginBottom: '10px' }}>
-                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>REMARKS / NOTES</label>
-                                <input value={quoteLogForm.remarks} onChange={e => setQuoteLogForm(f => ({...f, remarks: e.target.value}))} placeholder="Brand, part no, conditions, etc." style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
-                            <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>QUOTE DATE</label>
-                                <input type="date" value={quoteLogForm.quote_date} onChange={e => setQuoteLogForm(f => ({...f, quote_date: e.target.value}))} style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                            <button onClick={handleSaveQuoteLog} disabled={isSavingQuoteLog} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 18px', borderRadius: '10px', background: '#10b981', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
-                                {isSavingQuoteLog ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />} Save Quote Log
-                            </button>
-                            <button onClick={() => setShowQuoteLogPanel(false)} style={{ padding: '9px 14px', borderRadius: '10px', background: '#f1f5f9', color: '#64748b', border: 'none', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer' }}>Cancel</button>
-                        </div>
-                    </div>
-                )}
-
-                {localQuoteLogs.length > 0 && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '10px' }}>
-                        {localQuoteLogs.map((q, i) => (
-                            <div key={i} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '14px' }}>
-                                <div style={{ fontWeight: 700, color: '#065f46', marginBottom: '4px' }}>{q.supplier_name}</div>
-                                {q.unit_price && <div style={{ fontSize: '0.82rem', color: '#374151' }}>Price: <strong>{q.currency} {q.unit_price}</strong></div>}
-                                {q.lead_time && <div style={{ fontSize: '0.82rem', color: '#374151' }}>Lead Time: {q.lead_time}</div>}
-                                {q.remarks && <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>{q.remarks}</div>}
-                                <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '6px' }}>{q.quote_date}</div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-                {localQuoteLogs.length === 0 && !showQuoteLogPanel && (
-                    <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: 0, fontStyle: 'italic' }}>No supplier quotes logged yet. Click "Log Received Quote" to add one.</p>
-                )}
-            </div>
-
-            {/* 6. Advanced Workflow Section (50/50 Split) */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginTop: '24px', alignItems: 'start' }}>
-                
-                {/* Left: Enquiry Floating Module (Supplier Management) */}
-                <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '24px', display: 'flex', flexDirection: 'column', height: '100%' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            {activeTab === 'quotes' && (
+                <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '20px', marginBottom: '24px' }} className="animate-fade-in">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700 }}>Floating Module</h4>
-                            <span style={{ fontSize: '0.75rem', color: '#64748b', background: '#f1f5f9', padding: '2px 8px', borderRadius: '10px' }}>Supplier Management</span>
+                            <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#1e293b' }}>Supplier Quotes Received</h4>
+                            {localQuoteLogs.length > 0 && <span style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: '20px', padding: '2px 10px', fontSize: '0.72rem', fontWeight: 700 }}>{localQuoteLogs.length} quote(s)</span>}
                         </div>
-                        <button 
-                            onClick={() => { setEditingSupplier(null); setSupplierModalOpen(true); }}
-                            className="btn-vibrant"
-                            style={{ 
-                                padding: '6px 12px', 
-                                borderRadius: '10px', 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                gap: '6px',
-                                background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
-                                border: 'none',
-                                color: 'white',
-                                fontWeight: 700,
-                                cursor: 'pointer',
-                                fontSize: '0.8rem'
-                            }}
-                        >
-                            <Plus size={14} /> Add Supplier
+                        <button onClick={() => setShowQuoteLogPanel(!showQuoteLogPanel)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '10px', border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4f46e5', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
+                            <Plus size={14} /> Log Received Quote
                         </button>
                     </div>
 
-                    <div style={{ position: 'relative', marginBottom: '12px' }}>
-                        <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-                        <input 
-                            type="text"
-                            placeholder="Search suppliers..."
-                            value={supplierSearch}
-                            onChange={(e) => setSupplierSearch(e.target.value)}
-                            style={{ width: '100%', padding: '8px 8px 8px 32px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                    {showQuoteLogPanel && (
+                        <div style={{ background: '#f8fafc', borderRadius: '12px', padding: '16px', marginBottom: '12px', border: '1px solid #e2e8f0' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                                <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>SUPPLIER NAME *</label>
+                                    <input value={quoteLogForm.supplier_name} onChange={e => setQuoteLogForm(f => ({...f, supplier_name: e.target.value}))} placeholder="e.g. ABC Marine Pte Ltd" style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
+                                <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>UNIT PRICE</label>
+                                    <input type="number" value={quoteLogForm.unit_price} onChange={e => setQuoteLogForm(f => ({...f, unit_price: e.target.value}))} placeholder="0.00" style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
+                                <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>CURRENCY</label>
+                                    <select value={quoteLogForm.currency} onChange={e => setQuoteLogForm(f => ({...f, currency: e.target.value}))} style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem' }}>
+                                        {['SGD','USD','EUR','GBP','MYR','AED'].map(c => <option key={c} value={c}>{c}</option>)}
+                                    </select></div>
+                                <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>LEAD TIME</label>
+                                    <input value={quoteLogForm.lead_time} onChange={e => setQuoteLogForm(f => ({...f, lead_time: e.target.value}))} placeholder="e.g. 2 weeks" style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: '10px', marginBottom: '10px' }}>
+                                <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>REMARKS / NOTES</label>
+                                    <input value={quoteLogForm.remarks} onChange={e => setQuoteLogForm(f => ({...f, remarks: e.target.value}))} placeholder="Brand, part no, conditions, etc." style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
+                                <div><label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>QUOTE DATE</label>
+                                    <input type="date" value={quoteLogForm.quote_date} onChange={e => setQuoteLogForm(f => ({...f, quote_date: e.target.value}))} style={{ width: '100%', padding: '8px 10px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.85rem', boxSizing: 'border-box' }} /></div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button onClick={handleSaveQuoteLog} disabled={isSavingQuoteLog} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 18px', borderRadius: '10px', background: '#10b981', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
+                                    {isSavingQuoteLog ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />} Save Quote Log
+                                </button>
+                                <button onClick={() => setShowQuoteLogPanel(false)} style={{ padding: '9px 14px', borderRadius: '10px', background: '#f1f5f9', color: '#64748b', border: 'none', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer' }}>Cancel</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {localQuoteLogs.length > 0 && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '10px' }}>
+                            {localQuoteLogs.map((q, i) => (
+                                <div key={i} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '14px' }}>
+                                    <div style={{ fontWeight: 700, color: '#065f46', marginBottom: '4px' }}>{q.supplier_name}</div>
+                                    {q.unit_price && <div style={{ fontSize: '0.82rem', color: '#374151' }}>Price: <strong>{q.currency} {q.unit_price}</strong></div>}
+                                    {q.lead_time && <div style={{ fontSize: '0.82rem', color: '#374151' }}>Lead Time: {q.lead_time}</div>}
+                                    {q.remarks && <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>{q.remarks}</div>}
+                                    <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '6px' }}>{q.quote_date}</div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {localQuoteLogs.length === 0 && !showQuoteLogPanel && (
+                        <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: 0, fontStyle: 'italic' }}>No supplier quotes logged yet. Click "Log Received Quote" to add one.</p>
+                    )}
+                </div>
+            )}
+
+            {/* 6. Advanced Workflow Section (Full Width Notes & Comments) */}
+            {activeTab === 'send' && (
+                <div style={{ marginTop: '24px' }} className="animate-fade-in">
+                    {/* Notes & Comments Section */}
+                    <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '24px', display: 'flex', flexDirection: 'column' }}>
+                        <h4 style={{ margin: '0 0 16px 0', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <FileText size={16} color="#3b82f6" /> Notes & Comments
+                        </h4>
+                        <RichTextEditor 
+                            value={enquiry?.description || ''} 
+                            onChange={(val) => handleUpdateHeader({ description: val })}
+                            placeholder="Please submit your best competitive offer for the attached purchase inquiry by return."
                         />
                     </div>
-                    <div className="custom-scrollbar" style={{ maxHeight: '400px', overflowY: 'auto', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
-                        {suppliers.filter(s => s.name.toLowerCase().includes(supplierSearch.toLowerCase())).map(supplier => {
-                            const isSelected = selectedSuppliers.some(s => s.id === supplier.id);
-                            return (
-                                <div key={supplier.id} style={{ 
-                                    border: isSelected ? '1px solid #6366f1' : '1px solid #f1f5f9', 
-                                    borderRadius: '12px', 
-                                    padding: '12px', 
-                                    background: isSelected ? '#f8faff' : '#fff', 
-                                    transition: 'all 0.2s'
-                                }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1 }}>
-                                            <input 
-                                                type="checkbox" 
-                                                checked={isSelected}
-                                                onChange={() => handleToggleSupplier(supplier)}
-                                                style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#6366f1' }}
-                                            />
-                                            <span style={{ fontSize: '0.9rem', fontWeight: 600, color: isSelected ? '#4f46e5' : '#1e293b' }}>{supplier.name}</span>
-                                        </label>
-                                        <div style={{ display: 'flex', gap: '8px' }}>
-                                            <button onClick={() => { setEditingSupplier(supplier); setSupplierModalOpen(true); }} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}><Edit size={14} /></button>
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
-                        <button onClick={() => setIsPreviewModalOpen(true)} className="btn btn-sm btn-outline" style={{ flex: 1 }}>Preview</button>
-                        <button onClick={handlePrepareFloat} disabled={selectedSuppliers.length === 0} className="btn btn-sm btn-primary" style={{ flex: 1, background: '#4f46e5' }}>Float RFQ</button>
-                    </div>
                 </div>
-
-                {/* Right: Notes & Comments Section */}
-                <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '24px', height: '100%', display: 'flex', flexDirection: 'column' }}>
-                    <h4 style={{ margin: '0 0 16px 0', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <FileText size={16} color="#3b82f6" /> Notes & Comments
-                    </h4>
-                    <RichTextEditor 
-                        value={enquiry?.description || ''} 
-                        onChange={(val) => handleUpdateHeader({ description: val })}
-                        placeholder="Please submit your best competitive offer for the attached purchase inquiry by return."
-                    />
-                </div>
-            </div>
+            )}
 
 
 
@@ -1370,183 +1694,459 @@ export default function EnquiryDetails() {
 
 
             {/* 7. Unified Functional Area (Vault & OCR) */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '40px' }}>
-                {/* Vault / Project Attachment */}
-                <div className="glass-panel" style={{ padding: '24px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '24px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                        <div style={{ padding: '8px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--accent)', borderRadius: '10px' }}>
-                            <FolderPlus size={20} />
-                        </div>
-                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Project Vault</h3>
-                    </div>
-                    <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '20px', lineHeight: 1.5 }}>
-                        Manage enquiry documents here. All files are synced to your central **GDrive Repository**.
-                    </p>
-                    
-                    <div style={{ border: '2px dashed #e2e8f0', borderRadius: '16px', padding: '32px', textAlign: 'center', background: '#f8fafc', transition: 'all 0.2s' }}>
-                        <Upload size={40} color="#94a3b8" style={{ marginBottom: '16px' }} />
-                        <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: '6px' }}>Enquiry Document</div>
-                        <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '20px' }}>Drag & drop or browse for PDF/Images</div>
-                        <input 
-                            type="file" 
-                            style={{ display: 'none' }} 
-                            id="vault-upload" 
-                            onChange={(e) => {
-                                const file = e.target.files[0];
-                                if (!file) return;
-                                setAttachment(file);
-                            }}
-                        />
-                        <label htmlFor="vault-upload" className="btn btn-primary" style={{ padding: '10px 24px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                            {attachment ? <CheckCircle2 size={16} /> : <Plus size={16} />} 
-                            {attachment ? attachment.name.substring(0, 20) + '...' : 'Select Document'}
-                        </label>
-                    </div>
-
-                    {enquiry.gdrive_file_link && (
-                        <div style={{ marginTop: '20px', padding: '16px', background: '#f0f9ff', borderRadius: '12px', border: '1px solid #bae6fd' }}>
-                            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0369a1', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <CheckCircle2 size={14} /> Synced from Vault
+            {activeTab === 'upload' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '40px' }} className="animate-fade-in">
+                    {/* Vault / Project Attachment */}
+                    <div className="glass-panel" style={{ padding: '24px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '24px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                            <div style={{ padding: '8px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--accent)', borderRadius: '10px' }}>
+                                <FolderPlus size={20} />
                             </div>
-                            <SafeDriveLink url={enquiry.gdrive_file_link} label="Open Synced File" />
+                            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Project Vault</h3>
                         </div>
-                    )}
-                </div>
-
-                {/* Smart OCR Assistant */}
-                <div className="glass-panel" style={{ padding: '24px', background: 'linear-gradient(135deg, #f5f3ff 0%, #ffffff 100%)', border: '1px solid #ddd6fe', borderRadius: '24px', boxShadow: '0 10px 25px -5px rgba(139, 92, 246, 0.1)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                        <div style={{ padding: '8px', background: 'rgba(139, 92, 246, 0.1)', color: '#8b5cf6', borderRadius: '10px' }}>
-                            <Sparkles size={20} />
-                        </div>
-                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#1e293b' }}>AI OCR Assistant</h3>
-                    </div>
-                    <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '20px', lineHeight: 1.5 }}>
-                        Automatically convert photos of enquiry lists into system line items using AI.
-                    </p>
-                    
-                    <div 
-                        onClick={() => setShowOCRModal(true)}
-                        style={{ border: '2px dashed #ddd6fe', borderRadius: '16px', padding: '32px', textAlign: 'center', background: 'rgba(255,255,255,0.5)', cursor: 'pointer', transition: 'all 0.2s', minHeight: '180px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}
-                        onMouseOver={e => e.currentTarget.style.borderColor = '#8b5cf6'}
-                        onMouseOut={e => e.currentTarget.style.borderColor = '#ddd6fe'}
-                    >
-                        <ImageIcon size={48} color="#8b5cf6" style={{ marginBottom: '16px' }} />
-                        <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1e293b' }}>Process Image to Text</div>
-                        <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '6px' }}>Supports hand-written lists</div>
-                    </div>
-                </div>
-            </div>
-
-            {/* 8. Project Workspace & Documents (Full Width) */}
-            <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '24px', marginBottom: '40px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <div>
-                        <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <Database size={18} color="#3b82f6" /> Project Workspace
-                        </h4>
-                        <p style={{ margin: '4px 0 0 0', fontSize: '0.75rem', color: '#64748b' }}>Technical Photos, Datasheets & Communication history</p>
-                    </div>
-                    <div style={{ display: 'flex', gap: '12px' }}>
-                        <button 
-                            onClick={() => {
-                                // Trigger file input of CommunicationWall if possible, or just scroll to it
-                                document.querySelector('.communication-wall-input')?.scrollIntoView({ behavior: 'smooth' });
-                            }}
-                            className="btn btn-sm btn-vibrant" 
-                            style={{ 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                gap: '8px',
-                                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                                color: 'white',
-                                border: 'none',
-                                padding: '8px 16px',
-                                borderRadius: '10px',
-                                fontWeight: 700
-                            }}
-                        >
-                            <ImageIcon size={14} /> Add Technical Photo
-                        </button>
-                        {enquiry.gdrive_file_link && !showLinkInput && (
-                            <button onClick={() => setShowLinkInput(true)} style={{ background: 'none', border: 'none', color: '#6366f1', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>Edit Drive Link</button>
-                        )}
-                    </div>
-                </div>
-
-                {(!enquiry.gdrive_file_link || showLinkInput) && (
-                    <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '12px', border: '1px dashed #cbd5e1', marginBottom: '16px' }}>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                            <input
-                                type="text"
-                                placeholder="Paste GDrive URL..."
-                                value={driveLink}
-                                onChange={(e) => setDriveLink(e.target.value)}
-                                style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                            />
-                            <button onClick={updateDriveLink} style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer' }}>Link</button>
-                        </div>
-                    </div>
-                )}
-
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 400px', gap: '24px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                        {/* Internal Documents Table */}
-                        <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '16px' }}>
-                            <h5 style={{ margin: '0 0 12px 0', fontSize: '0.8rem', fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <FileText size={14} /> Internal Documents Wall
-                            </h5>
-                            <DocumentManager referenceType="Enquiry" referenceId={id} />
-                        </div>
-
-                        {/* Quick Gallery View for Technical Images */}
-                        <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '16px' }}>
-                            <h5 style={{ margin: '0 0 12px 0', fontSize: '0.8rem', fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <ImageIcon size={14} /> Technical Gallery Preview
-                            </h5>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '12px' }}>
-                                {/* Logic to show thumbnails from documents table would go here, 
-                                    but for now we provide a placeholder or instructions */}
-                                <div style={{ border: '1px dashed #cbd5e1', borderRadius: '8px', padding: '20px', textAlign: 'center', background: '#fff', gridColumn: '1 / -1' }}>
-                                    <p style={{ margin: 0, fontSize: '0.75rem', color: '#94a3b8' }}>
-                                        Images uploaded to the Communication Wall will automatically appear here and in your RFQ attachments.
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }} className="communication-wall-input">
-                         <CommunicationWall 
-                            referenceType="Enquiry" 
-                            referenceId={id} 
-                            folderId={enquiry?.gdrive_inventory_photos_id || enquiry?.gdrive_file_link?.split('/')?.pop()} 
-                        />
-                        {enquiry?.gdrive_file_link && !showLinkInput && (
-                            <SafeDriveLink 
-                                url={enquiry?.gdrive_file_link} 
-                                label="Open Project Drive"
-                                className="btn btn-block"
-                                style={{ 
-                                    width: '100%', 
-                                    background: '#fff', 
-                                    color: '#334155', 
-                                    border: '1px solid #cbd5e1', 
-                                    padding: '10px', 
-                                    borderRadius: '8px', 
-                                    display: 'flex', 
-                                    alignItems: 'center', 
-                                    justifyContent: 'center', 
-                                    gap: '8px', 
-                                    fontWeight: 600, 
-                                    fontSize: '0.85rem',
-                                    cursor: 'pointer'
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '20px', lineHeight: 1.5 }}>
+                            Manage enquiry documents here. All files are synced to your central **GDrive Repository**.
+                        </p>
+                        
+                        <div style={{ border: '2px dashed #e2e8f0', borderRadius: '16px', padding: '32px', textAlign: 'center', background: '#f8fafc', transition: 'all 0.2s' }}>
+                            <Upload size={40} color="#94a3b8" style={{ marginBottom: '16px' }} />
+                            <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: '6px' }}>Enquiry Document</div>
+                            <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '20px' }}>Drag & drop or browse for PDF/Images</div>
+                            <input 
+                                type="file" 
+                                style={{ display: 'none' }} 
+                                id="vault-upload" 
+                                onChange={(e) => {
+                                    const file = e.target.files[0];
+                                    if (!file) return;
+                                    setAttachment(file);
                                 }}
                             />
+                            <label htmlFor="vault-upload" className="btn btn-primary" style={{ padding: '10px 24px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                {attachment ? <CheckCircle2 size={16} /> : <Plus size={16} />} 
+                                {attachment ? attachment.name.substring(0, 20) + '...' : 'Select Document'}
+                            </label>
+                        </div>
+
+                        {enquiry.gdrive_file_link && (
+                            <div style={{ marginTop: '20px', padding: '16px', background: '#f0f9ff', borderRadius: '12px', border: '1px solid #bae6fd' }}>
+                                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0369a1', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <CheckCircle2 size={14} /> Synced from Vault
+                                </div>
+                                <SafeDriveLink url={enquiry.gdrive_file_link} label="Open Synced File" />
+                            </div>
                         )}
                     </div>
+
+                    {/* Smart OCR Assistant */}
+                    <div className="glass-panel" style={{ padding: '24px', background: 'linear-gradient(135deg, #f5f3ff 0%, #ffffff 100%)', border: '1px solid #ddd6fe', borderRadius: '24px', boxShadow: '0 10px 25px -5px rgba(139, 92, 246, 0.1)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                            <div style={{ padding: '8px', background: 'rgba(139, 92, 246, 0.1)', color: '#8b5cf6', borderRadius: '10px' }}>
+                                <Sparkles size={20} />
+                            </div>
+                            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#1e293b' }}>AI OCR Assistant</h3>
+                        </div>
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '20px', lineHeight: 1.5 }}>
+                            Automatically convert photos of enquiry lists into system line items using AI.
+                        </p>
+                        <div 
+                            onClick={() => setShowOCRModal(true)}
+                            style={{ border: '2px dashed #ddd6fe', borderRadius: '16px', padding: '32px', textAlign: 'center', background: 'rgba(255,255,255,0.5)', cursor: 'pointer', transition: 'all 0.2s', minHeight: '180px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}
+                            onMouseOver={e => e.currentTarget.style.borderColor = '#8b5cf6'}
+                            onMouseOut={e => e.currentTarget.style.borderColor = '#ddd6fe'}
+                        >
+                            <ImageIcon size={48} color="#8b5cf6" style={{ marginBottom: '16px' }} />
+                            <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1e293b' }}>Process Image to Text</div>
+                            <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '6px' }}>Supports hand-written lists</div>
+                        </div>
+                    </div>
                 </div>
-            </div>
+            )}
+
+            {/* Tab 5: Project Photos & Media */}
+            {activeTab === 'photos' && (
+                <div 
+                    style={{ 
+                        background: '#fff', 
+                        borderRadius: '16px', 
+                        border: '1px solid #e2e8f0', 
+                        padding: '24px', 
+                        marginBottom: '40px',
+                        position: 'relative' 
+                    }} 
+                    className="animate-fade-in"
+                    onDragOver={(e) => { e.preventDefault(); setIsDraggingPhotos(true); }}
+                    onDragLeave={(e) => { e.preventDefault(); setIsDraggingPhotos(false); }}
+                    onDrop={async (e) => {
+                        e.preventDefault();
+                        setIsDraggingPhotos(false);
+                        const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+                        if (files.length > 0) {
+                            for (const f of files) {
+                                await handleGalleryUpload(f);
+                            }
+                        }
+                    }}
+                >
+                    {isDraggingPhotos && (
+                        <div style={{
+                            position: 'absolute',
+                            inset: 0,
+                            background: 'rgba(244, 63, 94, 0.95)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '16px',
+                            zIndex: 50,
+                            borderRadius: '16px',
+                            color: '#fff',
+                            border: '3px dashed #fff',
+                            margin: '8px'
+                        }}>
+                            <Upload size={48} className="animate-bounce" />
+                            <span style={{ fontSize: '1.25rem', fontWeight: 800 }}>Drop Photos Here to Upload</span>
+                        </div>
+                    )}
+                    
+                    <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <Ship size={20} color="#f43f5e" />
+                            <h3 style={{ margin: 0, color: '#1e293b', fontWeight: 800 }}>Project Photos &amp; Media</h3>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            {loadingGallery && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <div style={{ width: '120px', height: '6px', background: '#e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                                        <div style={{ width: `${galleryUploadProgress}%`, height: '100%', background: '#f43f5e', transition: 'width 0.3s ease' }} />
+                                    </div>
+                                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#f43f5e' }}>{galleryUploadProgress}%</span>
+                                </div>
+                            )}
+                            {galleryUploadSuccess && (
+                                <div className="animate-bounce" style={{ color: '#22c55e', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', fontWeight: 600 }}>
+                                    <CheckCircle2 size={18} /> Upload Success!
+                                </div>
+                            )}
+                            {enquiry?.gdrive_folder_id && (
+                                <a 
+                                    href={`https://drive.google.com/drive/folders/${galleryFolderId || enquiry.gdrive_folder_id}`} 
+                                    target="_blank" 
+                                    rel="noreferrer"
+                                    className="btn btn-secondary"
+                                    style={{ 
+                                        background: 'linear-gradient(135deg, #ecfeff 0%, #cffafe 100%)', 
+                                        border: '1px solid #a5f3fc', 
+                                        color: '#0891b2', 
+                                        display: 'inline-flex', 
+                                        alignItems: 'center', 
+                                        gap: '8px', 
+                                        textDecoration: 'none',
+                                        fontWeight: 600,
+                                        fontSize: '0.9rem'
+                                    }}
+                                >
+                                    <FolderOpen size={16} /> Explorer (Drive)
+                                </a>
+                            )}
+                            <button 
+                                className="btn btn-secondary" 
+                                onClick={() => setShowGalleryOCRModal(true)}
+                                style={{ background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)', border: '1px solid #ddd6fe', color: '#7c3aed' }}
+                            >
+                                <Sparkles size={16} /> Smart OCR
+                            </button>
+                            <button 
+                                className="btn btn-secondary" 
+                                onClick={handleShowQr}
+                                style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid #bbf7d0', color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}
+                            >
+                                <Smartphone size={16} /> Mobile Upload (QR)
+                            </button>
+                            <button 
+                                className="btn btn-secondary" 
+                                onClick={() => fetchGallery()}
+                                title="Synchronize photos with Google Drive"
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                            >
+                                <RefreshCw size={16} className={loadingGallery ? 'animate-spin' : ''} />
+                                Synchronize
+                            </button>
+                            <label className="btn btn-primary" style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden', background: '#f43f5e', border: '1px solid #f43f5e' }}>
+                                <Upload size={16} /> Upload Photo
+                                <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => {
+                                    const files = Array.from(e.target.files);
+                                    const uploadSequence = async () => {
+                                        for (const f of files) {
+                                            await handleGalleryUpload(f);
+                                        }
+                                    };
+                                    uploadSequence();
+                                }} />
+                            </label>
+                        </div>
+                    </div>
+
+                    <SmartOCRModal 
+                        isOpen={showGalleryOCRModal}
+                        onClose={() => setShowGalleryOCRModal(false)}
+                        title="Enquiry Gallery OCR Assistant"
+                        onApply={(res) => {
+                            if (res.rawText) {
+                                handleUpdateHeader({
+                                    description: (enquiry.description || '') + '\n\n[OCR DATA FROM GALLERY]:\n' + res.rawText
+                                });
+                                toast.success('Extracted text has been appended to the Enquiry Notes.');
+                            }
+                        }}
+                    />
+
+                    {loadingGallery && galleryFiles.length === 0 ? (
+                        <div style={{ padding: '80px', textAlign: 'center', color: '#64748b' }}>
+                            <div className="upload-animation-ring-enq">
+                                <div />
+                                <div />
+                                <div />
+                                <div />
+                            </div>
+                            <p style={{ marginTop: '24px', fontWeight: 600 }}>Syncing with Google Drive...</p>
+                            <style>{`
+                                .upload-animation-ring-enq { display: inline-block; position: relative; width: 80px; height: 80px; }
+                                .upload-animation-ring-enq div { box-sizing: border-box; display: block; position: absolute; width: 64px; height: 64px; margin: 8px; border: 8px solid #f43f5e; border-radius: 50%; animation: upload-ring-enq 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite; border-color: #f43f5e transparent transparent transparent; }
+                                .upload-animation-ring-enq div:nth-child(1) { animation-delay: -0.45s; }
+                                .upload-animation-ring-enq div:nth-child(2) { animation-delay: -0.3s; }
+                                .upload-animation-ring-enq div:nth-child(3) { animation-delay: -0.15s; }
+                                @keyframes upload-ring-enq { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                            `}</style>
+                        </div>
+                    ) : galleryFiles.length === 0 ? (
+                        <div style={{ padding: '80px', textAlign: 'center', background: '#f8fafc', borderRadius: '16px', border: '2px dashed #cbd5e1' }}>
+                            <Ship size={48} color="#cbd5e1" style={{ marginBottom: '16px' }} />
+                            <p style={{ color: '#64748b', fontSize: '1.1rem', fontWeight: 600 }}>No photos uploaded yet for this enquiry.</p>
+                            <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: '4px' }}>Capture and upload project photos directly here.</p>
+                        </div>
+                    ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '20px' }}>
+                            {galleryFiles.map(file => (
+                                <div key={file.id} className="gallery-item" style={{ position: 'relative', borderRadius: '12px', overflow: 'hidden', background: '#fff', border: '1px solid #e2e8f0', aspectRatio: '4/3', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', transition: 'transform 0.2s' }}>
+                                    <img 
+                                        src={file.thumbnailLink?.replace('=s220', '=s600')} 
+                                        alt={file.name} 
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                                    />
+                                    <div className="gallery-overlay" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', opacity: 0, transition: 'opacity 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+                                        <a href={file.webViewLink} target="_blank" rel="noreferrer" style={{ color: '#fff', padding: '8px', background: 'rgba(255,255,255,0.2)', borderRadius: '50%' }}><ExternalLink size={20} /></a>
+                                    </div>
+                                    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '8px', background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', color: '#fff', fontSize: '0.7rem', fontWeight: 600 }}>
+                                        {file.name}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    <style>{`
+                        .gallery-item:hover .gallery-overlay { opacity: 1; } 
+                        .gallery-item:hover { transform: translateY(-4px); }
+                    `}</style>
+                </div>
+            )}
+
+            {/* Tab 6: Explorer */}
+            {activeTab === 'explorer' && (
+                <div className="glass-panel animate-fade-in" style={{ padding: '32px', background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', marginBottom: '40px' }}>
+                    {/* Auth Status Bar */}
+                    <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center', 
+                        background: authStatus === 'connected' ? '#f0fdf4' : '#fef2f2', 
+                        padding: '12px 20px', 
+                        borderRadius: '12px', 
+                        marginBottom: '24px',
+                        border: `1px solid ${authStatus === 'connected' ? '#bbf7d0' : '#fecaca'}`
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: authStatus === 'connected' ? '#22c55e' : '#ef4444' }} />
+                            <span style={{ fontSize: '0.9rem', fontWeight: 600, color: authStatus === 'connected' ? '#166534' : '#991b1b' }}>
+                                Google Drive: {authStatus === 'connected' ? 'Connected' : 'Disconnected'}
+                            </span>
+                        </div>
+                        {authStatus !== 'connected' && (
+                            <button type="button" onClick={handleExplorerReconnect} className="btn btn-sm btn-primary" style={{ fontSize: '0.8rem', padding: '6px 16px' }}>
+                                <RefreshCw size={14} style={{ marginRight: '6px' }} /> Reconnect Now
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Navigation / Actions Bar */}
+                    {authStatus === 'connected' && (
+                        <>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <button 
+                                        type="button"
+                                        onClick={() => handleExplorerBack(explorerPath.length - 2)} 
+                                        disabled={explorerPath.length <= 1}
+                                        style={{ background: 'none', border: 'none', cursor: explorerPath.length > 1 ? 'pointer' : 'default', color: explorerPath.length > 1 ? '#4f46e5' : '#cbd5e1' }}
+                                    >
+                                        <ArrowLeft size={20} />
+                                    </button>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '1rem', fontWeight: 600 }}>
+                                        {explorerPath.map((segment, idx) => (
+                                            <React.Fragment key={segment.id}>
+                                                <span 
+                                                    onClick={() => handleExplorerBack(idx)}
+                                                    style={{ cursor: 'pointer', color: idx === explorerPath.length - 1 ? '#1e293b' : '#64748b' }}
+                                                >
+                                                    {segment.name}
+                                                </span>
+                                                {idx < explorerPath.length - 1 && <span style={{ color: '#cbd5e1' }}>/</span>}
+                                            </React.Fragment>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                    <button type="button" onClick={() => fetchExplorerFiles()} className="btn btn-secondary" title="Refresh list" style={{ height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <RefreshCw size={18} className={loadingExplorer ? 'animate-spin' : ''} />
+                                    </button>
+                                    
+                                    {!explorerFolderId ? (
+                                        <button 
+                                            type="button"
+                                            onClick={ensureEnquiryFolder} 
+                                            className="btn btn-primary" 
+                                            style={{ height: '42px', display: 'flex', alignItems: 'center', gap: '8px' }}
+                                        >
+                                            <FolderPlus size={16} /> Provision Folder
+                                        </button>
+                                    ) : (
+                                        <div
+                                            onDragOver={(e) => { e.preventDefault(); setIsDraggingExplorer(true); }}
+                                            onDragLeave={(e) => { e.preventDefault(); setIsDraggingExplorer(false); }}
+                                            onDrop={async (e) => {
+                                                e.preventDefault();
+                                                setIsDraggingExplorer(false);
+                                                const files = Array.from(e.dataTransfer.files);
+                                                if (files.length > 0) {
+                                                    setUploadingExplorer(true);
+                                                    setUploadProgress(0);
+                                                    try {
+                                                        const token = getStoredToken();
+                                                        for (let i = 0; i < files.length; i++) {
+                                                            await uploadFileToDrive(token, files[i], { folderId: explorerFolderId });
+                                                            setUploadProgress(((i + 1) / files.length) * 100);
+                                                        }
+                                                        fetchExplorerFiles();
+                                                    } catch (err) {
+                                                        console.error('Upload error:', err);
+                                                        alert('Failed to upload files.');
+                                                    } finally {
+                                                        setUploadingExplorer(false);
+                                                        setUploadProgress(0);
+                                                    }
+                                                }
+                                            }}
+                                            onClick={() => document.getElementById('explorer-upload').click()}
+                                            style={{
+                                                border: isDraggingExplorer ? '2px dashed #4f46e5' : '2px dashed #cbd5e1',
+                                                background: isDraggingExplorer ? '#eff6ff' : '#f8fafc',
+                                                padding: '0 20px',
+                                                borderRadius: '10px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '8px',
+                                                cursor: 'pointer',
+                                                color: '#4f46e5',
+                                                fontWeight: 600,
+                                                fontSize: '0.85rem',
+                                                transition: 'all 0.2s ease',
+                                                height: '42px',
+                                                justifyContent: 'center',
+                                                position: 'relative',
+                                                overflow: 'hidden'
+                                            }}
+                                        >
+                                            <Upload size={18} />
+                                            <span>{isDraggingExplorer ? 'Drop Files Here' : 'Drop Files to Upload'}</span>
+                                            {uploadingExplorer && (
+                                                <div style={{ 
+                                                    position: 'absolute', 
+                                                    left: 0, 
+                                                    top: 0, 
+                                                    bottom: 0, 
+                                                    width: `${uploadProgress}%`, 
+                                                    background: 'rgba(99, 102, 241, 0.15)', 
+                                                    transition: 'width 0.2s ease',
+                                                    pointerEvents: 'none'
+                                                }} />
+                                            )}
+                                        </div>
+                                    )}
+                                    <input id="explorer-upload" type="file" multiple hidden onChange={handleExplorerUpload} />
+                                </div>
+                            </div>
+
+                            {explorerError && (
+                                <div style={{ color: '#ef4444', background: '#fef2f2', padding: '12px', borderRadius: '8px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <AlertTriangle size={18} /> {explorerError}
+                                </div>
+                            )}
+
+                            {loadingExplorer && explorerFiles.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '60px', color: '#94a3b8' }}>
+                                    <Loader2 size={32} className="animate-spin" style={{ margin: '0 auto 16px' }} />
+                                    <p>Syncing with Google Drive...</p>
+                                </div>
+                            ) : !explorerFolderId ? (
+                                <div style={{ textAlign: 'center', padding: '80px', color: '#94a3b8', background: '#f8fafc', borderRadius: '16px', border: '2px dashed #e2e8f0' }}>
+                                    <FolderOpen size={48} style={{ margin: '0 auto 16px', opacity: 0.2 }} />
+                                    <p style={{ fontSize: '1.1rem' }}>No Drive Folder Linked</p>
+                                    <p style={{ fontSize: '0.9rem', marginTop: '4px' }}>Click "Provision Folder" above to automatically create the folder structure in CELRONHUB.</p>
+                                </div>
+                            ) : explorerFiles.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '80px', color: '#94a3b8', background: '#f8fafc', borderRadius: '16px', border: '2px dashed #e2e8f0' }}>
+                                    <FolderOpen size={48} style={{ margin: '0 auto 16px', opacity: 0.2 }} />
+                                    <p style={{ fontSize: '1.1rem' }}>This folder is empty.</p>
+                                    <p style={{ fontSize: '0.9rem', marginTop: '4px' }}>Upload drawings, photos, or documents to keep them with this enquiry.</p>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' }}>
+                                    {explorerFiles.map(file => (
+                                        <div key={file.id} style={{ padding: '16px', borderRadius: '12px', background: '#fff', border: '1px solid #e2e8f0', transition: 'transform 0.2s' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                                                <div 
+                                                    style={{ display: 'flex', gap: '10px', alignItems: 'center', cursor: file.mimeType.includes('folder') ? 'pointer' : 'default', flex: 1, overflow: 'hidden' }}
+                                                    onClick={() => file.mimeType.includes('folder') && handleExplorerNavigate(file)}
+                                                >
+                                                    {getExplorerFileIcon(file.mimeType)}
+                                                    <div style={{ overflow: 'hidden' }}>
+                                                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={file.name}>
+                                                            {file.name}
+                                                        </div>
+                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{file.size ? `${(file.size / 1024).toFixed(1)} KB` : 'Folder'}</div>
+                                                    </div>
+                                                </div>
+                                                <button 
+                                                    type="button"
+                                                    onClick={() => handleExplorerDelete(file.id, file.name)}
+                                                    style={{ background: 'none', border: 'none', color: '#cbd5e1', padding: '4px', cursor: 'pointer' }}
+                                                >
+                                                    <Trash size={14} />
+                                                </button>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                <a href={file.webViewLink} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: '#4f46e5', fontSize: '0.78rem', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                                    <ExternalLink size={12} /> Open in Cloud
+                                                </a>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            )}
 
                 <WhatsAppShareModal 
                     isOpen={whatsappShareModal.isOpen}
@@ -1648,6 +2248,120 @@ export default function EnquiryDetails() {
                         <Send size={18} /> Float RFQ
                     </button>
                 )}
+
+                <style>{`
+                    .tab-container {
+                        display: flex;
+                        flex-wrap: wrap;
+                        gap: 10px;
+                        margin: 30px 0 20px 0;
+                        padding: 8px;
+                        background: #f8fafc;
+                        border-radius: 16px;
+                        border: 1px solid #e2e8f0;
+                    }
+                    .tab {
+                        padding: 10px 20px;
+                        background: #ffffff;
+                        border: 1px solid #e2e8f0;
+                        color: #64748b;
+                        font-weight: 700;
+                        font-size: 0.88rem;
+                        cursor: pointer;
+                        border-radius: 12px;
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 8px;
+                        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+                        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+                    }
+                    
+                    /* Items tab - Indigo */
+                    .tab.tab-items:hover {
+                        background: rgba(99, 102, 241, 0.05);
+                        color: #4f46e5;
+                        border-color: rgba(99, 102, 241, 0.25);
+                    }
+                    .tab.tab-items.active {
+                        background: #4f46e5;
+                        color: #ffffff;
+                        border-color: #4f46e5;
+                        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+                    }
+                    
+                    /* Upload tab - Amber / Orange */
+                    .tab.tab-other:hover {
+                        background: rgba(217, 119, 6, 0.05);
+                        color: #d97706;
+                        border-color: rgba(217, 119, 6, 0.25);
+                    }
+                    .tab.tab-other.active {
+                        background: #d97706;
+                        color: #ffffff;
+                        border-color: #d97706;
+                        box-shadow: 0 4px 12px rgba(217, 119, 6, 0.25);
+                    }
+                    
+                    /* Send tab - Violet */
+                    .tab.tab-workflow:hover {
+                        background: rgba(124, 58, 237, 0.05);
+                        color: #7c3aed;
+                        border-color: rgba(124, 58, 237, 0.25);
+                    }
+                    .tab.tab-workflow.active {
+                        background: #7c3aed;
+                        color: #ffffff;
+                        border-color: #7c3aed;
+                        box-shadow: 0 4px 12px rgba(124, 58, 237, 0.25);
+                    }
+                    
+                    /* Quotes tab - Emerald */
+                    .tab.tab-payments:hover {
+                        background: rgba(16, 185, 129, 0.05);
+                        color: #10b981;
+                        border-color: rgba(16, 185, 129, 0.25);
+                    }
+                    .tab.tab-payments.active {
+                        background: #10b981;
+                        color: #ffffff;
+                        border-color: #10b981;
+                        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+                    }
+
+                    /* Photos tab - Pink / Rose */
+                    .tab.tab-gallery:hover {
+                        background: rgba(244, 63, 94, 0.05);
+                        color: #f43f5e;
+                        border-color: rgba(244, 63, 94, 0.25);
+                    }
+                    .tab.tab-gallery.active {
+                        background: #f43f5e;
+                        color: #ffffff;
+                        border-color: #f43f5e;
+                        box-shadow: 0 4px 12px rgba(244, 63, 94, 0.25);
+                    }
+
+                    /* Explorer tab - Sky Blue */
+                    .tab.tab-explorer:hover {
+                        background: rgba(14, 165, 233, 0.05);
+                        color: #0ea5e9;
+                        border-color: rgba(14, 165, 233, 0.25);
+                    }
+                    .tab.tab-explorer.active {
+                        background: #0ea5e9;
+                        color: #ffffff;
+                        border-color: #0ea5e9;
+                        box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
+                    }
+
+                    @keyframes fadeIn {
+                        from { opacity: 0; transform: translateY(4px); }
+                        to { opacity: 1; transform: translateY(0); }
+                    }
+                    .animate-fade-in {
+                        animation: fadeIn 0.2s ease-out forwards;
+                    }
+                `}</style>
             </div>
         </div>
     );

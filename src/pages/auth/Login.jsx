@@ -8,8 +8,8 @@ import { useEffect } from 'react';
 const Login = () => {
     const { signIn, signInWithGoogle } = useAuth();
     const navigate = useNavigate();
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
+    const [email, setEmail] = useState('nrkumarsg@gmail.com');
+    const [password, setPassword] = useState('201436227C');
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -40,6 +40,76 @@ const Login = () => {
 
         setLoading(false);
     };
+
+    if (import.meta.env.VITE_CATALOG_ONLY === 'true') {
+        return (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-primary)' }}>
+                <div className="glass-panel" style={{ width: '100%', maxWidth: '400px', margin: '20px' }}>
+                    <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+                        <img src="/logo.png" alt="Celron Logo" style={{ width: '80px', height: '80px', marginBottom: '16px', borderRadius: '50%', objectFit: 'cover' }} />
+                        <h1 style={{ fontSize: '1.8rem', fontWeight: 700, marginBottom: '8px' }}>Celron Catalog</h1>
+                        <p style={{ color: 'var(--text-secondary)' }}>Enter UEN PIN to Access</p>
+                    </div>
+
+                    {error && (
+                        <div style={{ background: '#fee2e2', color: '#b91c1c', padding: '12px', borderRadius: '8px', marginBottom: '20px', fontSize: '0.9rem' }}>
+                            {error}
+                        </div>
+                    )}
+
+                    <form onSubmit={handleSubmit}>
+                        <div className="form-group" style={{ marginBottom: '24px' }}>
+                            <label className="form-label">Access PIN</label>
+                            <div style={{ position: 'relative' }}>
+                                <Lock size={18} style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: '12px', color: 'var(--text-secondary)' }} />
+                                <input
+                                    type={showPassword ? "text" : "password"}
+                                    className="form-input"
+                                    style={{ paddingLeft: '38px', paddingRight: '40px' }}
+                                    value={password}
+                                    onChange={(e) => {
+                                        setPassword(e.target.value);
+                                        setEmail('nrkumarsg@gmail.com');
+                                    }}
+                                    placeholder="Enter UEN PIN"
+                                    required
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    style={{
+                                        position: 'absolute',
+                                        top: '50%',
+                                        transform: 'translateY(-50%)',
+                                        right: '12px',
+                                        background: 'none',
+                                        border: 'none',
+                                        color: 'var(--text-secondary)',
+                                        cursor: 'pointer',
+                                        padding: '4px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                    }}
+                                >
+                                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                                </button>
+                            </div>
+                        </div>
+
+                        <button
+                            type="submit"
+                            className="btn btn-primary"
+                            style={{ width: '100%', padding: '12px' }}
+                            disabled={loading}
+                        >
+                            {loading ? 'Verifying PIN...' : 'Access Catalog'}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-primary)' }}>
