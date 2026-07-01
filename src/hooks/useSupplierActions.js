@@ -194,6 +194,17 @@ export function useSupplierActions(companyId, enquiryId, initialEnquiry) {
         }
     };
 
+    const trackRFQFloat = async (enquiryIdToUpdate, supplierIds, compId) => {
+        try {
+            await import('../lib/workflowService').then(m => m.trackFloatedRFQ(enquiryIdToUpdate, supplierIds, compId));
+            await updateEnquiry(enquiryIdToUpdate, { status: 'RFQ Floated' });
+            return true;
+        } catch (error) {
+            console.error("Failed to track RFQ float:", error);
+            return false;
+        }
+    };
+
     return {
         suppliers,
         selectedSuppliers,
@@ -214,6 +225,7 @@ export function useSupplierActions(companyId, enquiryId, initialEnquiry) {
         handleDeleteContact,
         handleCreatePartner,
         handleDeletePartner,
-        handleFloatQuotation
+        handleFloatQuotation,
+        trackRFQFloat
     };
 }

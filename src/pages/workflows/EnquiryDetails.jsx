@@ -74,7 +74,8 @@ export default function EnquiryDetails() {
         handleDeleteContact,
         handleCreatePartner,
         handleDeletePartner,
-        handleFloatQuotation
+        handleFloatQuotation,
+        trackRFQFloat
     } = useSupplierActions(profile?.company_id, id, enquiry);
 
     const [showNewSupplierForm, setShowNewSupplierForm] = useState(false);
@@ -441,12 +442,12 @@ export default function EnquiryDetails() {
         if (selectedSuppliers.length === 0) return alert("Select at least one supplier.");
         if (selectedItems.length === 0) return alert("Add at least one item from the catalog.");
 
-        const emails = selectedSuppliers.map(s => {
+        const toVal = selectedSuppliers.map(s => {
             const override = recipientOverrides[s.id];
             return override?.email || s.email1;
-        }).filter(e => e).join(',') + (selectedSuppliers.length > 0 ? ';' : '') + 'celron.simlim0305@gmail.com; accounts@celron.net';
-        
-        const subject = encodeURIComponent(`Request for Quotation: ${enquiry?.enquiry_no} - CELRON ENTERPRISES`);
+        }).filter(e => e).join('; ');
+
+        const subjectVal = `Request for Quotation: ${enquiry?.enquiry_no || 'Draft'} - CELRON ENTERPRISES`;
 
         let itemRows = selectedItems.map((item, idx) => {
             const specPrefix = item.specification ? `\n   - Spec: ${item.specification.substring(0, 100)}${item.specification.length > 100 ? '...' : ''}` : '';
@@ -458,9 +459,20 @@ export default function EnquiryDetails() {
             : `Dear Supplier,\n\n`;
 
         const gdriveNote = enquiry.gdrive_file_link ? `You can view photos and additional attachments here: ${enquiry.gdrive_file_link}\n\n` : '';
-        const body = encodeURIComponent(`${greeting}We are pleased to invite you to quote for the following items:\n\n${itemRows}\n\n${gdriveNote}Please revert with your best price and lead time at your earliest convenience.\n\nThank you,\nN.R.KUMAR HP:+65 97685891\nCELRON ENTERPRISES PTE LTD\n10, Jln, Besar,"Sim Lim Tower", #03-05, Singapore 208787\nEmail: sales@celron.net | Tel: +6597685891/81962270 Web : https://www.celron.net    / https://celron.shop`);
+        const bodyVal = `${greeting}We are pleased to invite you to quote for the following items:\n\n${itemRows}\n\n${gdriveNote}Please revert with your best price and lead time at your earliest convenience.\n\nThank you,\nN.R.KUMAR HP:+65 97685891\nCELRON ENTERPRISES PTE LTD\n10, Jln, Besar,"Sim Lim Tower", #03-05, Singapore 208787\nEmail: sales@celron.net | Tel: +6597685891/81962270 Web : https://www.celron.net    / https://celron.shop`;
 
-        setEmailPreviewData({ emails, subject, body });
+        setEmailPreviewData({
+            to: toVal,
+            cc: 'accounts@celron.net; acct.celron.sg@gmail.com',
+            bcc: 'celron.simlim0305@gmail.com',
+            subject: subjectVal,
+            body: bodyVal,
+            selectedSuppliers,
+            supplierContacts,
+            gdriveLink: enquiry.gdrive_file_link || 'https://drive.google.com/drive/folders/1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij?usp=sharing',
+            enquiryNo: enquiry?.enquiry_no,
+            enquiryId: id
+        });
     };
 
     const handleWhatsApp = () => {
@@ -497,7 +509,8 @@ export default function EnquiryDetails() {
 
 
     const confirmFloat = async () => {
-        const success = await handleFloatQuotation(selectedItems, enquiry);
+        const supplierIds = selectedSuppliers.map(s => s.id);
+        const success = await trackRFQFloat(id, supplierIds, profile?.company_id);
         if (success) {
             setEmailPreviewData(null);
             refreshEnquiry();
@@ -1598,7 +1611,7 @@ export default function EnquiryDetails() {
             <EmailPreviewModal 
                 isOpen={!!emailPreviewData}
                 onClose={() => setEmailPreviewData(null)}
-                onConfirm={confirmFloat}
+                onSent={confirmFloat}
                 data={emailPreviewData || {}}
             />
 
