@@ -14,7 +14,7 @@ import EmailPreviewModal from '../../components/workflows/EmailPreviewModal';
 import FastFloatModal from '../../components/workflows/FastFloatModal';
 import html2pdf from 'html2pdf.js';
 import { buildRFQMailtoUrl, buildRFQWhatsAppUrl, buildQuotationMailtoUrl, openEmailUrl } from '../../lib/enquiryEmailService';
-import { listFolderContent, deleteFile, getOrCreateFolder, uploadFileToDrive } from '../../lib/driveService';
+import { listFolderContent, deleteFile, getOrCreateFolder, uploadFileToDrive, provisionEnquiryFolderStructure } from '../../lib/driveService';
 import { getStoredToken } from '../../lib/googleAuthService';
 
 import { useEnquiry } from '../../hooks/useEnquiry';
@@ -399,10 +399,14 @@ export default function EnquiryDetails() {
             const folderTitle = suffix ? `${enq_no} - ${partner} - ${suffix}` : `${enq_no} - ${partner}`;
             const cleanTitle = folderTitle.replace(/[/\\?%*:|"<>]/g, '-');
 
-            const folderId = await provisionFullProjectStructure(token, celronRootId, year, cleanTitle);
+            const result = await provisionEnquiryFolderStructure(token, celronRootId, year, cleanTitle);
+            const folderId = result?.enqFolderId;
             if (folderId) {
-                await updateEnquiry(id, { gdrive_folder_id: folderId });
-                setEnquiry(prev => ({ ...prev, gdrive_folder_id: folderId }));
+                await updateEnquiry(id, { 
+                    gdrive_folder_id: folderId,
+                    gdrive_file_link: result.webViewLink
+                });
+                setEnquiry(prev => ({ ...prev, gdrive_folder_id: folderId, gdrive_file_link: result.webViewLink }));
                 setExplorerFolderId(folderId);
                 setExplorerPath([{ id: folderId, name: enquiry.enquiry_no || 'Enquiry Root' }]);
                 toast.success("Google Drive folder provisioned!");
@@ -471,7 +475,8 @@ export default function EnquiryDetails() {
             supplierContacts,
             gdriveLink: enquiry.gdrive_file_link || 'https://drive.google.com/drive/folders/1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij?usp=sharing',
             enquiryNo: enquiry?.enquiry_no,
-            enquiryId: id
+            enquiryId: id,
+            enquiryFolderId: enquiry.gdrive_folder_id
         });
     };
 
@@ -700,7 +705,7 @@ export default function EnquiryDetails() {
             // 1. Provision Folder Structure if needed
             if (accessToken && isValid && !projectFolderId) {
                 try {
-                    const { provisionFullProjectStructure, getOrCreateFolder } = await import('../../lib/driveService');
+                    const { provisionEnquiryFolderStructure, getOrCreateFolder } = await import('../../lib/driveService');
                     const settings = await getDocumentSettings();
                     let celronRootId = settings?.gdrive_celron_root_id;
                     if (!celronRootId) {
@@ -728,7 +733,9 @@ export default function EnquiryDetails() {
                         const folderTitle = suffix ? `${enq_no} - ${partner} - ${suffix}` : `${enq_no} - ${partner}`;
                         const cleanTitle = folderTitle.replace(/[/\\?%*:|"<>]/g, '-');
                         
-                        projectFolderId = await provisionFullProjectStructure(accessToken, topRootId, year, cleanTitle);
+                        const result = await provisionEnquiryFolderStructure(accessToken, topRootId, year, cleanTitle);
+                        projectFolderId = result?.enqFolderId;
+                        gdriveFileLink = result?.webViewLink;
                     }
                 } catch (e) { console.error("Folder creation failed", e); }
             }

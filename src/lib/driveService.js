@@ -350,17 +350,11 @@ export const provisionFullProjectStructure = async (accessToken, celronRootId, y
  *   Subfolders: Enquiry_Detail | Quote2Cust | Order2Supplier | Photos & Docs
  */
 export const provisionEnquiryFolderStructure = async (accessToken, celronRootId, year, enqFolderName, forceCreate = false) => {
-    // 1. Navigate to 01. TIME_BASED
-    const timeBasedId = await getOrCreateFolder(accessToken, '01. TIME_BASED', celronRootId);
-
-    // 2. Navigate to Year
-    const yearId = await getOrCreateFolder(accessToken, year, timeBasedId);
-
-    // 3. Navigate to ENQUIRIES
-    const enquiriesRootId = await getOrCreateFolder(accessToken, 'ENQUIRIES', yearId);
-
-    // 4. Create/Find specific Enquiry folder (search by ENQ prefix to avoid duplicates)
-    const enqNoPrefix = enqFolderName.split(' ')[0]; // e.g., 'ENQ-CEL-2606-1000'
+    // Hardcoded Enquiries Folder ID
+    const enquiriesRootId = '1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij';
+    
+    // Create/Find specific Enquiry folder (search by prefix/exact name inside enquiriesRootId)
+    const enqNoPrefix = enqFolderName.split(' ')[0]; 
     let enqFolderId;
 
     if (!forceCreate) {
@@ -381,42 +375,19 @@ export const provisionEnquiryFolderStructure = async (accessToken, celronRootId,
     }
 
     if (!enqFolderId) {
-        if (forceCreate) {
-            const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-                method: 'POST',
-                headers: {
-                    'Authorization': 'Bearer ' + accessToken,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    name: enqFolderName,
-                    mimeType: 'application/vnd.google-apps.folder',
-                    parents: [enquiriesRootId]
-                })
-            });
-            if (!createRes.ok) {
-                const err = await createRes.json().catch(() => ({}));
-                throw new Error(err.error?.message || `Failed to create enquiry folder: ${enqFolderName}`);
-            }
-            const folder = await createRes.json();
-            enqFolderId = folder.id;
-        } else {
-            enqFolderId = await getOrCreateFolder(accessToken, enqFolderName, enquiriesRootId);
-        }
+        enqFolderId = await getOrCreateFolder(accessToken, enqFolderName, enquiriesRootId);
     }
 
-    // 5. Provision sub-folders inside the Enquiry folder
-    const enquiryDetailId = await getOrCreateFolder(accessToken, 'Enquiry_Detail', enqFolderId);
-    const quote2CustId = await getOrCreateFolder(accessToken, 'Quote2Cust', enqFolderId);
-    const order2SupplierId = await getOrCreateFolder(accessToken, 'Order2Supplier', enqFolderId);
-    const photoDocsId = await getOrCreateFolder(accessToken, 'Photos & Docs', enqFolderId);
+    // Provision the 3 default subfolders inside the Enquiry folder
+    const supplierEnquiryUploadsId = await getOrCreateFolder(accessToken, 'Supplier Enquiry uploads', enqFolderId);
+    const photosMediaId = await getOrCreateFolder(accessToken, 'Photos & Media', enqFolderId);
+    const quotationsReceivedId = await getOrCreateFolder(accessToken, 'Quotations received', enqFolderId);
 
     return {
         enqFolderId,
-        enquiryDetailId,
-        quote2CustId,
-        order2SupplierId,
-        photoDocsId,
+        supplierEnquiryUploadsId,
+        photosMediaId,
+        quotationsReceivedId,
         webViewLink: `https://drive.google.com/drive/folders/${enqFolderId}`
     };
 };

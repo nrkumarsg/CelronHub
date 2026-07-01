@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Send, Mail, Search, Paperclip, Trash2, Plus, Eye, Edit2, Upload, AlertCircle, CheckCircle2, FolderOpen } from 'lucide-react';
+import { X, Send, Mail, Search, Paperclip, Trash2, Plus, Eye, Edit2, Upload, AlertCircle, CheckCircle2, FolderOpen, RefreshCw, FileText, ImageIcon, Loader2, FileCheck } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { getStoredToken } from '../../lib/googleAuthService';
+import { listFolderContent, getOrCreateFolder } from '../../lib/driveService';
 import toast from 'react-hot-toast';
 
 export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
@@ -26,12 +28,110 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
     const [customOfficeContacts, setCustomOfficeContacts] = useState([]);
     const [saving, setSaving] = useState(false);
 
+    // Google Drive attachment integration states
+    const [loadingDriveFiles, setLoadingDriveFiles] = useState(false);
+    const [driveConnected, setDriveConnected] = useState(false);
+    const [activeAttachmentTab, setActiveAttachmentTab] = useState('supplierEnquiry');
+    
+    // Files inside the subfolders
+    const [supplierEnquiryFiles, setSupplierEnquiryFiles] = useState([]);
+    const [photosMediaFiles, setPhotosMediaFiles] = useState([]);
+    const [quotationsReceivedFiles, setQuotationsReceivedFiles] = useState([]);
+
     // Hardcoded office contact defaults
     const defaultOfficeContacts = [
         { name: 'Our Office', email: 'accounts@celron.net', post: 'Billing / Finance' },
         { name: 'N.R.KUMAR', email: 'kumar@celron.net', post: 'Director', handphone: '+65 97685891' },
         { name: 'Sales Office', email: 'sales@celron.net', post: 'General Sales' }
     ];
+
+    // Fetch subfolder files from Google Drive
+    const fetchDriveFiles = async () => {
+        if (!data.enquiryFolderId) {
+            console.log('[EmailPreviewModal] No enquiryFolderId provided.');
+            return;
+        }
+
+        const token = getStoredToken();
+        if (!token) {
+            setDriveConnected(false);
+            return;
+        }
+
+        setDriveConnected(true);
+        setLoadingDriveFiles(true);
+        try {
+            console.log('[EmailPreviewModal] Fetching files from subfolders in parent folder:', data.enquiryFolderId);
+
+            // 1. Get/create subfolder IDs inside data.enquiryFolderId
+            const supplierUploadsId = await getOrCreateFolder(token, 'Supplier Enquiry uploads', data.enquiryFolderId);
+            const photosId = await getOrCreateFolder(token, 'Photos & Media', data.enquiryFolderId);
+            const quotationsId = await getOrCreateFolder(token, 'Quotations received', data.enquiryFolderId);
+
+            // 2. Fetch file contents for each subfolder
+            const supplierFiles = await listFolderContent(token, supplierUploadsId);
+            const photoFiles = await listFolderContent(token, photosId);
+            const quoteFiles = await listFolderContent(token, quotationsId);
+
+            setSupplierEnquiryFiles(supplierFiles || []);
+            setPhotosMediaFiles(photoFiles || []);
+            setQuotationsReceivedFiles(quoteFiles || []);
+        } catch (err) {
+            console.error('[EmailPreviewModal] Error fetching Google Drive attachments:', err);
+            toast.error('Failed to sync Google Drive files.');
+        } finally {
+            setLoadingDriveFiles(false);
+        }
+    };
+
+    // Trigger Drive files fetch on load
+    useEffect(() => {
+        if (isOpen && data.enquiryFolderId) {
+            fetchDriveFiles();
+        }
+    }, [isOpen, data.enquiryFolderId]);
+
+    // Download Google Drive file content and attach to preview state
+    const attachDriveFile = async (fileInfo) => {
+        if (saving) return;
+        setSaving(true);
+        try {
+            const token = getStoredToken();
+            if (!token) throw new Error('Google Drive token expired or missing. Connect Drive first.');
+
+            console.log('[EmailPreviewModal] Downloading file from GDrive:', fileInfo.name);
+            const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileInfo.id}?alt=media`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!response.ok) throw new Error('Failed to retrieve file content from Google Drive');
+            
+            const blob = await response.blob();
+            const file = new File([blob], fileInfo.name, { type: fileInfo.mimeType || 'application/octet-stream' });
+            
+            setAttachments(prev => [...prev, file]);
+            toast.success(`Attached ${fileInfo.name}`);
+        } catch (err) {
+            console.error('[EmailPreviewModal] GDrive attachment failed:', err);
+            toast.error('Failed to attach Google Drive file: ' + err.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    // File icons helper
+    const getFileIcon = (mimeType) => {
+        if (mimeType?.startsWith('image/')) {
+            return <ImageIcon size={16} color="#3b82f6" />;
+        }
+        if (mimeType?.includes('pdf')) {
+            return <FileText size={16} color="#ef4444" />;
+        }
+        if (mimeType?.includes('spreadsheet') || mimeType?.includes('excel') || mimeType?.includes('csv')) {
+            return <FileText size={16} color="#10b981" />;
+        }
+        return <Paperclip size={16} color="#64748b" />;
+    };
 
     // Build contacts for selected suppliers
     const getCompanyContacts = () => {
@@ -363,22 +463,140 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                         />
                     </div>
 
-                    {/* Attachments Section */}
+                    {/* Google Drive Attachments Section */}
                     <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', background: '#fff', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        
+                        {/* Header area */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <Paperclip size={18} color="#6366f1" />
                                 <span style={{ fontSize: '14px', fontWeight: 700, color: '#1e293b' }}>Attach Files</span>
+                                {loadingDriveFiles && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#64748b' }}>
+                                        <Loader2 size={12} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
+                                        <span>Syncing with GDrive...</span>
+                                    </div>
+                                )}
                             </div>
-                            <button
-                                type="button"
-                                onClick={() => window.open(data.gdriveLink || 'https://drive.google.com/drive/folders/1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij?usp=sharing', '_blank')}
-                                style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
-                            >
-                                <FolderOpen size={12} />
-                                Open Enquiry Drive
-                            </button>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => window.open(data.gdriveLink || 'https://drive.google.com/drive/folders/1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij?usp=sharing', '_blank')}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
+                                >
+                                    <FolderOpen size={12} />
+                                    Open Enquiry Drive
+                                </button>
+                                {driveConnected && (
+                                    <button
+                                        type="button"
+                                        onClick={fetchDriveFiles}
+                                        disabled={loadingDriveFiles}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
+                                    >
+                                        <RefreshCw size={12} className={loadingDriveFiles ? 'animate-spin' : ''} style={{ animation: loadingDriveFiles ? 'spin 1s linear infinite' : 'none' }} />
+                                        Refresh Drive
+                                    </button>
+                                )}
+                            </div>
                         </div>
+
+                        {/* Google Drive Subfolder Tabs */}
+                        {driveConnected && data.enquiryFolderId && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', borderBottom: '1px solid #cbd5e1', paddingBottom: '1px' }}>
+                                    {[
+                                        { id: 'supplierEnquiry', name: 'Supplier Enquiry uploads', count: supplierEnquiryFiles.length },
+                                        { id: 'photosMedia', name: 'Photos & Media', count: photosMediaFiles.length },
+                                        { id: 'quotationsReceived', name: 'Quotations received', count: quotationsReceivedFiles.length }
+                                    ].map(tab => {
+                                        const isActive = activeAttachmentTab === tab.id;
+                                        return (
+                                            <button
+                                                key={tab.id}
+                                                type="button"
+                                                onClick={() => setActiveAttachmentTab(tab.id)}
+                                                style={{
+                                                    padding: '8px 12px',
+                                                    fontSize: '12px',
+                                                    fontWeight: 600,
+                                                    border: 'none',
+                                                    background: isActive ? '#f1f5f9' : 'transparent',
+                                                    color: isActive ? '#6366f1' : '#64748b',
+                                                    borderBottom: isActive ? '2px solid #6366f1' : '2px solid transparent',
+                                                    borderRadius: '6px 6px 0 0',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '6px',
+                                                    whiteSpace: 'nowrap'
+                                                }}
+                                            >
+                                                {tab.name}
+                                                <span style={{ fontSize: '10px', background: isActive ? '#eef2ff' : '#f1f5f9', color: isActive ? '#6366f1' : '#64748b', padding: '1px 6px', borderRadius: '10px' }}>
+                                                    {tab.count}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Files in selected tab */}
+                                <div style={{ minHeight: '100px', maxHeight: '160px', overflowY: 'auto', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '8px' }}>
+                                    {loadingDriveFiles ? (
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '80px', gap: '8px', color: '#64748b' }}>
+                                            <Loader2 size={20} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
+                                            <span style={{ fontSize: '11px' }}>Loading files from Google Drive...</span>
+                                        </div>
+                                    ) : (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            {/* Get files based on active tab */}
+                                            {(() => {
+                                                const currentFiles = activeAttachmentTab === 'supplierEnquiry' ? supplierEnquiryFiles 
+                                                                  : activeAttachmentTab === 'photosMedia' ? photosMediaFiles 
+                                                                  : quotationsReceivedFiles;
+
+                                                if (currentFiles.length === 0) {
+                                                    return (
+                                                        <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '11px' }}>
+                                                            No files found in this folder.
+                                                        </div>
+                                                    );
+                                                }
+
+                                                return currentFiles.map(file => {
+                                                    const isAttached = attachments.some(a => a.name === file.name);
+                                                    return (
+                                                        <div key={file.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#fff', border: '1px solid #f1f5f9', borderRadius: '6px' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', flex: 1 }}>
+                                                                {getFileIcon(file.mimeType)}
+                                                                <span style={{ fontSize: '12px', fontWeight: 500, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
+                                                                {file.size && <span style={{ fontSize: '10px', color: '#94a3b8' }}>({Math.round(parseInt(file.size) / 1024)} KB)</span>}
+                                                            </div>
+                                                            {isAttached ? (
+                                                                <span style={{ fontSize: '11px', fontWeight: 600, color: '#10b981', display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 8px' }}>
+                                                                    <FileCheck size={13} /> Attached
+                                                                </span>
+                                                            ) : (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => attachDriveFile(file)}
+                                                                    disabled={saving}
+                                                                    style={{ padding: '3px 8px', fontSize: '11px', fontWeight: 600, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', borderRadius: '4px', cursor: 'pointer' }}
+                                                                >
+                                                                    + Attach
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                });
+                                            })()}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Local File Upload button */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
