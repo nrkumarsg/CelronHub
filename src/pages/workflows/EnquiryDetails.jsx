@@ -79,7 +79,7 @@ export default function EnquiryDetails() {
     } = useSupplierActions(profile?.company_id, id, enquiry);
 
     const [showNewSupplierForm, setShowNewSupplierForm] = useState(false);
-    const [searchParams] = useSearchParams();
+    const [searchParams, setSearchParams] = useSearchParams();
 
     // Local UI State
     const [settings, setSettings] = useState(null);
@@ -442,9 +442,77 @@ export default function EnquiryDetails() {
         return <File size={24} color="#64748b" />;
     };
 
-    const handlePrepareFloat = () => {
+    const handlePrepareFloat = async () => {
         if (selectedSuppliers.length === 0) return alert("Select at least one supplier.");
         if (selectedItems.length === 0) return alert("Add at least one item from the catalog.");
+
+        if (id === 'new') {
+            const loadToast = toast.loading('Saving enquiry and generating Enquiry Number...');
+            try {
+                const { createEnquiry, generateEnquiryNo } = await import('../../lib/workflowService');
+                const enq_no = await generateEnquiryNo(profile.company_id);
+                
+                // Construct GDrive folder for new enquiry
+                let gdriveFileLink = null;
+                let projectFolderId = null;
+                
+                const token = getStoredToken();
+                const settings = await getDocumentSettings();
+                let celronRootId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
+                if (token && celronRootId) {
+                    if (celronRootId.includes('drive.google.com')) {
+                        const match = celronRootId.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+                        if (match) celronRootId = match[1];
+                    }
+                    const year = `YEAR${new Date().getFullYear()}`;
+                    const partner = allPartners.find(c => c.id === enquiry.customer_id)?.name || 'Unknown Partner';
+                    const folderTitle = `${enq_no} - ${partner}`;
+                    const cleanTitle = folderTitle.replace(/[/\\?%*:|"<>]/g, '-');
+                    
+                    try {
+                        const result = await provisionEnquiryFolderStructure(token, celronRootId, year, cleanTitle);
+                        projectFolderId = result?.enqFolderId;
+                        gdriveFileLink = result?.webViewLink;
+                    } catch (driveErr) {
+                        console.error('GDrive auto provisioning failed:', driveErr);
+                    }
+                }
+                
+                const payload = {
+                    ...enquiry,
+                    company_id: profile.company_id,
+                    user_id: profile.id,
+                    catalog_items: selectedItems,
+                    enquiry_no: enq_no,
+                    gdrive_folder_id: projectFolderId,
+                    gdrive_file_link: gdriveFileLink
+                };
+
+                const uuidFields = ['customer_id', 'contact_id', 'vessel_id', 'work_location_id'];
+                uuidFields.forEach(field => {
+                    if (!payload[field] || payload[field] === '') {
+                        payload[field] = null;
+                    }
+                });
+
+                const invalidColumns = ['vessels', 'work_locations', 'customer', 'contact', 'vessel_name', 'location_name'];
+                invalidColumns.forEach(p => delete payload[p]);
+
+                const { data, error } = await createEnquiry(payload);
+                if (error) throw error;
+                
+                toast.dismiss(loadToast);
+                toast.success(`Enquiry ${enq_no} saved!`);
+                
+                // Redirect to the new enquiry details page with float flag
+                navigate(`/workflows/enquiry/${data.id}?float=1`, { replace: true });
+            } catch (err) {
+                toast.dismiss(loadToast);
+                console.error('Auto save for RFQ Float failed:', err);
+                toast.error('Failed to save enquiry: ' + err.message);
+            }
+            return;
+        }
 
         const toVal = selectedSuppliers.map(s => {
             const override = recipientOverrides[s.id];
@@ -521,6 +589,15 @@ export default function EnquiryDetails() {
             refreshEnquiry();
         }
     };
+
+    useEffect(() => {
+        if (enquiry && enquiry.enquiry_no && enquiry.enquiry_no !== 'Draft' && searchParams.get('float') === '1') {
+            const nextParams = new URLSearchParams(searchParams);
+            nextParams.delete('float');
+            setSearchParams(nextParams, { replace: true });
+            handlePrepareFloat();
+        }
+    }, [enquiry, searchParams]);
 
     const updateDriveLink = async () => {
         try {
