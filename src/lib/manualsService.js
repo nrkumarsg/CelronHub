@@ -7,11 +7,16 @@ export const getManuals = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return { data: [], error: 'Not authenticated' };
 
-    const { data, error } = await supabase
-        .from('manuals_library')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+    const companyId = user.user_metadata?.company_id;
+    let query = supabase.from('manuals_library').select('*');
+
+    if (companyId) {
+        query = query.eq('company_id', companyId);
+    } else {
+        query = query.eq('user_id', user.id);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
     return { data, error };
 };
 
@@ -47,7 +52,10 @@ export const saveManual = async (manual) => {
             is_duplicate: row.is_duplicate,
             tags: row.tags,
             file_size: row.file_size,
-            content_extracted: row.content_extracted
+            content_extracted: row.content_extracted,
+            system_id: row.system_id,
+            maker_id: row.maker_id,
+            model_id: row.model_id
         });
 
         const fallbackRow = {
@@ -73,6 +81,7 @@ export const saveManual = async (manual) => {
 
         return fallbackRes;
     }
+
 
     return { data, error };
 };

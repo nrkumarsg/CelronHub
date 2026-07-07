@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
     Plus, Search, Download, Printer, Upload, Filter, ChevronLeft, ChevronRight,
     Package, Wrench, QrCode, ArrowUpDown, Layers, Settings, Folder, Tag,
-    ChevronDown, BookOpen, Boxes, FileCheck, Eye, Edit2, Database, Trash2, Building2, List, Grid, RefreshCw, AlertCircle, X
+    ChevronDown, BookOpen, Boxes, FileCheck, Eye, Edit2, Database, Trash2, Building2, List, Grid, RefreshCw, AlertCircle, X, Globe
 } from 'lucide-react';
 import ScannerModal from '../components/ScannerModal';
 import { getCatalogItems, getAllCatalogItemsForExport, createCatalogItem, deleteCatalogItem } from '../lib/catalogService';
@@ -43,6 +43,42 @@ const CatalogDirectory = () => {
     const [warehouses, setWarehouses] = useState([]);
     const [units, setUnits] = useState([]);
     const [allSystemsList, setAllSystemsList] = useState([]);
+    
+    // Global Parts & Specs search states
+    const [globalSearchTerm, setGlobalSearchTerm] = useState('');
+    const [globalSearchTarget, setGlobalSearchTarget] = useState('google');
+
+    const handleGlobalSearch = () => {
+        if (!globalSearchTerm.trim()) {
+            alert('Please enter a search query.');
+            return;
+        }
+        
+        let url = '';
+        const query = encodeURIComponent(globalSearchTerm.trim());
+        
+        switch (globalSearchTarget) {
+            case 'google':
+                url = `https://www.google.com/search?q=${query}`;
+                break;
+            case 'images':
+                url = `https://www.google.com/search?tbm=isch&q=${query}`;
+                break;
+            case 'pdf':
+                url = `https://www.google.com/search?q=${query}+filetype%3Apdf`;
+                break;
+            case 'shipserv':
+                url = `https://www.shipserv.com/search?q=${query}`;
+                break;
+            case 'sinor':
+                url = `https://www.google.com/search?q=${query}+site%3Asinormarine.com`;
+                break;
+            default:
+                url = `https://www.google.com/search?q=${query}`;
+        }
+        
+        window.open(url, '_blank');
+    };
 
     // 1. Spare Parts Tab States
     const [parts, setParts] = useState([]);
@@ -412,6 +448,89 @@ const CatalogDirectory = () => {
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#1a3c63', borderColor: '#1a3c63', fontWeight: 600 }}
                     >
                         <Plus size={18} /> New Spare Part
+                    </button>
+                </div>
+            </div>
+
+            {/* Global Parts Finder Banner */}
+            <div style={{
+                background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+                borderRadius: '16px',
+                padding: '24px',
+                color: '#fff',
+                marginBottom: '32px',
+                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
+                border: '1px solid rgba(255,255,255,0.05)'
+            }}>
+                <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Globe size={18} color="#38bdf8" /> Global Marine Parts &amp; Intelligence Search
+                </h3>
+                <p style={{ margin: '0 0 16px 0', fontSize: '0.825rem', color: '#94a3b8' }}>
+                    Search across external databases, suppliers, and Google to fetch datasheets, diagrams, and manufacturer specs.
+                </p>
+                
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: '240px', position: 'relative' }}>
+                        <input 
+                            type="text" 
+                            placeholder="Enter model, part name, or brand (e.g. Yanmar 6EY18AL piston)..."
+                            value={globalSearchTerm}
+                            onChange={(e) => setGlobalSearchTerm(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleGlobalSearch(); }}
+                            style={{
+                                width: '100%',
+                                padding: '12px 16px',
+                                borderRadius: '10px',
+                                border: '1px solid rgba(255,255,255,0.1)',
+                                background: 'rgba(255,255,255,0.05)',
+                                color: '#fff',
+                                outline: 'none',
+                                fontSize: '0.9rem',
+                                transition: 'all 0.2s',
+                                boxSizing: 'border-box'
+                            }}
+                        />
+                    </div>
+                    
+                    <select 
+                        value={globalSearchTarget}
+                        onChange={(e) => setGlobalSearchTarget(e.target.value)}
+                        style={{
+                            padding: '12px 16px',
+                            borderRadius: '10px',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            background: '#1e293b',
+                            color: '#fff',
+                            fontSize: '0.9rem',
+                            cursor: 'pointer',
+                            outline: 'none'
+                        }}
+                    >
+                        <option value="google">Google Web</option>
+                        <option value="images">Google Images</option>
+                        <option value="pdf">PDF Manuals Only</option>
+                        <option value="shipserv">ShipServ Directory</option>
+                        <option value="sinor">Sinor Marine</option>
+                    </select>
+                    
+                    <button 
+                        onClick={handleGlobalSearch}
+                        className="btn btn-primary"
+                        style={{
+                            padding: '12px 24px',
+                            borderRadius: '10px',
+                            background: '#38bdf8',
+                            color: '#0f172a',
+                            fontWeight: 700,
+                            border: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        <Search size={16} /> Search Engine
                     </button>
                 </div>
             </div>

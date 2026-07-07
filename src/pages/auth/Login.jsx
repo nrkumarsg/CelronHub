@@ -8,6 +8,11 @@ import { useEffect } from 'react';
 const Login = () => {
     const { signIn, signInWithGoogle } = useAuth();
     const navigate = useNavigate();
+    const isCatalogOnly = window.location.hostname.includes('celronpricescanner') || 
+                          window.location.hostname.includes('celronspares') || 
+                          (import.meta.env.VITE_CATALOG_ONLY === 'true' && 
+                           !window.location.hostname.includes('celronhub') && 
+                           !window.location.hostname.includes('celron-partners'));
     const [email, setEmail] = useState('nrkumarsg@gmail.com');
     const [password, setPassword] = useState('201436227C');
     const [showPassword, setShowPassword] = useState(false);
@@ -41,7 +46,7 @@ const Login = () => {
         setLoading(false);
     };
 
-    if (import.meta.env.VITE_CATALOG_ONLY === 'true') {
+    if (isCatalogOnly) {
         return (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-primary)' }}>
                 <div className="glass-panel" style={{ width: '100%', maxWidth: '400px', margin: '20px' }}>

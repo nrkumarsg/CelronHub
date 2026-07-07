@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 
 import { getPartners, getDocumentSettings, saveVessel, saveWorkLocation } from '../../lib/store';
 import { getCatalogItems, createCatalogItem, updateCatalogItem } from '../../lib/catalogService';
-import { ArrowLeft, ArrowRight, Send, Ship, Mail, Phone, ExternalLink, Database, FolderPlus, ArrowRightLeft, FileText, CheckCircle2, Clock, DollarSign, BadgeDollarSign, ShieldCheck, Plus, Search, Trash, Save, Edit, AlertTriangle, Users, Eye, MailCheck, Download, Calendar, ChevronDown, PlusCircle, MapPin, MessageSquare, Sparkles, Building2, Upload, ImageIcon, Copy, Loader2, Hash, X, Crop as CropIcon, QrCode, ClipboardList, Inbox, Package, FolderOpen, Folder, File, RefreshCw, Smartphone } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Send, Ship, Mail, Phone, ExternalLink, Database, FolderPlus, ArrowRightLeft, FileText, CheckCircle2, Clock, DollarSign, BadgeDollarSign, ShieldCheck, Plus, Search, Trash, Save, Edit, AlertTriangle, Users, Eye, MailCheck, Download, Calendar, ChevronDown, PlusCircle, MapPin, MessageSquare, Sparkles, Building2, Upload, ImageIcon, Copy, Loader2, Hash, X, Crop as CropIcon, QrCode, ClipboardList, Inbox, Package, FolderOpen, Folder, File, RefreshCw, Smartphone, Info } from 'lucide-react';
 import UploadOverlay from '../../components/common/UploadOverlay';
 import SafeDriveLink from '../../components/common/SafeDriveLink';
 import EmailPreviewModal from '../../components/workflows/EmailPreviewModal';
@@ -44,8 +44,13 @@ export default function EnquiryDetails() {
     const [editingContactId, setEditingContactId] = useState(null);
     const [addingContactToPartnerId, setAddingContactToPartnerId] = useState(null);
     const [editForm, setEditForm] = useState({});
-    const [supplierModalOpen, setSupplierModalOpen] = useState(false);
-    const [editingSupplier, setEditingSupplier] = useState(null);
+    const [partnerModalConfig, setPartnerModalConfig] = useState({
+        isOpen: false,
+        title: 'Add New Supplier',
+        initialPartner: null,
+        initialContact: null,
+        mode: 'supplier',
+    });
 
     // Gallery / Photos states
     const [galleryFiles, setGalleryFiles] = useState([]);
@@ -123,6 +128,9 @@ export default function EnquiryDetails() {
     const [quoteLogForm, setQuoteLogForm] = useState({ supplier_name: '', unit_price: '', currency: 'SGD', lead_time: '', remarks: '', quote_date: new Date().toISOString().split('T')[0] });
     const [isSavingQuoteLog, setIsSavingQuoteLog] = useState(false);
     const [localQuoteLogs, setLocalQuoteLogs] = useState([]);
+
+    // ─── QR Code Mobile Upload Gateway ─────────────────────────────────────────
+    const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
 
     // --- Tabs and Explorer States ---
     const [activeTab, setActiveTab] = useState('items');
@@ -719,11 +727,24 @@ export default function EnquiryDetails() {
 
     // ─── QR Code ─────────────────────────────────────────────────────────────
     const handleShowQr = () => {
-        const folderId = enquiry?.gdrive_folder_id;
-        if (!folderId) { toast('No Drive folder linked to this enquiry yet. Save first.', { icon: '💡' }); return; }
-        const driveLink = `https://drive.google.com/drive/folders/${folderId}`;
-        setQrUrl(`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(driveLink)}`);
-        setShowQrPanel(true);
+        const rootId = enquiry?.gdrive_folder_id;
+        if (!rootId) { toast('No Drive folder linked to this enquiry yet. Save first.', { icon: '💡' }); return; }
+        
+        if (galleryFolderId) {
+            setQrModal({ isOpen: true, folderId: galleryFolderId, folderName: 'Enquiry Photos & Gallery' });
+            return;
+        }
+
+        setQrModal({ isOpen: true, folderId: null, folderName: 'Enquiry Photos & Gallery' });
+        
+        const token = getStoredToken();
+        getOrCreateFolder(token, 'Photos & Gallery', rootId).then(mediaFolderId => {
+            setQrModal({ isOpen: true, folderId: mediaFolderId, folderName: 'Enquiry Photos & Gallery' });
+        }).catch(err => {
+            console.error("Failed to get photos folder:", err);
+            toast.error("Failed to access enquiry folder.");
+            setQrModal({ isOpen: false, folderId: null, folderName: '' });
+        });
     };
 
     // ─── Log Supplier Quote ───────────────────────────────────────────────────
@@ -965,10 +986,23 @@ export default function EnquiryDetails() {
                                     className="form-select"
                                     required
                                     value={enquiry.customer_id || ''}
-                                    onChange={(e) => handleUpdateHeader({ customer_id: e.target.value, contact_id: '' })}
+                                    onChange={(e) => {
+                                        if (e.target.value === 'ADD_NEW') {
+                                            setPartnerModalConfig({
+                                                isOpen: true,
+                                                title: 'Add New Partner / Supplier',
+                                                initialPartner: { types: ['Customer', 'Supplier'] },
+                                                initialContact: null,
+                                                mode: 'customer'
+                                            });
+                                        } else {
+                                            handleUpdateHeader({ customer_id: e.target.value, contact_id: '' });
+                                        }
+                                    }}
                                     style={{ width: '100%', borderRadius: '8px', padding: '10px 12px 10px 36px', appearance: 'none', background: '#f8fafc', border: '1px solid #e2e8f0', fontWeight: 600 }}
                                 >
                                     <option value="">Select a customer...</option>
+                                    <option value="ADD_NEW" style={{ fontWeight: 700, color: 'var(--accent)' }}>+ Add Supplier</option>
                                     {allPartners.filter(p => Array.isArray(p.types) && p.types.includes('Customer')).map(c => (
                                         <option key={c.id} value={c.id}>{c.name}</option>
                                     ))}
@@ -982,11 +1016,27 @@ export default function EnquiryDetails() {
                                 <select 
                                     className="form-select"
                                     value={enquiry.contact_id || ''}
-                                    onChange={(e) => handleUpdateHeader({ contact_id: e.target.value })}
+                                    onChange={(e) => {
+                                        if (e.target.value === 'ADD_NEW') {
+                                            const currentCustomer = allPartners.find(p => p.id === enquiry.customer_id);
+                                            setPartnerModalConfig({
+                                                isOpen: true,
+                                                title: currentCustomer ? `Add Contact to ${currentCustomer.name}` : 'Add New Contact',
+                                                initialPartner: currentCustomer || { types: ['Customer'] },
+                                                initialContact: { name: '', email: '', handphone: '', type: 'Main', department: '', post: '' },
+                                                mode: 'contact'
+                                            });
+                                        } else {
+                                            handleUpdateHeader({ contact_id: e.target.value });
+                                        }
+                                    }}
                                     style={{ width: '100%', borderRadius: '8px', padding: '10px 12px 10px 36px', appearance: 'none', background: '#f8fafc', border: '1px solid #e2e8f0' }}
                                     disabled={!enquiry.customer_id}
                                 >
                                     <option value="">{enquiry.customer_id ? 'Select a contact...' : 'Select a customer first...'}</option>
+                                    {enquiry.customer_id && (
+                                        <option value="ADD_NEW" style={{ fontWeight: 700, color: 'var(--accent)' }}>+ Add Contact</option>
+                                    )}
                                     {(allPartners.find(p => p.id === enquiry.customer_id)?.contacts || []).map(cnt => (
                                         <option key={cnt.id} value={cnt.id}>{cnt.name}</option>
                                     ))}
@@ -1384,7 +1434,15 @@ export default function EnquiryDetails() {
                                 <span style={{ fontSize: '0.75rem', color: '#64748b', background: '#f1f5f9', padding: '2px 8px', borderRadius: '10px' }}>Supplier Management</span>
                             </div>
                             <button 
-                                onClick={() => { setEditingSupplier(null); setSupplierModalOpen(true); }}
+                                onClick={() => {
+                                    setPartnerModalConfig({
+                                        isOpen: true,
+                                        title: 'Add New Supplier',
+                                        initialPartner: { types: ['Supplier'] },
+                                        initialContact: null,
+                                        mode: 'supplier'
+                                    });
+                                }}
                                 className="btn-vibrant"
                                 style={{ 
                                     padding: '6px 12px', 
@@ -1436,7 +1494,20 @@ export default function EnquiryDetails() {
                                                 <span style={{ fontSize: '0.9rem', fontWeight: 600, color: isSelected ? '#4f46e5' : '#1e293b' }}>{supplier.name}</span>
                                             </label>
                                             <div style={{ display: 'flex', gap: '8px' }}>
-                                                <button onClick={() => { setEditingSupplier(supplier); setSupplierModalOpen(true); }} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}><Edit size={14} /></button>
+                                                <button 
+                                                    onClick={() => {
+                                                        setPartnerModalConfig({
+                                                            isOpen: true,
+                                                            title: 'Edit Supplier Details',
+                                                            initialPartner: supplier,
+                                                            initialContact: null,
+                                                            mode: 'supplier'
+                                                        });
+                                                    }}
+                                                    style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+                                                >
+                                                    <Edit size={14} />
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -2260,33 +2331,62 @@ export default function EnquiryDetails() {
                     }}
                 />
 
-                {/* Supplier Management Modal (Image 2 style) */}
+                {/* Supplier / Customer / Contact Management Modal (Image 2 style) */}
                 <Modal 
-                    isOpen={supplierModalOpen} 
-                    onClose={() => setSupplierModalOpen(false)}
-                    title={editingSupplier ? "Edit Supplier Details" : "Add New Supplier"}
+                    isOpen={partnerModalConfig.isOpen} 
+                    onClose={() => setPartnerModalConfig(prev => ({ ...prev, isOpen: false }))}
+                    title={partnerModalConfig.title}
                     icon={Users}
                     size="xl"
                 >
                     <QuickPartnerContactDualAdd 
                         company_id={profile.company_id}
-                        initialPartner={editingSupplier || { types: ['Supplier'] }}
-                        partners={suppliers}
+                        initialPartner={partnerModalConfig.initialPartner}
+                        initialContact={partnerModalConfig.initialContact}
+                        partners={partnerModalConfig.mode === 'supplier' ? suppliers : allPartners}
                         onSuccess={async ({ partner, contact }) => {
+                            await fetchLookups();
                             await fetchSuppliers();
-                            setSupplierModalOpen(false);
+                            
+                            if (partnerModalConfig.mode === 'customer') {
+                                if (partner) {
+                                    handleUpdateHeader({ 
+                                        customer_id: partner.id, 
+                                        contact_id: contact ? contact.id : '' 
+                                    });
+                                }
+                            } else if (partnerModalConfig.mode === 'contact') {
+                                if (contact) {
+                                    handleUpdateHeader({ 
+                                        contact_id: contact.id 
+                                    });
+                                }
+                            }
+                            
+                            setPartnerModalConfig(prev => ({ ...prev, isOpen: false }));
                         }}
-                        onCancel={() => setSupplierModalOpen(false)}
-                        title={editingSupplier ? "Edit Supplier Details" : "Add New Supplier"}
-                        defaultType="Supplier"
+                        onCancel={() => setPartnerModalConfig(prev => ({ ...prev, isOpen: false }))}
+                        title={partnerModalConfig.title}
+                        defaultType={partnerModalConfig.mode === 'customer' ? 'Customer' : 'Supplier'}
                     />
                 </Modal>
 
-                {/* Premium AI Enquiry Document Parser Modal */}
                 <SmartEnquiryParserModal 
                     isOpen={showOCRModal}
                     onClose={() => setShowOCRModal(false)}
                     partners={allPartners}
+                    getFolderId={async () => {
+                        const token = getStoredToken();
+                        if (!token) {
+                            toast.error("Please connect Google Drive first.");
+                            return null;
+                        }
+                        const folderId = await ensureEnquiryFolder();
+                        if (!folderId) return null;
+                        const { getOrCreateFolder } = await import('../../lib/driveService');
+                        const mediaFolderId = await getOrCreateFolder(token, 'Photos & Gallery', folderId);
+                        return mediaFolderId;
+                    }}
                     onApply={({ header, items: scannedItems, file: uploadedFile }) => {
                         const headerUpdates = {};
                         if (header.customer_id) headerUpdates.customer_id = header.customer_id;
@@ -2460,6 +2560,61 @@ export default function EnquiryDetails() {
                     }
                 `}</style>
             </div>
+            {qrModal.isOpen && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 11000 }}>
+                    <div style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
+                        <button 
+                            onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+                            style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                            onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                            onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
+                        >
+                            <X size={24} />
+                        </button>
+
+                        <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justify: 'center', margin: '0 auto 16px' }}>
+                            <Smartphone size={24} />
+                        </div>
+
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Mobile Upload Gateway</h3>
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: '1.4' }}>
+                            Scan this QR code with your smartphone camera to upload files directly to your <strong>{qrModal.folderName}</strong> folder.
+                        </p>
+
+                        {!qrModal.folderId ? (
+                            <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                <Loader2 size={36} className="animate-spin text-primary" color="#8b5cf6" />
+                                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
+                            </div>
+                        ) : (
+                            <div>
+                                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block', marginBottom: '24px' }}>
+                                    <img 
+                                        src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
+                                            `${window.location.origin}/upload-media?folderId=${qrModal.folderId}&token=${localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent(qrModal.folderName)}`
+                                        )}`}
+                                        alt="Upload QR Code"
+                                        style={{ width: '200px', height: '200px', display: 'block' }}
+                                    />
+                                </div>
+
+                                <div style={{ fontSize: '0.8rem', color: '#94a3b8', background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+                                    <Info size={14} style={{ flexShrink: 0 }} />
+                                    <span>Session active. QR code is valid for temporary uploading.</span>
+                                </div>
+                            </div>
+                        )}
+
+                        <button 
+                            className="btn btn-primary" 
+                            style={{ width: '100%', marginTop: '24px', padding: '12px', borderRadius: '12px', fontWeight: 700, background: '#f43f5e', borderColor: '#f43f5e' }}
+                            onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+                        >
+                            Done
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

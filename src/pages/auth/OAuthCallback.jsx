@@ -78,7 +78,7 @@ export default function OAuthCallback() {
 
                     const baseState = state.split(':')[0];
 
-                    if (['contacts_sync','manual_upload','enquiry_form','catalog_photo_upload','calibration_lab','scanner_module','apk_management','drive_status_tray','drive_card_sync','drive_bill_sync'].includes(baseState)) {
+                    if (['contacts_sync','manual_upload','enquiry_form','catalog_photo_upload','catalog_spare_new','calibration_lab','scanner_module','apk_management','drive_status_tray','drive_card_sync','drive_bill_sync'].includes(baseState)) {
                         sessionStorage.setItem('google_contacts_token', accessToken);
                         sessionStorage.setItem('google_contacts_expires', new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString());
 
@@ -87,6 +87,7 @@ export default function OAuthCallback() {
                             contacts_sync: 'Google Contacts Connected!',
                             manual_upload: 'Google Drive Connected!',
                             catalog_photo_upload: 'Google Drive Connected! You can now upload photos.',
+                            catalog_spare_new: 'Google Drive Connected! Creating spare part folders now…',
                             calibration_lab: 'Google Drive Connected! Calibration Lab is ready.',
                             scanner_module: 'Google Drive Connected! Celron Scanner is active.',
                             apk_management: 'Google Drive Connected! APK Manager is ready.',
@@ -98,8 +99,9 @@ export default function OAuthCallback() {
                         const targetMap = {
                             enquiry_form: '/workflows',
                             contacts_sync: '/contacts',
-                            manual_upload: '/manuals/new',
+                            manual_upload: '/catalog/manuals/new',
                             catalog_photo_upload: '/catalog',
+                            catalog_spare_new: '/catalog',
                             calibration_lab: '/forms/calibration-lab',
                             scanner_module: '/scanner',
                             apk_management: '/admin/apks',

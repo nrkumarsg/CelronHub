@@ -92,6 +92,7 @@ export default function StorageDirectory() {
     };
 
     const navigateToFolder = (id, name) => {
+        setActiveTab('explorer');
         setExplorerFolderId(id);
         setBreadcrumbs(prev => {
             const idx = prev.findIndex(b => b.id === id);
@@ -234,6 +235,26 @@ export default function StorageDirectory() {
                         {tab === 'enquiries' && <FileText size={18} />}
                         {tab === 'jobs' && <Briefcase size={18} />}
                         {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                        {tab !== 'explorer' && (
+                            <a 
+                                href={tab === 'enquiries' ? 'https://drive.google.com/drive/folders/1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij?usp=drive_link' : 'https://drive.google.com/drive/folders/1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-?usp=drive_link'}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ 
+                                    marginLeft: '6px', 
+                                    display: 'inline-flex', 
+                                    alignItems: 'center', 
+                                    color: activeTab === tab ? '#6366f1' : '#94a3b8',
+                                    transition: 'color 0.2s'
+                                }}
+                                title={`Open Google Drive ${tab.charAt(0).toUpperCase() + tab.slice(1)} folder`}
+                                onMouseEnter={e => e.currentTarget.style.color = '#4f46e5'}
+                                onMouseLeave={e => e.currentTarget.style.color = activeTab === tab ? '#6366f1' : '#94a3b8'}
+                            >
+                                <ExternalLink size={14} />
+                            </a>
+                        )}
                     </button>
                 ))}
             </div>
@@ -260,6 +281,12 @@ export default function StorageDirectory() {
                     <div>
                         <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>Project Folders</p>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <button onClick={() => navigateToFolder('1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij', 'Enquiries')} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '10px', border: 'none', background: explorerFolderId === '1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij' ? '#f1f5ff' : 'transparent', color: explorerFolderId === '1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij' ? '#6366f1' : '#475569', fontWeight: 600, cursor: 'pointer', textAlign: 'left', width: '100%' }}>
+                                <FileText size={18} /> Enquiries
+                            </button>
+                            <button onClick={() => navigateToFolder('1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-', 'Jobs')} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '10px', border: 'none', background: explorerFolderId === '1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-' ? '#f1f5ff' : 'transparent', color: explorerFolderId === '1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-' ? '#6366f1' : '#475569', fontWeight: 600, cursor: 'pointer', textAlign: 'left', width: '100%' }}>
+                                <Briefcase size={18} /> Jobs
+                            </button>
                             <button onClick={() => settings?.gdrive_current_jobs_id && navigateToFolder(settings.gdrive_current_jobs_id, 'Active Jobs')} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '10px', border: 'none', background: explorerFolderId === settings?.gdrive_current_jobs_id ? '#f1f5ff' : 'transparent', color: explorerFolderId === settings?.gdrive_current_jobs_id ? '#6366f1' : '#475569', fontWeight: 600, cursor: 'pointer', textAlign: 'left', width: '100%' }}>
                                 <Briefcase size={18} /> Active Jobs
                             </button>
@@ -424,7 +451,72 @@ export default function StorageDirectory() {
                             </>
                         ) : (
                             /* Enquiries/Jobs Table (Original View) */
-                            <div style={{ background: '#fff' }}>
+                            <div style={{ background: '#fff', borderRadius: '16px', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+                                {/* Google Drive Root Folder Links Banner */}
+                                <div style={{ 
+                                    padding: '16px 20px', 
+                                    background: '#f8fafc', 
+                                    borderBottom: '1px solid #e2e8f0', 
+                                    display: 'flex', 
+                                    justifyContent: 'space-between', 
+                                    alignItems: 'center'
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <Folder size={18} color="#6366f1" />
+                                        <span style={{ fontWeight: 600, fontSize: '0.9rem', color: '#334155' }}>
+                                            Google Drive Root Folder for {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
+                                        </span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '12px' }}>
+                                        <a 
+                                            href={activeTab === 'enquiries' ? 'https://drive.google.com/drive/folders/1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij?usp=drive_link' : 'https://drive.google.com/drive/folders/1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-?usp=drive_link'}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{ 
+                                                display: 'flex', 
+                                                alignItems: 'center', 
+                                                gap: '6px', 
+                                                background: '#fff', 
+                                                border: '1px solid #cbd5e1', 
+                                                padding: '6px 12px', 
+                                                borderRadius: '8px', 
+                                                fontSize: '0.8rem', 
+                                                fontWeight: 600, 
+                                                color: '#334155',
+                                                textDecoration: 'none',
+                                                cursor: 'pointer',
+                                                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                                                transition: 'all 0.2s'
+                                            }}
+                                            onMouseEnter={e => e.currentTarget.style.borderColor = '#6366f1'}
+                                            onMouseLeave={e => e.currentTarget.style.borderColor = '#cbd5e1'}
+                                        >
+                                            <ExternalLink size={14} /> Open in Google Drive
+                                        </a>
+                                        <button 
+                                            onClick={() => {
+                                                const folderId = activeTab === 'enquiries' ? '1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij' : '1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-';
+                                                navigateToFolder(folderId, activeTab.charAt(0).toUpperCase() + activeTab.slice(1));
+                                            }}
+                                            style={{ 
+                                                display: 'flex', 
+                                                alignItems: 'center', 
+                                                gap: '6px', 
+                                                background: '#6366f1', 
+                                                border: 'none', 
+                                                padding: '6px 12px', 
+                                                borderRadius: '8px', 
+                                                fontSize: '0.8rem', 
+                                                fontWeight: 600, 
+                                                color: '#fff',
+                                                cursor: 'pointer',
+                                                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                                            }}
+                                        >
+                                            <Database size={14} /> Browse in Storage Hub
+                                        </button>
+                                    </div>
+                                </div>
                                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                                     <thead>
                                         <tr style={{ borderBottom: '2px solid #f1f5f9' }}>

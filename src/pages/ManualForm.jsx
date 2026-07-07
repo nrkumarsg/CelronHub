@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Save, ArrowLeft, Cloud, FileText, Book, User, Info, Building, Tag } from 'lucide-react';
+import { Save, ArrowLeft, Cloud, FileText, Book, User, Info, Building, Tag, Ship, Smartphone, X, Loader, RefreshCw } from 'lucide-react';
 import { saveManual, getManuals } from '../lib/manualsService';
-import { uploadFileToDrive, getOrCreateFolder } from '../lib/driveService';
+import { getMakers, getModels, getSystems } from '../lib/marineCatalogService';
+import { uploadFileToDrive, getOrCreateFolder, listFolderContent } from '../lib/driveService';
 import { connectGoogleAPI } from '../lib/googleAuthService';
 import { useAuth } from '../contexts/AuthContext';
+import SmartUploadPanel from '../components/upload/SmartUploadPanel';
 
 export default function ManualForm() {
     const { id } = useParams();
@@ -20,12 +22,47 @@ export default function ManualForm() {
         summary: '',
         tags: '',
         file_url: '',
-        file_id: ''
+        file_id: '',
+        system_id: '',
+        maker_id: '',
+        model_id: ''
     });
+
+    const [makersList, setMakersList] = useState([]);
+    const [modelsList, setModelsList] = useState([]);
+    const [systemsList, setSystemsList] = useState([]);
+    const [customMaker, setCustomMaker] = useState(false);
+    const [customModel, setCustomModel] = useState(false);
 
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [isDragging, setIsDragging] = useState(false);
+    const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
+    const [checkingMobile, setCheckingMobile] = useState(false);
+    const [isUploadPanelOpen, setIsUploadPanelOpen] = useState(false);
+
+    useEffect(() => {
+        if (profile?.company_id) {
+            fetchCatalogData();
+        }
+    }, [profile]);
+
+    const fetchCatalogData = async () => {
+        try {
+            const cid = profile.company_id;
+            const [makersRes, modelsRes, systemsRes] = await Promise.all([
+                getMakers(cid),
+                getModels(cid),
+                getSystems(1, 1000, '', {}, cid)
+            ]);
+            setMakersList(makersRes.data || []);
+            setModelsList(modelsRes.data || []);
+            setSystemsList(systemsRes.data || []);
+        } catch (e) {
+            console.error("Error fetching catalog data", e);
+        }
+    };
 
     useEffect(() => {
         const pendingData = sessionStorage.getItem('pending_manual_data');
@@ -59,13 +96,179 @@ export default function ManualForm() {
                 summary: unpacked.summary || (unpacked.info && !unpacked.info.startsWith('{') ? unpacked.info : ''),
                 tags: Array.isArray(unpacked.tags) ? unpacked.tags.join(', ') : (unpacked.tags || ''),
                 file_url: unpacked.file_url || '',
-                file_id: unpacked.file_id || ''
+                file_id: unpacked.file_id || '',
+                system_id: unpacked.system_id || '',
+                maker_id: unpacked.maker_id || '',
+                model_id: unpacked.model_id || ''
             });
+
+            // Determine if maker or model are custom typed
+            if (unpacked.manufacturer && !unpacked.maker_id) {
+                setCustomMaker(true);
+            }
+            if (unpacked.model && !unpacked.model_id) {
+                setCustomModel(true);
+            }
         }
     };
 
     const handleFileChange = (e) => {
-        setFile(e.target.files[0]);
+        const selectedFile = e.target.files[0];
+        if (selectedFile) {
+            if (selectedFile.type !== 'application/pdf') {
+                alert('Only PDF files are supported for technical manuals.');
+                return;
+            }
+            handleSelectFile(selectedFile);
+        }
+    };
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        setIsDragging(true);
+    };
+
+    const handleDragLeave = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        const droppedFile = e.dataTransfer.files[0];
+        if (droppedFile) {
+            if (droppedFile.type !== 'application/pdf') {
+                alert('Only PDF files are supported for technical manuals.');
+                return;
+            }
+            setFile(droppedFile);
+            setIsUploadPanelOpen(true);
+        }
+    };
+
+    const handleSelectFile = (selectedFile, suggestions) => {
+        if (!selectedFile) return;
+
+        if (selectedFile.isGoogleDrive) {
+            setFormData(prev => ({
+                ...prev,
+                file_url: selectedFile.webViewLink,
+                file_id: selectedFile.id
+            }));
+            setFile(null);
+        } else {
+            setFile(selectedFile);
+        }
+
+        if (suggestions) {
+            setFormData(prev => {
+                const next = { ...prev };
+                if (!next.title) next.title = suggestions.title;
+                if (!next.category) next.category = suggestions.category;
+                
+                // Relational Maker resolution
+                if (suggestions.manufacturer && !next.maker_id) {
+                    const matchMaker = makersList.find(m => m.name.toLowerCase() === suggestions.manufacturer.toLowerCase());
+                    if (matchMaker) {
+                        next.maker_id = matchMaker.id;
+                        next.manufacturer = matchMaker.name;
+                    } else {
+                        setCustomMaker(true);
+                        next.manufacturer = suggestions.manufacturer;
+                    }
+                }
+
+                // Relational Model resolution
+                if (suggestions.model && !next.model_id) {
+                    const matchModel = modelsList.find(m => 
+                        m.name.toLowerCase() === suggestions.model.toLowerCase() && 
+                        (!next.maker_id || m.maker_id === next.maker_id)
+                    );
+                    if (matchModel) {
+                        next.model_id = matchModel.id;
+                        next.model = matchModel.name;
+                    } else {
+                        setCustomModel(true);
+                        next.model = suggestions.model;
+                    }
+                }
+
+                if (!next.tags) {
+                    next.tags = suggestions.tags;
+                }
+
+                return next;
+            });
+        }
+    };
+
+    const handleOpenMobileUpload = async () => {
+        if (!formData.manufacturer || !formData.model) {
+            alert('Please select or specify Manufacturer/Brand and Model/Series before opening mobile upload. They are needed to organize files on Google Drive.');
+            return;
+        }
+
+        const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
+        const expires = sessionStorage.getItem('google_contacts_expires');
+
+        if (!token || (expires && new Date(expires) < new Date())) {
+            if (window.confirm('Google Drive access is required to connect your phone. Redirect to login?')) {
+                sessionStorage.setItem('pending_manual_data', JSON.stringify(formData));
+                connectGoogleAPI('manual_upload');
+                return;
+            }
+            return;
+        }
+
+        setQrModal({ isOpen: true, folderId: null, folderName: `${formData.manufacturer} - ${formData.model}` });
+
+        try {
+            const manualsRootId = await getOrCreateFolder(token, 'Manuals');
+            const mfgFolderId = await getOrCreateFolder(token, formData.manufacturer || 'Unknown', manualsRootId);
+            const modelFolderId = await getOrCreateFolder(token, formData.model || 'General', mfgFolderId);
+            
+            setQrModal({
+                isOpen: true,
+                folderId: modelFolderId,
+                folderName: `${formData.manufacturer} ${formData.model}`
+            });
+        } catch (err) {
+            console.error("Failed to provision mobile folders:", err);
+            alert("Error connecting to Google Drive: " + err.message);
+            setQrModal({ isOpen: false, folderId: null, folderName: '' });
+        }
+    };
+
+    const handleVerifyMobileUpload = async () => {
+        const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
+        if (!token || !qrModal.folderId) return;
+
+        setCheckingMobile(true);
+        try {
+            const files = await listFolderContent(token, qrModal.folderId);
+            const pdfFiles = (files || []).filter(f => f.name.toLowerCase().endsWith('.pdf') || f.mimeType === 'application/pdf');
+
+            if (pdfFiles.length > 0) {
+                const latestFile = pdfFiles[0];
+                setFormData(prev => ({
+                    ...prev,
+                    file_url: latestFile.webViewLink,
+                    file_id: latestFile.id,
+                    title: prev.title || latestFile.name.replace(/\.[^/.]+$/, "")
+                }));
+                setFile(null);
+                alert(`Successfully synced uploaded manual: ${latestFile.name}`);
+                setQrModal({ isOpen: false, folderId: null, folderName: '' });
+            } else {
+                alert("No PDF manuals found in the Drive folder yet. Please upload it from your phone first.");
+            }
+        } catch (err) {
+            console.error("Failed to verify mobile upload:", err);
+            alert("Error verifying upload: " + err.message);
+        } finally {
+            setCheckingMobile(false);
+        }
     };
 
     const handleSave = async (e) => {
@@ -120,7 +323,10 @@ export default function ManualForm() {
                 file_id: finalData.file_id,
                 author_company: finalData.manufacturer, // For compatibility
                 group_name: finalData.category, // For compatibility
-                info: finalData.summary
+                info: finalData.summary,
+                system_id: finalData.system_id || null,
+                maker_id: finalData.maker_id || null,
+                model_id: finalData.model_id || null
             };
 
             if (formData.id) {
@@ -131,7 +337,7 @@ export default function ManualForm() {
             if (error) throw error;
 
             alert('Manual saved successfully!');
-            navigate('/manuals');
+            navigate('/catalog/manuals');
         } catch (err) {
             console.error(err);
             alert('Error: ' + err.message);
@@ -145,7 +351,7 @@ export default function ManualForm() {
         <div style={{ padding: '32px', maxWidth: '800px', margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '32px' }}>
                 <button
-                    onClick={() => navigate('/manuals')}
+                    onClick={() => navigate('/catalog/manuals')}
                     style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '10px', borderRadius: '10px', cursor: 'pointer', color: '#64748b' }}
                 >
                     <ArrowLeft size={20} />
@@ -176,32 +382,133 @@ export default function ManualForm() {
                     <div>
                         <label className="form-label">Manufacturer / Brand *</label>
                         <div style={{ position: 'relative' }}>
-                            <Building size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: '#94a3b8' }} />
-                            <input
-                                type="text"
-                                className="form-input"
-                                style={{ paddingLeft: '40px' }}
-                                placeholder="e.g. Caterpillar Inc."
-                                value={formData.manufacturer}
-                                onChange={(e) => setFormData({ ...formData, manufacturer: e.target.value })}
-                                required
-                            />
+                            {!customMaker ? (
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                    <Building size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: '#94a3b8', zIndex: 10 }} />
+                                    <select
+                                        className="form-select"
+                                        style={{ paddingLeft: '40px' }}
+                                        value={formData.maker_id || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (val === 'custom') {
+                                                setCustomMaker(true);
+                                                setFormData(prev => ({ ...prev, maker_id: '', manufacturer: '' }));
+                                            } else {
+                                                const m = makersList.find(item => item.id === val);
+                                                setFormData(prev => ({ ...prev, maker_id: val, manufacturer: m ? m.name : '' }));
+                                            }
+                                        }}
+                                        required
+                                    >
+                                        <option value="">-- Select Brand / Maker --</option>
+                                        {makersList.map(m => (
+                                            <option key={m.id} value={m.id}>{m.name}</option>
+                                        ))}
+                                        <option value="custom">++ Add Custom Maker ++</option>
+                                    </select>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <input
+                                        type="text"
+                                        className="form-input"
+                                        placeholder="Type Manufacturer Name..."
+                                        value={formData.manufacturer}
+                                        onChange={(e) => setFormData({ ...formData, manufacturer: e.target.value })}
+                                        required
+                                    />
+                                    {makersList.length > 0 && (
+                                        <button
+                                            type="button"
+                                            className="btn btn-secondary"
+                                            style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+                                            onClick={() => {
+                                                setCustomMaker(false);
+                                                setFormData(prev => ({ ...prev, maker_id: '', manufacturer: '' }));
+                                            }}
+                                        >
+                                            Select
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </div>
 
                     <div>
                         <label className="form-label">Model / Series *</label>
                         <div style={{ position: 'relative' }}>
-                            <Info size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: '#94a3b8' }} />
-                            <input
-                                type="text"
-                                className="form-input"
+                            {!customModel ? (
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                    <Info size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: '#94a3b8', zIndex: 10 }} />
+                                    <select
+                                        className="form-select"
+                                        style={{ paddingLeft: '40px' }}
+                                        value={formData.model_id || ''}
+                                        disabled={!formData.maker_id}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (val === 'custom') {
+                                                setCustomModel(true);
+                                                setFormData(prev => ({ ...prev, model_id: '', model: '' }));
+                                            } else {
+                                                const m = modelsList.find(item => item.id === val);
+                                                setFormData(prev => ({ ...prev, model_id: val, model: m ? m.name : '' }));
+                                            }
+                                        }}
+                                        required
+                                    >
+                                        <option value="">-- Select Model / Series --</option>
+                                        {modelsList
+                                            .filter(m => m.maker_id === formData.maker_id)
+                                            .map(m => (
+                                                <option key={m.id} value={m.id}>{m.name}</option>
+                                            ))}
+                                        <option value="custom">++ Add Custom Model ++</option>
+                                    </select>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <input
+                                        type="text"
+                                        className="form-input"
+                                        placeholder="Type Model Name..."
+                                        value={formData.model}
+                                        onChange={(e) => setFormData({ ...formData, model: e.target.value })}
+                                        required
+                                    />
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+                                        onClick={() => {
+                                            setCustomModel(false);
+                                            setFormData(prev => ({ ...prev, model_id: '', model: '' }));
+                                        }}
+                                    >
+                                        Select
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="form-label">Associated Machinery System</label>
+                        <div style={{ position: 'relative' }}>
+                            <Ship size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: '#94a3b8', zIndex: 10 }} />
+                            <select
+                                className="form-select"
                                 style={{ paddingLeft: '40px' }}
-                                placeholder="e.g. C32"
-                                value={formData.model}
-                                onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                required
-                            />
+                                value={formData.system_id || ''}
+                                onChange={(e) => setFormData({ ...formData, system_id: e.target.value })}
+                            >
+                                <option value="">-- Link to a Machinery System --</option>
+                                {systemsList.map(s => (
+                                    <option key={s.id} value={s.id}>{s.name} ({s.system_no || 'No Ref'})</option>
+                                ))}
+                            </select>
                         </div>
                     </div>
 
@@ -248,23 +555,71 @@ export default function ManualForm() {
                     </div>
                 </div>
 
-                <div style={{ marginBottom: '32px', padding: '24px', background: '#f8fafc', borderRadius: '12px', border: '2px dashed #e2e8f0' }}>
-                    <label className="form-label" style={{ marginBottom: '12px' }}>{formData.file_url ? 'Update Manual File' : 'Upload PDF Manual'}</label>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                        <Cloud size={48} color={file ? '#6366f1' : '#cbd5e1'} />
-                        <input
-                            type="file"
-                            accept=".pdf"
-                            onChange={handleFileChange}
-                            style={{ fontSize: '0.9rem' }}
-                        />
-                        <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>Supported formats: PDF. Will be uploaded to Google Drive.</p>
+                <div 
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    style={{ 
+                        marginBottom: '20px', 
+                        padding: '32px 24px', 
+                        background: isDragging ? '#eef2ff' : '#f8fafc', 
+                        borderRadius: '16px', 
+                        border: isDragging ? '2px dashed #6366f1' : '2px dashed #cbd5e1',
+                        textAlign: 'center',
+                        transition: 'all 0.2s ease',
+                        cursor: 'pointer',
+                        position: 'relative'
+                    }}
+                >
+                    <div
+                        onClick={() => setIsUploadPanelOpen(true)}
+                        style={{ position: 'absolute', inset: 0, cursor: 'pointer', width: '100%', height: '100%', zIndex: 1 }}
+                    />
+                    
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', position: 'relative', zIndex: 2, pointerEvents: 'none' }}>
+                        <Cloud size={48} color={file || isDragging ? '#6366f1' : '#cbd5e1'} style={{ transition: 'color 0.2s' }} />
+                        <div>
+                            <h4 style={{ margin: '0 0 4px 0', color: '#475569', fontSize: '0.95rem', fontWeight: 600 }}>
+                                {file ? `Selected: ${file.name}` : 'Drag & drop your PDF manual here'}
+                            </h4>
+                            <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                                {file ? 'Click or drag new file to change' : 'or click to browse local files'}
+                            </span>
+                        </div>
+                        <p style={{ margin: 0, fontSize: '0.75rem', color: '#94a3b8' }}>Supported format: PDF. Direct upload to Google Drive.</p>
+                        
                         {formData.file_url && !file && (
-                            <a href={formData.file_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.85rem', color: '#6366f1', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <a 
+                                href={formData.file_url} 
+                                target="_blank" 
+                                rel="noreferrer" 
+                                style={{ 
+                                    pointerEvents: 'auto',
+                                    zIndex: 5,
+                                    fontSize: '0.85rem', 
+                                    color: '#6366f1', 
+                                    textDecoration: 'none', 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: '4px',
+                                    marginTop: '8px'
+                                }}
+                            >
                                 <FileText size={14} /> Current File in Drive
                             </a>
                         )}
                     </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '32px' }}>
+                    <button
+                        type="button"
+                        onClick={handleOpenMobileUpload}
+                        className="btn btn-secondary"
+                        style={{ flex: 1, padding: '12px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 600 }}
+                    >
+                        <Smartphone size={18} /> Upload via Mobile (QR Code / WhatsApp)
+                    </button>
                 </div>
 
                 <div style={{ display: 'flex', gap: '16px' }}>
@@ -287,13 +642,104 @@ export default function ManualForm() {
                     </button>
                     <button
                         type="button"
-                        onClick={() => navigate('/manuals')}
+                        onClick={() => navigate('/catalog/manuals')}
                         style={{ padding: '14px 24px', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#fff', color: '#475569', cursor: 'pointer' }}
                     >
                         Cancel
                     </button>
                 </div>
             </form>
+
+            {qrModal.isOpen && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+                    <div className="glass-panel" style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
+                        <button 
+                            type="button"
+                            onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+                            style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                        >
+                            <X size={24} />
+                        </button>
+
+                        <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                            <Smartphone size={24} />
+                        </div>
+
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Mobile Upload Gateway</h3>
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: '1.4' }}>
+                            Scan this QR code with your phone or click the WhatsApp button to upload files directly to your <strong>{qrModal.folderName}</strong> folder.
+                        </p>
+
+                        {!qrModal.folderId ? (
+                            <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                <Loader size={36} className="animate-spin text-primary" style={{ animation: 'spin 1s linear infinite', color: '#6366f1' }} />
+                                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
+                            </div>
+                        ) : (
+                            (() => {
+                                const uploadUrl = `${window.location.origin}/upload-media?folderId=${qrModal.folderId}&token=${sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent(qrModal.folderName)}`;
+                                return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center' }}>
+                                        <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block' }}>
+                                            <img 
+                                                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(uploadUrl)}`}
+                                                alt="Upload QR Code"
+                                                style={{ width: '180px', height: '180px', display: 'block' }}
+                                            />
+                                        </div>
+
+                                        <a 
+                                            href={`https://api.whatsapp.com/send?text=${encodeURIComponent("Please upload technical manual here: " + uploadUrl)}`}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            style={{ 
+                                                width: '100%',
+                                                display: 'flex', 
+                                                alignItems: 'center', 
+                                                justifyContent: 'center', 
+                                                gap: '8px', 
+                                                background: '#25D366', 
+                                                color: '#fff', 
+                                                padding: '12px', 
+                                                borderRadius: '12px', 
+                                                fontWeight: 700, 
+                                                textDecoration: 'none', 
+                                                cursor: 'pointer' 
+                                            }}
+                                        >
+                                            Share via WhatsApp
+                                        </a>
+
+                                        <button 
+                                            type="button"
+                                            disabled={checkingMobile}
+                                            onClick={handleVerifyMobileUpload}
+                                            className="btn btn-primary"
+                                            style={{ width: '100%', padding: '12px', borderRadius: '12px', background: '#6366f1', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 700 }}
+                                        >
+                                            {checkingMobile ? (
+                                                <>
+                                                    <RefreshCw size={16} className="animate-spin" /> Verifying File...
+                                                </>
+                                            ) : (
+                                                'Verify & Sync Upload'
+                                            )}
+                                        </button>
+                                    </div>
+                                );
+                            })()
+                        )}
+                    </div>
+                </div>
+            )}
+
+            <SmartUploadPanel 
+                isOpen={isUploadPanelOpen} 
+                onClose={() => setIsUploadPanelOpen(false)} 
+                onSelect={handleSelectFile}
+                documentType="manual"
+                accept=".pdf"
+            />
         </div>
     );
 }

@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import StageReminders from '../components/dashboard/StageReminders';
 import TodoReminder from '../components/dashboard/TodoReminder';
 import SystemReminders from '../components/dashboard/SystemReminders';
+import GDriveConnectionTray from '../components/common/GDriveConnectionTray';
 
 export default function Dashboard() {
     const navigate = useNavigate();
@@ -82,7 +83,10 @@ export default function Dashboard() {
     return (
         <div style={{ background: '#f8fafc', minHeight: '100%', padding: '32px', color: '#334155', borderRadius: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
-                <h2 style={{ fontSize: '1.75rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>Dashboard</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <h2 style={{ fontSize: '1.75rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>Dashboard</h2>
+                    <GDriveConnectionTray variant="docked" />
+                </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                     <a
                         href="https://business-card-merger.vercel.app"

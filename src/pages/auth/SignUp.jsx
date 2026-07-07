@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Lock, Mail, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { getDocumentSettings } from '../../lib/store';
 import { useEffect } from 'react';
+import { supabase } from '../../lib/supabase';
 
 const SignUp = () => {
     const { signUp, signInWithGoogle } = useAuth();
@@ -41,16 +42,58 @@ const SignUp = () => {
 
         setLoading(true);
 
-        const { error } = await signUp({ email, password });
+        const { data, error } = await signUp({ email, password });
 
         if (error) {
             setError(error.message);
         } else {
+            // Self-healing: verify profile and company assignment
+            if (data?.user) {
+                try {
+                    const { data: existingProfile } = await supabase
+                        .from('profiles')
+                        .select('id')
+                        .eq('id', data.user.id)
+                        .maybeSingle();
+
+                    if (!existingProfile) {
+                        console.log("Trigger did not run. Creating profile manually...");
+                        let companyId = '8431cd0b-7449-44a5-8213-2a8680d09ebe'; // default corporate company
+                        
+                        // Verify company exists
+                        const { data: comp } = await supabase.from('companies').select('id').eq('id', companyId).maybeSingle();
+                        if (!comp) {
+                            const { data: allComps } = await supabase.from('companies').select('id').limit(1);
+                            if (allComps && allComps.length > 0) {
+                                companyId = allComps[0].id;
+                            }
+                        }
+
+                        // Insert profile
+                        await supabase.from('profiles').insert([{
+                            id: data.user.id,
+                            email: email,
+                            role: 'user',
+                            status: 'active',
+                            company_id: companyId,
+                            accessible_modules: ['catalog', 'settings']
+                        }]);
+
+                        // Assign company user role
+                        await supabase.from('company_users').insert([{
+                            user_id: data.user.id,
+                            company_id: companyId,
+                            role: 'user'
+                        }]);
+                    }
+                } catch (profileErr) {
+                    console.error("Self-healing profile setup failed:", profileErr);
+                }
+            }
             setSuccess("Account created successfully. An admin needs to approve your account before you can log in.");
             setEmail('');
             setPassword('');
             setConfirmPassword('');
-            // Optional: navigate to Login after a delay, or show a button
         }
 
         setLoading(false);

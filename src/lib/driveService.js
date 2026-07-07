@@ -655,3 +655,43 @@ export async function downloadApkByIdentifier(identifier) {
     }
 }
 
+/**
+ * Provisions a standardized folder structure for a Spare Part catalog item.
+ * Root parent: https://drive.google.com/drive/folders/1_yktMHYXmdp7MnZT9BNfPCTTluPzOWxA
+ * Structure:
+ *   [Spare Parts Root] /
+ *     {spareNumber}-{spareName}  /
+ *       Photos_Media
+ *       Datasheets_Manuals
+ *
+ * @param {string} accessToken - Google OAuth access token
+ * @param {string} spareNumber - e.g. "100004"
+ * @param {string} spareName   - e.g. "BALL SCREW NUT"
+ * @returns {{ folderId, photosFolderId, datasheetsFolderId, webViewLink }}
+ */
+export const provisionSparepartFolderStructure = async (accessToken, spareNumber, spareName, customRootId = null) => {
+    const parentFolderId = customRootId || '1_yktMHYXmdp7MnZT9BNfPCTTluPzOWxA';
+
+    // 1. Find or create the "Catalog Photos" directory under the root parent folder
+    const catalogPhotosId = await getOrCreateFolder(accessToken, 'Catalog Photos', parentFolderId);
+
+    // Sanitise name for use in folder title (remove illegal Drive chars)
+    const safeName = spareName.replace(/[/\\:*?"<>|]/g, ' ').trim();
+    const folderTitle = `${spareNumber} - ${safeName}`;
+
+    // 2. Create / find the top-level spare part folder inside "Catalog Photos"
+    const folderId = await getOrCreateFolder(accessToken, folderTitle, catalogPhotosId);
+
+    // 3. Create subfolders
+    const photosFolderId    = await getOrCreateFolder(accessToken, 'Photos_Media',       folderId);
+    const datasheetsFolderId = await getOrCreateFolder(accessToken, 'Datasheets_Manuals', folderId);
+
+    return {
+        folderId,
+        photosFolderId,
+        datasheetsFolderId,
+        webViewLink:            `https://drive.google.com/drive/folders/${folderId}`,
+        photosWebViewLink:      `https://drive.google.com/drive/folders/${photosFolderId}`,
+        datasheetsWebViewLink:  `https://drive.google.com/drive/folders/${datasheetsFolderId}`
+    };
+};

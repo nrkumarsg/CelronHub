@@ -9,6 +9,11 @@ import { downloadApkByIdentifier } from '../lib/driveService';
 
 export default function Sidebar() {
     const { profile, signOut, companies, activeCompanyId, activeCompany } = useAuth();
+    const isCatalogOnly = window.location.hostname.includes('celronpricescanner') || 
+                          window.location.hostname.includes('celronspares') || 
+                          (import.meta.env.VITE_CATALOG_ONLY === 'true' && 
+                           !window.location.hostname.includes('celronhub') && 
+                           !window.location.hostname.includes('celron-partners'));
     const [todoCount, setTodoCount] = useState(0);
     const [driveConnected, setDriveConnected] = useState(isTokenValid());
     const location = useLocation();
@@ -18,6 +23,7 @@ export default function Sidebar() {
     const isUnifiedSupplierHubActive = location.pathname === '/unified-supplier-hub' && currentTab !== 'supplier_tools';
     const isCardScannerActive = location.pathname === '/partners/ai-drive-parser';
     const isInvoiceScannerActive = location.pathname === '/accounts/bills' && currentTab === 'scanned';
+    const isOcrActive = location.pathname === '/tools/ocr';
 
     const [isPinned, setIsPinned] = useState(() => {
         const saved = localStorage.getItem('sidebar-pinned');
@@ -108,12 +114,16 @@ export default function Sidebar() {
             </div>
 
             <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflowY: 'auto', overflowX: 'hidden', flex: 1 }}>
-                {import.meta.env.VITE_CATALOG_ONLY === 'true' ? (
+                {isCatalogOnly ? (
                     <>
                         <span className="nav-group-header">Inventory &amp; Tools</span>
                         <NavLink to="/catalog" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end title="Products &amp; Services">
                             <Package size={20} color="#06b6d4" />
                             <span className="nav-text">Products &amp; Services</span>
+                        </NavLink>
+                        <NavLink to="/catalog/manuals" className={({ isActive }) => `nav-link nav-sub-link ${isActive ? 'active' : ''}`} title="Product Manuals">
+                            <Book size={16} color="#14b8a6" />
+                            <span className="nav-text">Product Manuals</span>
                         </NavLink>
                     </>
                 ) : (
@@ -128,6 +138,11 @@ export default function Sidebar() {
                         <NavLink to="/storage" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Storage Explorer">
                             <FolderOpen size={20} color="#0ea5e9" />
                             <span className="nav-text" style={{ fontWeight: 800, color: '#0ea5e9' }}>Storage Explorer</span>
+                        </NavLink>
+
+                        <NavLink to="/tools/ocr" className={() => `nav-link nav-sub-link ${isOcrActive ? 'active' : ''}`} title="Smart OCR Assistant">
+                            <Sparkles size={16} color="#0ea5e9" />
+                            <span className="nav-text" style={{ fontWeight: 600, color: isOcrActive ? '#ffffff' : '#94a3b8' }}>Smart OCR Assistant</span>
                         </NavLink>
 
                         <NavLink to="/unified-supplier-hub" className={() => `nav-link ${isUnifiedSupplierHubActive ? 'active' : ''}`} title="Unified Supplier Hub">
@@ -146,6 +161,16 @@ export default function Sidebar() {
                                 <span className="nav-text" style={{ fontWeight: 600, color: isCardScannerActive ? '#ffffff' : '#94a3b8' }}>AI Card Scanner</span>
                             </NavLink>
                         )}
+
+                        <NavLink to="/quotations" className={({ isActive }) => `nav-link nav-sub-link ${isActive ? 'active' : ''}`} title="Quote2Customers">
+                            <FileText size={16} color="#6366f1" />
+                            <span className="nav-text" style={{ fontWeight: 600, color: location.pathname === '/quotations' ? '#ffffff' : '#94a3b8' }}>Quote2Customers</span>
+                        </NavLink>
+
+                        <NavLink to="/purchase-orders" className={({ isActive }) => `nav-link nav-sub-link ${isActive ? 'active' : ''}`} title="PO2 Suppliers">
+                            <ShoppingCart size={16} color="#10b981" />
+                            <span className="nav-text" style={{ fontWeight: 600, color: location.pathname === '/purchase-orders' ? '#ffffff' : '#94a3b8' }}>PO2 Suppliers</span>
+                        </NavLink>
 
                         <NavLink to="/workflows/jobs-dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Job Control">
                             <Briefcase size={20} color="#10b981" />
@@ -172,10 +197,18 @@ export default function Sidebar() {
                                 <span className="nav-group-header">Inventory &amp; Tools</span>
 
                                 {hasAccess('catalog') && (
-                                    <NavLink to="/catalog" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end title="Products &amp; Services">
-                                        <Package size={20} color="#06b6d4" />
-                                        <span className="nav-text">Products &amp; Services</span>
-                                    </NavLink>
+                                    <>
+                                        <NavLink to="/catalog" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end title="Products &amp; Services">
+                                            <Package size={20} color="#06b6d4" />
+                                            <span className="nav-text">Products &amp; Services</span>
+                                        </NavLink>
+                                        {hasAccess('manuals') && (
+                                            <NavLink to="/catalog/manuals" className={({ isActive }) => `nav-link nav-sub-link ${isActive ? 'active' : ''}`} title="Product Manuals">
+                                                <Book size={16} color="#14b8a6" />
+                                                <span className="nav-text">Product Manuals</span>
+                                            </NavLink>
+                                        )}
+                                    </>
                                 )}
 
                                 {hasAccess('forms') && (
@@ -189,13 +222,6 @@ export default function Sidebar() {
                                     <NavLink to="/forms" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end title="Forms Library">
                                         <FileText size={20} color="#3b82f6" />
                                         <span className="nav-text">Forms Library</span>
-                                    </NavLink>
-                                )}
-
-                                {hasAccess('manuals') && (
-                                    <NavLink to="/manuals" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Technical Manuals">
-                                        <Book size={20} color="#14b8a6" />
-                                        <span className="nav-text">Technical Manuals</span>
                                     </NavLink>
                                 )}
 

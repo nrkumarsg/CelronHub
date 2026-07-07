@@ -44,7 +44,7 @@ import {
 } from 'lucide-react';
 import { Modal, QuickExpenseAdd } from '../../components/workflow/QuickAddForms';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { extractBillWithGroq } from '../../lib/openAiVisionService';
+import { runDocumentPipeline } from '../../lib/ai/documentPipeline';
 import { connectGoogleAPI, isTokenValid, performOCR } from '../../lib/googleAuthService';
 import toast from 'react-hot-toast';
 
@@ -266,9 +266,26 @@ export default function BillsPortal() {
         try {
             addLog(`Connecting to Drive Folder ID: ${resolvedId}...`);
             
-            const foldersToScan = [resolvedId];
+            let targetScanFolderId = resolvedId;
+            try {
+                const checkQuery = `'${resolvedId}' in parents and mimeType = 'application/vnd.google-apps.folder' and (name = 'Raw_Supplier_Invoices' or name = 'raw_supplier_invoices' or name = 'Raw Supplier Invoices' or name = 'raw supplier invoices') and trashed = false`;
+                const checkUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(checkQuery)}&fields=files(id,name)`;
+                const checkRes = await fetch(checkUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+                if (checkRes.ok) {
+                    const checkData = await checkRes.json();
+                    if (checkData.files && checkData.files.length > 0) {
+                        targetScanFolderId = checkData.files[0].id;
+                        addLog(`Found specific folder "Raw_Supplier_Invoices" (ID: ${targetScanFolderId}). Scanning this folder only.`, 'info');
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to resolve Raw_Supplier_Invoices folder:', err);
+            }
+
+            const foldersToScan = [targetScanFolderId];
             const scannedFolders = new Set();
             const allFiles = [];
+            const textFiles = [];
             
             while (foldersToScan.length > 0 && scannedFolders.size < 50) {
                 const currentFolderId = foldersToScan.shift();
@@ -287,7 +304,8 @@ export default function BillsPortal() {
                         `name contains '.jpeg' or ` +
                         `name contains '.png' or ` +
                         `name contains '.webp' or ` +
-                        `name contains '.pdf'` +
+                        `name contains '.pdf' or ` +
+                        `name contains '.txt'` +
                         `)`;
                     
                     const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100${pageToken ? `&pageToken=${pageToken}` : ''}`;
@@ -309,6 +327,8 @@ export default function BillsPortal() {
                             if (!scannedFolders.has(f.id) && !foldersToScan.includes(f.id)) {
                                 foldersToScan.push(f.id);
                             }
+                        } else if (f.name.toLowerCase().endsWith('.txt')) {
+                            textFiles.push(f);
                         } else {
                             allFiles.push(f);
                         }
@@ -324,6 +344,12 @@ export default function BillsPortal() {
                 if (f && f.id) uniqueFilesMap.set(f.id, f);
             });
             const uniqueFiles = Array.from(uniqueFilesMap.values());
+
+            const uniqueTextFilesMap = new Map();
+            textFiles.forEach(f => {
+                if (f && f.id) uniqueTextFilesMap.set(f.id, f);
+            });
+            const uniqueTextFiles = Array.from(uniqueTextFilesMap.values());
 
             addLog(`Discovered ${uniqueFiles.length} unique document(s) in Drive directory.`, 'success');
 
@@ -389,19 +415,45 @@ export default function BillsPortal() {
                     const fileObj = new File([blob], file.name, { type: blob.type });
                     const publicUrl = await uploadFile('company_assets', 'vouchers', fileObj);
 
+                    // Check for companion PaddleOCR text file
+                    const baseName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+                    const companionTxt = uniqueTextFiles.find(tf => 
+                        tf.name.toLowerCase() === `${file.name.toLowerCase()}.txt` ||
+                        tf.name.toLowerCase() === `${baseName.toLowerCase()}.txt`
+                    );
+
+                    let extractedText = '';
+                    if (companionTxt) {
+                        try {
+                            addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Found companion text file "${companionTxt.name}". Downloading PaddleOCR text...`, 'info');
+                            const txtRes = await fetch(`https://www.googleapis.com/drive/v3/files/${companionTxt.id}?alt=media`, {
+                                headers: { 'Authorization': `Bearer ${token}` }
+                            });
+                            if (txtRes.ok) {
+                                extractedText = await txtRes.text();
+                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] PaddleOCR text loaded successfully (${extractedText.length} chars).`, 'success');
+                            }
+                        } catch (txtErr) {
+                            console.error('Failed to read companion text file:', txtErr);
+                        }
+                    }
+
                     // 2. Perform OCR & Parse details with Retry Logic
-                    let result = null;
+                    let pipelineResult = null;
                     let success = false;
 
                     for (let attempt = 1; attempt <= 3; attempt++) {
                         try {
-                            if (isPdf) {
+                            if (extractedText) {
+                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Processing companion text via Ingestion Pipeline (Attempt ${attempt}/3)...`, 'ai');
+                                pipelineResult = await runDocumentPipeline(token, 'Raw_Supplier_Invoices', file.id, 'text_file', extractedText, companionTxt?.id);
+                            } else if (isPdf) {
                                 addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Extracting text from PDF client-side...`, 'info');
-                                const extractedText = await performOCR(fileObj);
-                                if (!extractedText) throw new Error('No text content resolved from PDF file.');
+                                const pdfText = await performOCR(fileObj);
+                                if (!pdfText) throw new Error('No text content resolved from PDF file.');
                                 
-                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Submitting PDF content to Groq OCR parser (Attempt ${attempt}/3)...`, 'ai');
-                                result = await extractBillWithGroq(extractedText, true);
+                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Processing PDF text via Ingestion Pipeline (Attempt ${attempt}/3)...`, 'ai');
+                                pipelineResult = await runDocumentPipeline(token, 'Raw_Supplier_Invoices', file.id, 'text_file', pdfText, null);
                             } else {
                                 addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Converting image to Base64...`, 'info');
                                 const base64 = await new Promise((resolve, reject) => {
@@ -411,8 +463,8 @@ export default function BillsPortal() {
                                     reader.readAsDataURL(blob);
                                 });
 
-                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Submitting image to Groq Vision API (Attempt ${attempt}/3)...`, 'ai');
-                                result = await extractBillWithGroq(base64, false);
+                                addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Processing image via Ingestion Pipeline (Attempt ${attempt}/3)...`, 'ai');
+                                pipelineResult = await runDocumentPipeline(token, 'Raw_Supplier_Invoices', file.id, 'image_vision', base64, null);
                             }
                             success = true;
                             break;
@@ -434,11 +486,30 @@ export default function BillsPortal() {
                         }
                     }
 
-                    if (!success || !result) {
-                        throw new Error('Groq Vision OCR failed to return structured data.');
+                    if (!success || !pipelineResult) {
+                        throw new Error('Ingestion Pipeline failed to return structured data.');
                     }
 
-                    addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Extracted Details: Vendor: "${result.supplier_name}", Invoice No: "${result.invoice_no}", Total: ${result.grand_total} ${result.currency || 'SGD'}`, 'ai');
+                    // Map extracted data to local invoice schema
+                    const ext = pipelineResult.extracted_data || {};
+                    const result = {
+                        supplier_name: ext.supplier_name || '',
+                        uen: ext.uen || '',
+                        address: ext.address || '',
+                        phone: ext.phone || '',
+                        email: ext.email || '',
+                        website: ext.website || '',
+                        invoice_no: ext.invoice_number || ext.invoice_no || `SCANNED_${Date.now()}`,
+                        invoice_date: ext.invoice_date || new Date().toISOString().split('T')[0],
+                        due_date: ext.due_date || '',
+                        currency: ext.currency || 'SGD',
+                        subtotal: ext.subtotal || 0,
+                        gst_amount: ext.tax_amount || ext.gst_amount || 0,
+                        grand_total: ext.grand_total || 0,
+                        description: ext.description || ''
+                    };
+
+                    addLog(`[Bill ${i + 1}/${unprocessedFiles.length}] Pipeline routing: ${pipelineResult.confidence_metrics?.pipeline_action}. Confidence: ${pipelineResult.confidence_metrics?.confidence_score}. Vendor: "${result.supplier_name}", Invoice No: "${result.invoice_no}", Total: ${result.grand_total} ${result.currency || 'SGD'}`, 'ai');
 
                     // Match partner supplier if possible
                     let supplierId = null;
@@ -878,6 +949,20 @@ export default function BillsPortal() {
                         }}
                     >
                         <FolderOpen size={18} style={{ color: '#3b82f6' }} /> Google Drive Folder
+                    </a>
+                    <a 
+                        href="https://platform.deepseek.com/usage" 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        className="btn btn-secondary" 
+                        style={{ 
+                            display: 'inline-flex', 
+                            alignItems: 'center', 
+                            gap: '8px', 
+                            textDecoration: 'none' 
+                        }}
+                    >
+                        <Sparkles size={18} style={{ color: '#0d6efd' }} /> DeepSeek Platform
                     </a>
                     <a 
                         href="https://console.groq.com/keys" 

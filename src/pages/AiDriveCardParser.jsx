@@ -4,12 +4,14 @@ import {
   Sparkles, FolderOpen, Mail, Phone, Globe, Building2, User, Plus, Check, X, 
   ArrowLeft, CheckCircle2, Trash2, Users, Loader2, Info, Search, HelpCircle,
   UploadCloud, Image as ImageIcon, Database, RefreshCw, Layers, CheckSquare,
-  AlertCircle, ChevronRight, Edit2, Play, CircleDot, ExternalLink
+  AlertCircle, ChevronRight, Edit2, Play, CircleDot, ExternalLink,
+  Smartphone, QrCode, Camera
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getPartners, getPendingPartners, savePartner, saveContact, deletePartner } from '../lib/store';
-import { extractCardWithGroq } from '../lib/openAiVisionService';
+import { runDocumentPipeline } from '../lib/ai/documentPipeline';
 import { connectGoogleAPI, isTokenValid } from '../lib/googleAuthService';
+import { moveFile, uploadFileToDrive } from '../lib/driveService';
 import toast from 'react-hot-toast';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
@@ -93,6 +95,13 @@ export default function AiDriveCardParser() {
   const [syncLogs, setSyncLogs] = useState([]);
   const [currentProgress, setCurrentProgress] = useState({ current: 0, total: 0, file: '' });
 
+  // Subfolders & Destination State
+  const [subfolders, setSubfolders] = useState([]);
+  const [destFolderId, setDestFolderId] = useState(localStorage.getItem('gdrive_scanner_dest_folder') || '');
+  const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
+  const [uploadingMobileFile, setUploadingMobileFile] = useState(false);
+  const mobileUploadInputRef = useRef(null);
+
   // Interactive Double-Panel Review State
   const [selectedDraft, setSelectedDraft] = useState(null);
   const [editedPartner, setEditedPartner] = useState({
@@ -105,6 +114,30 @@ export default function AiDriveCardParser() {
   const [isSavingApproval, setIsSavingApproval] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
+  const loadSubfolders = async (rootId, token) => {
+    if (!rootId || !token) return;
+    try {
+      const query = `'${rootId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`;
+      const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        const folders = data.files || [];
+        setSubfolders(folders);
+        
+        const defaultDest = folders.find(f => f.name === '2026_Cards_Entry') || 
+                            folders.find(f => f.name.includes('Entry') || f.name.includes('Images') || f.name.includes('Merged')) || 
+                            folders.find(f => f.name.toLowerCase() !== 'raw_bus_cards');
+        if (defaultDest && !localStorage.getItem('gdrive_scanner_dest_folder')) {
+          setDestFolderId(defaultDest.id);
+          localStorage.setItem('gdrive_scanner_dest_folder', defaultDest.id);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load subfolders:', err);
+    }
+  };
+
   // Load Tokens and Data
   useEffect(() => {
     const token = localStorage.getItem('google_access_token');
@@ -113,6 +146,8 @@ export default function AiDriveCardParser() {
     if (token && valid) {
       setGoogleAccessToken(token);
       setIsDriveConnected(true);
+      const resolvedId = extractFolderId(folderLink);
+      loadSubfolders(resolvedId, token);
     } else {
       setIsDriveConnected(false);
     }
@@ -120,6 +155,55 @@ export default function AiDriveCardParser() {
     loadActiveDirectory();
     loadDraftsQueue();
   }, []);
+
+  useEffect(() => {
+    const token = googleAccessToken || localStorage.getItem('google_access_token');
+    if (token && folderLink) {
+      const resolvedId = extractFolderId(folderLink);
+      loadSubfolders(resolvedId, token);
+    }
+  }, [folderLink, googleAccessToken]);
+
+  const handleMobileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const token = googleAccessToken || localStorage.getItem('google_access_token');
+    if (!token) {
+      toast.error('Google account not connected.');
+      return;
+    }
+
+    setUploadingMobileFile(true);
+    toast.loading(`Uploading card "${file.name}" to Raw_Bus_Cards...`, { id: 'mobile-upload' });
+
+    try {
+      let targetScanFolderId = folderId;
+      try {
+        const checkQuery = `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and (name = 'Raw_Bus_Cards' or name = 'raw_bus_cards' or name = 'Raw Bus Cards' or name = 'raw bus cards') and trashed = false`;
+        const checkUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(checkQuery)}&fields=files(id,name)`;
+        const checkRes = await fetch(checkUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+        if (checkRes.ok) {
+          const checkData = await checkRes.json();
+          if (checkData.files && checkData.files.length > 0) {
+            targetScanFolderId = checkData.files[0].id;
+          }
+        }
+      } catch (err) {
+        console.error('Failed to resolve subfolder during mobile upload:', err);
+      }
+
+      await uploadFileToDrive(token, file, { folderId: targetScanFolderId });
+      toast.success(`Uploaded successfully to Raw_Bus_Cards!`, { id: 'mobile-upload' });
+      triggerFolderSync();
+    } catch (err) {
+      console.error('Mobile upload failed:', err);
+      toast.error('Upload failed: ' + err.message, { id: 'mobile-upload' });
+    } finally {
+      setUploadingMobileFile(false);
+      if (mobileUploadInputRef.current) mobileUploadInputRef.current.value = '';
+    }
+  };
 
   const addLog = (message, type = 'info') => {
     setSyncLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), message, type }]);
@@ -191,9 +275,26 @@ export default function AiDriveCardParser() {
       // 1. Fetch files inside the folder recursively (BFS traversal)
       addLog(`Connecting to Drive Folder ID: ${resolvedId}...`);
       
-      const foldersToScan = [resolvedId];
+      let targetScanFolderId = resolvedId;
+      try {
+        const checkQuery = `'${resolvedId}' in parents and mimeType = 'application/vnd.google-apps.folder' and (name = 'Raw_Bus_Cards' or name = 'raw_bus_cards' or name = 'Raw Bus Cards' or name = 'raw bus cards') and trashed = false`;
+        const checkUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(checkQuery)}&fields=files(id,name)`;
+        const checkRes = await fetch(checkUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+        if (checkRes.ok) {
+          const checkData = await checkRes.json();
+          if (checkData.files && checkData.files.length > 0) {
+            targetScanFolderId = checkData.files[0].id;
+            addLog(`Found specific folder "Raw_Bus_Cards" (ID: ${targetScanFolderId}). Scanning this folder only.`, 'info');
+          }
+        }
+      } catch (err) {
+        console.error('Failed to resolve Raw_Bus_Cards folder:', err);
+      }
+
+      const foldersToScan = [targetScanFolderId];
       const scannedFolders = new Set();
       const allFiles = [];
+      const textFiles = [];
       
       while (foldersToScan.length > 0 && scannedFolders.size < 50) {
         const currentFolderId = foldersToScan.shift();
@@ -210,7 +311,8 @@ export default function AiDriveCardParser() {
             `name contains '.jpg' or ` +
             `name contains '.jpeg' or ` +
             `name contains '.png' or ` +
-            `name contains '.webp'` +
+            `name contains '.webp' or ` +
+            `name contains '.txt'` +
             `)`;
           
           const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100${pageToken ? `&pageToken=${pageToken}` : ''}`;
@@ -229,13 +331,11 @@ export default function AiDriveCardParser() {
           
           for (const f of filesInFolder) {
             if (f.mimeType === 'application/vnd.google-apps.folder') {
-              if (f.name && (f.name.toLowerCase() === 'raw_bus_cards' || f.name.toLowerCase().replace(/_/g, ' ') === 'raw bus cards')) {
-                addLog(`Excluding folder "${f.name}" from scanning.`, 'info');
-                continue;
-              }
               if (!scannedFolders.has(f.id) && !foldersToScan.includes(f.id)) {
                 foldersToScan.push(f.id);
               }
+            } else if (f.name.toLowerCase().endsWith('.txt')) {
+              textFiles.push(f);
             } else {
               // It is an actual card image file!
               allFiles.push(f);
@@ -254,6 +354,12 @@ export default function AiDriveCardParser() {
         if (f && f.id) uniqueFilesMap.set(f.id, f);
       });
       const uniqueFiles = Array.from(uniqueFilesMap.values());
+
+      const uniqueTextFilesMap = new Map();
+      textFiles.forEach(f => {
+        if (f && f.id) uniqueTextFilesMap.set(f.id, f);
+      });
+      const uniqueTextFiles = Array.from(uniqueTextFilesMap.values());
 
       if (uniqueFiles.length === 0) {
         addLog('No business card images found. Sync complete.', 'success');
@@ -329,14 +435,42 @@ export default function AiDriveCardParser() {
             reader.readAsDataURL(blob);
           });
 
+          // Check for companion PaddleOCR text file
+          const baseName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+          const companionTxt = uniqueTextFiles.find(tf => 
+            tf.name.toLowerCase() === `${file.name.toLowerCase()}.txt` ||
+            tf.name.toLowerCase() === `${baseName.toLowerCase()}.txt`
+          );
+
+          let extractedText = '';
+          if (companionTxt) {
+            try {
+              addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Found companion text file "${companionTxt.name}". Downloading PaddleOCR text...`, 'info');
+              const txtRes = await fetch(`https://www.googleapis.com/drive/v3/files/${companionTxt.id}?alt=media`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+              });
+              if (txtRes.ok) {
+                extractedText = await txtRes.text();
+                addLog(`[Card ${i + 1}/${unprocessedFiles.length}] PaddleOCR text loaded successfully (${extractedText.length} chars).`, 'success');
+              }
+            } catch (txtErr) {
+              console.error('Failed to read companion text file:', txtErr);
+            }
+          }
+
           // OCR Extraction loop with Exponential Backoff Retry mechanism
-          let result = null;
+          let pipelineResult = null;
           let success = false;
 
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-              addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Submitting to Groq Vision OCR (Attempt ${attempt}/3)...`, 'ai');
-              result = await extractCardWithGroq(base64);
+              if (extractedText) {
+                addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Processing companion text via Ingestion Pipeline (Attempt ${attempt}/3)...`, 'ai');
+                pipelineResult = await runDocumentPipeline(token, 'Raw_Bus_Cards', file.id, 'text_file', extractedText, companionTxt?.id);
+              } else {
+                addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Processing image via Ingestion Pipeline (Attempt ${attempt}/3)...`, 'ai');
+                pipelineResult = await runDocumentPipeline(token, 'Raw_Bus_Cards', file.id, 'image_vision', base64, null);
+              }
               success = true;
               break;
             } catch (apiError) {
@@ -357,11 +491,37 @@ export default function AiDriveCardParser() {
             }
           }
 
-          if (!success || !result) {
-            throw new Error('Groq Vision OCR failed to return structured data.');
+          if (!success || !pipelineResult) {
+            throw new Error('Ingestion Pipeline failed to return structured data.');
           }
 
-          addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Structured data resolved. Company: "${result.partner.name}". Person: "${result.contact.name}".`, 'ai');
+          // Map extracted data to local partner/contact schema
+          const ext = pipelineResult.extracted_data || {};
+          const result = {
+            partner: {
+              name: ext.company_name || ext.partner?.name || `Draft_${file.name.split('.')[0]}`,
+              uen: ext.uen || ext.partner?.uen || '',
+              address: ext.address || ext.partner?.address || '',
+              country: ext.country || ext.partner?.country || 'Singapore',
+              city: ext.city || ext.partner?.city || '',
+              postal_code: ext.postal_code || ext.partner?.postal_code || '',
+              email: ext.email || ext.partner?.email || '',
+              phone: (ext.phone_numbers && ext.phone_numbers[0]) || ext.partner?.phone || '',
+              website: ext.website || ext.partner?.website || '',
+              brands: ext.brands || ext.partner?.brands || '',
+              business_scope: ext.business_scope || ext.partner?.business_scope || '',
+              notes: ext.notes || ext.partner?.notes || ''
+            },
+            contact: {
+              name: ext.contact_person || ext.contact?.name || '',
+              email: ext.email || ext.contact?.email || '',
+              handphone: (ext.phone_numbers && ext.phone_numbers[0]) || ext.contact?.handphone || '',
+              post: ext.designation || ext.contact?.post || '',
+              department: ext.department || ext.contact?.department || 'Other'
+            }
+          };
+
+          addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Pipeline routing: ${pipelineResult.confidence_metrics?.pipeline_action}. Confidence: ${pipelineResult.confidence_metrics?.confidence_score}. Company: "${result.partner.name}".`, 'ai');
 
           // Safety check: duplicate company name + contact email
           const isNameEmailDuplicate = existingDraftsList.some(p => 
@@ -505,10 +665,22 @@ export default function AiDriveCardParser() {
         });
       }
 
+      // 3. Move Google Drive File if destination folder is chosen
+      const fileId = getDriveFileId(editedPartner.info);
+      const token = googleAccessToken || localStorage.getItem('google_access_token');
+      if (fileId && token && destFolderId) {
+        try {
+          addLog(`Moving Google Drive card image ${fileId} to destination folder...`, 'info');
+          await moveFile(token, fileId, destFolderId);
+          toast.success('Drive file moved to target folder.', { id: 'approve-move' });
+        } catch (moveErr) {
+          console.error('Failed to move file:', moveErr);
+          toast.error('Failed to move file: ' + moveErr.message);
+        }
+      }
+
       toast.success(`Success! Authorized: ${editedPartner.name}`, { id: 'approve' });
       setSelectedDraft(null);
-      
-      // Auto-refresh queues
       loadDraftsQueue();
       loadActiveDirectory();
     } catch (err) {
@@ -565,7 +737,29 @@ export default function AiDriveCardParser() {
             <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.95rem' }}>Index folders of business cards automatically with OpenAI Vision OCR and verify them instantly</p>
           </div>
         </div>
-        <div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <a 
+            href="https://platform.deepseek.com/usage" 
+            target="_blank" 
+            rel="noreferrer" 
+            className="btn btn-secondary" 
+            style={{ 
+              display: 'inline-flex', 
+              alignItems: 'center', 
+              gap: '8px', 
+              textDecoration: 'none',
+              background: '#fff',
+              border: '1px solid #e2e8f0',
+              padding: '10px 16px',
+              borderRadius: '10px',
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              color: '#475569',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+            }}
+          >
+            <Sparkles size={16} style={{ color: '#0d6efd' }} /> DeepSeek Platform
+          </a>
           <a 
             href="https://console.groq.com/keys" 
             target="_blank" 
@@ -640,7 +834,78 @@ export default function AiDriveCardParser() {
                 />
               </div>
 
+              {isDriveConnected && subfolders.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '6px' }}>Move Approved Cards To (Destination folder)</label>
+                  <select 
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', background: '#fff', fontSize: '0.9rem' }}
+                    value={destFolderId}
+                    onChange={(e) => {
+                      setDestFolderId(e.target.value);
+                      localStorage.setItem('gdrive_scanner_dest_folder', e.target.value);
+                    }}
+                  >
+                    <option value="">-- Do Not Move (Keep in Raw_Bus_Cards) --</option>
+                    {subfolders.map(f => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                <input 
+                  type="file" 
+                  ref={mobileUploadInputRef} 
+                  onChange={handleMobileUpload} 
+                  accept="image/*" 
+                  capture="environment" 
+                  style={{ display: 'none' }} 
+                />
+                <button 
+                  onClick={() => mobileUploadInputRef.current?.click()}
+                  disabled={!isDriveConnected || uploadingMobileFile || isSyncing}
+                  style={{ 
+                    background: '#fdf4ff', 
+                    border: '1px solid #f3d8f5', 
+                    color: '#a855f7', 
+                    padding: '10px 16px', 
+                    borderRadius: '8px', 
+                    fontWeight: 600, 
+                    cursor: 'pointer', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '6px',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseOver={e => e.currentTarget.style.background = '#fae8ff'}
+                  onMouseOut={e => e.currentTarget.style.background = '#fdf4ff'}
+                  title="Capture card photo with phone camera and upload directly"
+                >
+                  <Camera size={16} /> {uploadingMobileFile ? 'Uploading...' : 'Upload Photo'}
+                </button>
+                <button 
+                  onClick={() => setQrModal({ isOpen: true, folderId: folderId, folderName: 'Raw_Bus_Cards' })}
+                  disabled={!isDriveConnected || !folderLink}
+                  style={{ 
+                    background: '#f0fdf4', 
+                    border: '1px solid #bbf7d0', 
+                    color: '#16a34a', 
+                    padding: '10px 16px', 
+                    borderRadius: '8px', 
+                    fontWeight: 600, 
+                    cursor: 'pointer', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '6px',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseOver={e => e.currentTarget.style.background = '#dcfce7'}
+                  onMouseOut={e => e.currentTarget.style.background = '#f0fdf4'}
+                  title="Open Mobile Upload Gateway to upload business cards from your phone"
+                >
+                  <QrCode size={16} /> Mobile Scan
+                </button>
                 <button 
                   onClick={handleOpenFolder}
                   disabled={!folderLink}
@@ -1338,6 +1603,63 @@ export default function AiDriveCardParser() {
 
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* QR Code Modal for Mobile Upload Gateway */}
+      {qrModal.isOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div className="glass-panel animate-scale-up" style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
+            <button 
+              onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+              style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+              onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+              onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
+            >
+              <X size={24} />
+            </button>
+
+            <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+              <Smartphone size={24} />
+            </div>
+
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Mobile Upload Gateway</h3>
+            <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: '1.4' }}>
+              Scan this QR code with your smartphone camera to upload files directly to your <strong>{qrModal.folderName}</strong> folder.
+            </p>
+
+            {!qrModal.folderId ? (
+              <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                <Loader2 size={36} className="animate-spin text-primary" />
+                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
+              </div>
+            ) : (
+              <div>
+                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block', marginBottom: '24px' }}>
+                  <img 
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
+                      `${window.location.origin}/upload-media?folderId=${qrModal.folderId}&token=${googleAccessToken || localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent(qrModal.folderName)}`
+                    )}`}
+                    alt="Upload QR Code"
+                    style={{ width: '200px', height: '200px', display: 'block' }}
+                  />
+                </div>
+
+                <div style={{ fontSize: '0.8rem', color: '#94a3b8', background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+                  <Info size={14} style={{ flexShrink: 0 }} />
+                  <span>Session active. QR code is valid for temporary uploading.</span>
+                </div>
+              </div>
+            )}
+
+            <button 
+              className="btn btn-primary" 
+              style={{ width: '100%', marginTop: '24px', padding: '12px', borderRadius: '12px', fontWeight: 700 }}
+              onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+            >
+              Done
+            </button>
           </div>
         </div>
       )}

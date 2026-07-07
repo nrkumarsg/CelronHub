@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, X, Crop as CropIcon, Copy, Sparkles, Loader2, Image as ImageIcon, History, Trash2, FileText, CheckCircle2, Plus, HardDrive, Download, Eye } from 'lucide-react';
+import { Upload, X, Crop as CropIcon, Copy, Sparkles, Loader2, Image as ImageIcon, History, Trash2, FileText, CheckCircle2, Plus, HardDrive, Download, Eye, QrCode, Smartphone, Info } from 'lucide-react';
 import ReactCrop, { centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import Tesseract from 'tesseract.js';
 import { getOrCreateFolder, uploadFileToDrive, getFileContent, listFolderContent, deleteFile } from '../../lib/driveService';
 import { connectGoogleAPI } from '../../lib/googleAuthService';
 import UploadOverlay from '../../components/common/UploadOverlay';
+import toast from 'react-hot-toast';
 
 // Styles moved to constant to avoid build-time layout issues
 const ocrStyles = `
@@ -43,6 +44,77 @@ import { useAuth } from '../../contexts/AuthContext';
 export default function SmartOCR() {
     const { profile } = useAuth();
     const [image, setImage] = useState(null);
+    const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
+    const [isPolling, setIsPolling] = useState(false);
+
+    const handleOpenMobileUpload = async () => {
+        const token = localStorage.getItem('google_access_token');
+        if (!token) {
+            sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
+            connectGoogleAPI('ocr');
+            return;
+        }
+        setQrModal({ isOpen: true, folderId: null, folderName: 'OCR Extractions' });
+        try {
+            const folderId = await getOrCreateFolder(token, 'OCR Extractions');
+            setQrModal({ isOpen: true, folderId: folderId, folderName: 'OCR Extractions' });
+        } catch (err) {
+            console.error('Failed to prepare folder:', err);
+            toast.error('Failed to connect to Google Drive.');
+            setQrModal({ isOpen: false, folderId: null, folderName: '' });
+        }
+    };
+
+    useEffect(() => {
+        let intervalId = null;
+        if (qrModal.isOpen && qrModal.folderId) {
+            setIsPolling(true);
+            const token = localStorage.getItem('google_access_token');
+            let knownFileIds = [];
+
+            const initFiles = async () => {
+                try {
+                    const files = await listFolderContent(token, qrModal.folderId);
+                    knownFileIds = files.map(f => f.id);
+                } catch (e) {
+                    console.error("Failed to list initial files:", e);
+                }
+            };
+            initFiles();
+
+            intervalId = setInterval(async () => {
+                try {
+                    const files = await listFolderContent(token, qrModal.folderId);
+                    const newFiles = files.filter(f => !knownFileIds.includes(f.id));
+                    if (newFiles.length > 0) {
+                        const targetFile = newFiles[0];
+                        clearInterval(intervalId);
+                        setQrModal({ isOpen: false, folderId: null, folderName: '' });
+                        setIsPolling(false);
+                        toast.success("Mobile upload detected! Loading document...");
+
+                        const response = await fetch(`https://www.googleapis.com/drive/v3/files/${targetFile.id}?alt=media`, {
+                            headers: { 'Authorization': 'Bearer ' + token }
+                        });
+                        const blob = await response.blob();
+                        const r = new FileReader();
+                        r.onload = () => {
+                            setImage(r.result);
+                            toast.success("Document loaded successfully!");
+                        };
+                        r.readAsDataURL(blob);
+                    }
+                } catch (e) {
+                    console.error("Polling error:", e);
+                }
+            }, 3000);
+        }
+
+        return () => {
+            if (intervalId) clearInterval(intervalId);
+            setIsPolling(false);
+        };
+    }, [qrModal.isOpen, qrModal.folderId]);
 
     const [crop, setCrop] = useState();
     const [completedCrop, setCompletedCrop] = useState(null);
@@ -171,10 +243,19 @@ export default function SmartOCR() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '32px' }}>
                 <div className="glass-panel" style={{ padding: '32px', minHeight: '700px', display: 'flex', flexDirection: 'column', gap: '32px' }}>
                     {!image ? (
-                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: '2px dashed #e2e8f0', borderRadius: '24px', background: '#fff' }}>
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: '2px dashed #e2e8f0', borderRadius: '24px', background: '#fff', padding: '32px' }}>
                             <div style={{ width: '80px', height: '80px', background: '#f1f5f9', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '24px', color: '#6366f1' }}><Upload size={32} /></div>
-                            <h3>Upload Document</h3>
-                            <label className="btn btn-primary" style={{ cursor: 'pointer' }}><Plus size={18} /> Select File<input type="file" accept="image/*" onChange={(e) => { if (e.target.files[0]) { const r = new FileReader(); r.onload = () => setImage(r.result); r.readAsDataURL(e.target.files[0]); } }} style={{ display: 'none' }} /></label>
+                            <h3 style={{ margin: '0 0 8px 0', fontSize: '1.2rem', fontWeight: 700, color: '#1e293b' }}>Upload Document</h3>
+                            <p style={{ margin: '0 0 20px 0', fontSize: '0.88rem', color: '#64748b', textAlign: 'center', maxWidth: '300px' }}>Upload a file from your computer or scan the QR code to capture directly with your mobile camera.</p>
+                            <div style={{ display: 'flex', gap: '16px' }}>
+                                <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+                                    <Plus size={18} /> Select Local File
+                                    <input type="file" accept="image/*" onChange={(e) => { if (e.target.files[0]) { const r = new FileReader(); r.onload = () => setImage(r.result); r.readAsDataURL(e.target.files[0]); } }} style={{ display: 'none' }} />
+                                </label>
+                                <button className="btn btn-primary" onClick={handleOpenMobileUpload}>
+                                    <QrCode size={18} /> Scan from Mobile
+                                </button>
+                            </div>
                         </div>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -230,6 +311,30 @@ export default function SmartOCR() {
                             )}
                         </div>
                     </div>
+
+                    {/* Guidance & Tips Card */}
+                    <div className="glass-panel" style={{ padding: '24px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '20px', marginTop: '16px' }}>
+                        <h3 style={{ margin: '0 0 16px 0', fontSize: '1rem', fontWeight: 700, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Info size={18} color="#6366f1" /> Guidance & Tips
+                        </h3>
+                        <p style={{ fontSize: '0.82rem', color: '#475569', lineHeight: 1.5, margin: '0 0 16px 0' }}>
+                            You can absolutely use this Smart OCR Assistant page in the web app! It is a great, quick option for manual uploads.
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                            <div style={{ borderLeft: '3px solid #cbd5e1', paddingLeft: '12px' }}>
+                                <strong style={{ fontSize: '0.8rem', color: '#1e293b', display: 'block', marginBottom: '4px' }}>Option 1: Using the Web Assistant</strong>
+                                <span style={{ fontSize: '0.78rem', color: '#64748b', lineHeight: 1.4, display: 'block' }}>
+                                    Upload image, crop & extract text, then click <strong>"To Drive"</strong> to save to <code>OCR Extractions</code>. Rename & move both the image and <code>.txt</code> companion to the destination folder (e.g. <code>Raw_Supplier_Invoices</code> or <code>Raw_Bus_Cards</code>).
+                                </span>
+                            </div>
+                            <div style={{ borderLeft: '3px solid #6366f1', paddingLeft: '12px' }}>
+                                <strong style={{ fontSize: '0.8rem', color: '#6366f1', display: 'block', marginBottom: '4px' }}>Option 2: Local PaddleOCR (Recommended)</strong>
+                                <span style={{ fontSize: '0.78rem', color: '#64748b', lineHeight: 1.4, display: 'block' }}>
+                                    PaddleOCR is significantly more accurate than browser-based OCR (Tesseract.js), especially for tables, low-light scans, or columns. Run your local script, save output as <code>.txt</code> next to the image, and upload both to Drive.
+                                </span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <style>{ocrStyles}</style>
@@ -245,6 +350,55 @@ export default function SmartOCR() {
                     setUploadLink(null);
                 }}
             />
+
+            {/* QR Code Modal for Mobile Upload Gateway */}
+            {qrModal.isOpen && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+                    <div className="glass-panel animate-scale-up" style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
+                        <button 
+                            onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+                            style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                            onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                            onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
+                        >
+                            <X size={24} />
+                        </button>
+
+                        <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                            <Smartphone size={24} />
+                        </div>
+
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Mobile Upload Gateway</h3>
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: '1.4' }}>
+                            Scan this QR code with your smartphone camera to upload files directly to your <strong>{qrModal.folderName}</strong> folder.
+                        </p>
+
+                        {!qrModal.folderId ? (
+                            <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                <Loader2 size={36} className="animate-spin text-primary" style={{ color: '#6366f1' }} />
+                                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
+                            </div>
+                        ) : (
+                            <div>
+                                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block', marginBottom: '24px' }}>
+                                    <img 
+                                        src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
+                                            `${window.location.origin}/upload-media?folderId=${qrModal.folderId}&token=${localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent(qrModal.folderName)}`
+                                        )}`}
+                                        alt="Upload QR Code"
+                                        style={{ width: '200px', height: '200px', display: 'block' }}
+                                    />
+                                </div>
+
+                                <div style={{ fontSize: '0.8rem', color: '#94a3b8', background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+                                    <Info size={14} style={{ flexShrink: 0 }} />
+                                    <span>Session active. QR code is valid for temporary uploading.</span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

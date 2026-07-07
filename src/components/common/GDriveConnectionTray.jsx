@@ -4,7 +4,7 @@ import { HardDrive, CheckCircle2, AlertCircle, RefreshCw, LogOut, Link2, GripVer
 import { validateToken, connectGoogleAPI, getStoredToken } from '../../lib/googleAuthService';
 import { getCommunicationAccounts } from '../../lib/communicationService';
 
-const GDriveConnectionTray = () => {
+const GDriveConnectionTray = ({ variant = 'floating' }) => {
     const [status, setStatus] = useState('checking'); // 'checking', 'connected', 'disconnected'
     const [userInfo, setUserInfo] = useState(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
@@ -147,6 +147,105 @@ const GDriveConnectionTray = () => {
         await checkConnection();
         setTimeout(() => setIsRefreshing(false), 1000);
     };
+
+    if (variant === 'docked') {
+        return (
+            <div 
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    background: status === 'connected' ? '#f0fdf4' : (status === 'checking' ? '#f0f9ff' : '#fef2f2'),
+                    border: `1px solid ${status === 'connected' ? '#bbf7d0' : (status === 'checking' ? '#bae6fd' : '#fecaca')}`,
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    color: status === 'connected' ? '#15803d' : (status === 'checking' ? '#0369a1' : '#b91c1c'),
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                    transition: 'all 0.2s ease',
+                    height: '38px',
+                    boxSizing: 'border-box'
+                }}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <HardDrive size={16} className={status === 'checking' ? 'animate-spin' : ''} />
+                    <span style={{ fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
+                        Google Drive: {status === 'connected' ? (userInfo?.name || 'Connected') : (status === 'checking' ? 'Checking...' : 'Disconnected')}
+                    </span>
+                    {status === 'connected' && userInfo?.email && (
+                        <span style={{ fontSize: '0.75rem', opacity: 0.8, fontWeight: 400, whiteSpace: 'nowrap' }} title={userInfo.email}>
+                            ({userInfo.email})
+                        </span>
+                    )}
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginLeft: '4px', alignItems: 'center', borderLeft: `1px solid ${status === 'connected' ? '#bbf7d0' : (status === 'checking' ? '#bae6fd' : '#fecaca')}`, paddingLeft: '8px' }}>
+                    <button 
+                        onClick={handleRefresh}
+                        style={{ 
+                            background: 'none', 
+                            border: 'none', 
+                            padding: '2px', 
+                            cursor: 'pointer', 
+                            color: 'inherit', 
+                            display: 'flex', 
+                            alignItems: 'center',
+                            borderRadius: '4px',
+                            transition: 'background 0.2s'
+                        }}
+                        title="Refresh Connection"
+                        className="hover-bg-docked"
+                    >
+                        <RefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
+                    </button>
+                    
+                    {status === 'connected' ? (
+                        <button 
+                            onClick={handleDisconnect}
+                            style={{ 
+                                background: 'none', 
+                                border: 'none', 
+                                padding: '2px', 
+                                cursor: 'pointer', 
+                                color: '#b91c1c', 
+                                display: 'flex', 
+                                alignItems: 'center',
+                                borderRadius: '4px',
+                                transition: 'background 0.2s'
+                            }}
+                            title="Disconnect Drive"
+                            className="hover-bg-docked"
+                        >
+                            <LogOut size={13} />
+                        </button>
+                    ) : (
+                        <button 
+                            onClick={handleConnect}
+                            style={{ 
+                                background: 'none', 
+                                border: 'none', 
+                                padding: '2px', 
+                                cursor: 'pointer', 
+                                color: '#0369a1', 
+                                display: 'flex', 
+                                alignItems: 'center',
+                                borderRadius: '4px',
+                                transition: 'background 0.2s'
+                            }}
+                            title="Connect Drive"
+                            className="hover-bg-docked"
+                        >
+                            <Link2 size={13} />
+                        </button>
+                    )}
+                </div>
+                <style>{`
+                    .hover-bg-docked:hover { background: rgba(0,0,0,0.05); }
+                `}</style>
+            </div>
+        );
+    }
 
     return (
         <div 

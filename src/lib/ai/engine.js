@@ -1,14 +1,4 @@
-/**
- * ============================================================
- *  Centralized AI Engine with Multi-Provider Fallback
- *  Uses Google Gemini (Best performance + Vision/OCR support)
- *  with Groq API as the high-speed backup provider.
- * ============================================================
- */
-
-// Embedded fallback keys (sourced from environment variables)
-const FALLBACK_GEMINI_KEY = "";
-const FALLBACK_GROQ_KEY = "";
+import { getEnabledProvidersInPriority, getDecryptedApiKey } from './configService.js';
 
 // Helper to extract base64 representation without data type prefix
 const cleanBase64 = (base64) => {
@@ -29,87 +19,11 @@ const getMimeType = (base64) => {
 };
 
 // -----------------------------
-// PROVIDER 0: DEEPSEEK API (Primary / Text-only)
+// SPECIFIC API RUNNERS
 // -----------------------------
-async function chatWithDeepSeekAPI(prompt, history = [], useJson = true) {
-    const key = (typeof process !== 'undefined' && process.env.VITE_DEEPSEEK_API_KEY) || 
-                (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEEPSEEK_API_KEY) ||
-                (typeof process !== 'undefined' && process.env.DEEPSEEK_API_KEY) || 
-                (typeof import.meta !== 'undefined' && import.meta.env?.DEEPSEEK_API_KEY) ||
-                "";
 
-    const url = 'https://api.deepseek.com/chat/completions';
-
-    const messages = [];
-
-    // Map conversation history
-    history.forEach(msg => {
-        messages.push({
-            role: msg.role === 'model' ? 'assistant' : msg.role,
-            content: msg.content
-        });
-    });
-
-    messages.push({
-        role: 'user',
-        content: prompt
-    });
-
-    const body = {
-        model: 'deepseek-chat',
-        messages: messages,
-        temperature: 0.1,
-        max_tokens: 2048
-    };
-
-    if (useJson) {
-        body.response_format = { type: 'json_object' };
-    }
-
-    const TIMEOUT_MS = 15000; // 15-second timeout for DeepSeek
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${key}`
-            },
-            body: JSON.stringify(body),
-            signal: controller.signal
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error?.message || `DeepSeek API error: Status ${response.status}`);
-        }
-
-        const data = await response.json();
-        const text = data.choices?.[0]?.message?.content;
-        if (!text) throw new Error("Empty completion returned from DeepSeek API");
-
-        return useJson ? safeJSONParse(text) : text;
-    } catch (err) {
-        clearTimeout(timeoutId);
-        throw err;
-    }
-}
-
-// -----------------------------
-// PROVIDER 1: GOOGLE GEMINI API (Primary / Best Performance)
-// -----------------------------
-async function chatWithGeminiAPI(prompt, history = [], useJson = true, image = null) {
-    const key = (typeof process !== 'undefined' && process.env.VITE_GEMINI_API_KEY) || 
-                (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GEMINI_API_KEY) || 
-                FALLBACK_GEMINI_KEY;
-
-    // Use gemini-2.5-flash as the best performing general & vision model
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
-
+async function executeGeminiRequest(provider, apiKey, prompt, history, useJson, image, signal) {
+    const url = `${provider.baseUrl}/v1beta/models/${provider.modelName}:generateContent?key=${apiKey}`;
     const contents = [];
 
     // Map conversation history
@@ -143,8 +57,8 @@ async function chatWithGeminiAPI(prompt, history = [], useJson = true, image = n
     const body = {
         contents: contents,
         generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 2048
+            temperature: provider.temperature || 0.1,
+            maxOutputTokens: provider.maxTokens || 2048
         }
     };
 
@@ -160,140 +74,230 @@ async function chatWithGeminiAPI(prompt, history = [], useJson = true, image = n
         body.generationConfig.responseMimeType = "application/json";
     }
 
-    const TIMEOUT_MS = 12000; // 12-second timeout for Gemini API
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal
+    });
 
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-            signal: controller.signal
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error?.message || `Gemini API error: Status ${response.status}`);
-        }
-
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!text) throw new Error("Empty candidate content returned from Gemini API");
-
-        return useJson ? safeJSONParse(text) : text;
-    } catch (err) {
-        clearTimeout(timeoutId);
-        throw err;
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `Gemini API status ${response.status}`);
     }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error("Empty candidate content returned from Gemini API");
+
+    return useJson ? safeJSONParse(text) : text;
 }
 
-// -----------------------------
-// PROVIDER 2: GROQ API (Backup)
-// -----------------------------
-async function chatWithGroqAPI(model, prompt, history = [], useJson = true) {
-    const key = (typeof process !== 'undefined' && process.env.VITE_GROQ_API_KEY) || 
-                (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GROQ_API_KEY) || 
-                FALLBACK_GROQ_KEY;
+async function executeClaudeRequest(provider, apiKey, prompt, history, useJson, image, signal) {
+    const endpoint = `${provider.baseUrl.endsWith('/v1/messages') ? provider.baseUrl : provider.baseUrl + '/v1/messages'}`;
+    
+    // Claude system role
+    const systemMsg = history.find(msg => msg.role === 'system');
+    const filteredHistory = history.filter(msg => msg.role !== 'system');
+    
+    const messages = [];
+    filteredHistory.forEach(msg => {
+        messages.push({
+            role: msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user',
+            content: msg.content
+        });
+    });
 
-    const url = `https://api.groq.com/openai/v1/chat/completions`;
+    let contentPayload = prompt;
+    if (image) {
+        contentPayload = [
+            {
+                type: 'image',
+                source: {
+                    type: 'base64',
+                    media_type: getMimeType(image),
+                    data: cleanBase64(image)
+                }
+            },
+            {
+                type: 'text',
+                text: prompt
+            }
+        ];
+    }
 
-    const messages = [...history];
-    messages.push({ role: 'user', content: prompt });
+    messages.push({
+        role: 'user',
+        content: contentPayload
+    });
 
     const body = {
-        model: model,
-        messages: messages,
-        temperature: 0.1,
-        max_tokens: 2048,
-        top_p: 0.95
+        model: provider.modelName,
+        max_tokens: provider.maxTokens || 2048,
+        temperature: provider.temperature || 0.1,
+        messages
+    };
+
+    if (systemMsg) {
+        body.system = systemMsg.content;
+    }
+
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'dangerously-allow-html-user-delegation': 'true'
+        },
+        body: JSON.stringify(body),
+        signal
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `Claude status ${response.status}`);
+    }
+
+    const data = await response.json();
+    const text = data.content?.[0]?.text;
+    if (!text) throw new Error("Empty response from Claude API");
+
+    return useJson ? safeJSONParse(text) : text;
+}
+
+async function executeOpenAICompatibleRequest(provider, apiKey, prompt, history, useJson, image, signal) {
+    let url = provider.baseUrl;
+    if (!url.endsWith('/chat/completions') && !url.endsWith('/v1')) {
+        url = url.endsWith('/') ? `${url}chat/completions` : `${url}/chat/completions`;
+    } else if (url.endsWith('/v1')) {
+        url = `${url}/chat/completions`;
+    }
+
+    const messages = [];
+    history.forEach(msg => {
+        messages.push({
+            role: msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : msg.role,
+            content: msg.content
+        });
+    });
+
+    let userContent = prompt;
+    if (image) {
+        userContent = [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: `data:${getMimeType(image)};base64,${cleanBase64(image)}` } }
+        ];
+    }
+
+    messages.push({
+        role: 'user',
+        content: userContent
+    });
+
+    const body = {
+        model: provider.modelName,
+        messages,
+        temperature: provider.temperature || 0.1,
+        max_tokens: provider.maxTokens || 2048
     };
 
     if (useJson) {
-        body.response_format = { type: "json_object" };
+        body.response_format = { type: 'json_object' };
     }
 
-    const TIMEOUT_MS = 8000; // 8-second timeout for Groq
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${key}`
-            },
-            body: JSON.stringify(body),
-            signal: controller.signal
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error?.message || `Groq API error: Status ${response.status}`);
-        }
-
-        const data = await response.json();
-        const text = data.choices?.[0]?.message?.content;
-        if (!text) throw new Error("Empty completion returned from Groq API");
-
-        return useJson ? safeJSONParse(text) : text;
-    } catch (err) {
-        clearTimeout(timeoutId);
-        throw err;
+    const headers = {
+        'Content-Type': 'application/json'
+    };
+    if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
     }
+    if (provider.name === 'OpenRouter') {
+        headers['HTTP-Referer'] = window.location.origin;
+        headers['X-Title'] = 'CelronHub';
+    }
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `${provider.name} status ${response.status}`);
+    }
+
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content;
+    if (!text) throw new Error(`Empty completion from ${provider.name}`);
+
+    return useJson ? safeJSONParse(text) : text;
 }
 
 // -----------------------------
-// CORE RUNNER (WITH AUTOMATIC PROVIDER ESCALATION)
+// CORE DYNAMIC FALLBACK ROUTER
 // -----------------------------
+
 export async function runWithFallback(prompt, useSmart = false, history = [], tools = null, image = null, useJson = true) {
-    // If an image is provided, route directly to Gemini as DeepSeek V3 does not support vision
-    if (image) {
-        console.log("[AI Engine] Vision payload detected. Routing primary request to Gemini API...");
-        try {
-            return await chatWithGeminiAPI(prompt, history, useJson, image);
-        } catch (geminiErr) {
-            console.warn(`[AI Engine] Gemini API failed for vision task (Error: ${geminiErr.message}). Escalating to Groq backup (text-only)...`);
-            const groqModel = useSmart ? "llama-3.3-70b-versatile" : "llama-3.1-8b-instant";
+    const enabledProviders = getEnabledProvidersInPriority();
+    
+    if (enabledProviders.length === 0) {
+        throw new Error("No AI providers are enabled in Settings. Please enable at least one provider (e.g. Gemini, DeepSeek, Groq) in Settings > AI Providers.");
+    }
+
+    const errors = [];
+    for (const provider of enabledProviders) {
+        const decryptedKey = await getDecryptedApiKey(provider.name);
+        const timeoutMs = provider.timeout || 15000;
+        const retryLimit = provider.retryCount || 1;
+
+        let attempt = 0;
+        let success = false;
+        let result = null;
+
+        // Vision task compatibility check: route text fallback if non-supporting model handles image
+        if (image && provider.name !== 'Gemini' && provider.name !== 'OpenAI' && provider.name !== 'Claude' && provider.name !== 'OpenRouter') {
+            console.warn(`[AI Engine] Provider "${provider.name}" may not support vision payloads. Skipping for image extraction task.`);
+            continue;
+        }
+
+        while (attempt < retryLimit && !success) {
+            attempt++;
+            console.log(`[AI Engine] Attempting task via ${provider.name} (Model: ${provider.modelName}, Attempt ${attempt}/${retryLimit})...`);
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
             try {
-                return await chatWithGroqAPI(groqModel, prompt, history, useJson);
-            } catch (groqErr) {
-                console.error("[AI Engine] Groq API also failed for vision fallback.");
-                throw new Error(`AI Engines failed for vision. Gemini: ${geminiErr.message}. Groq: ${groqErr.message}`);
+                if (provider.name === 'Gemini') {
+                    result = await executeGeminiRequest(provider, decryptedKey, prompt, history, useJson, image, controller.signal);
+                } else if (provider.name === 'Claude') {
+                    result = await executeClaudeRequest(provider, decryptedKey, prompt, history, useJson, image, controller.signal);
+                } else {
+                    result = await executeOpenAICompatibleRequest(provider, decryptedKey, prompt, history, useJson, image, controller.signal);
+                }
+                success = true;
+                clearTimeout(timeoutId);
+            } catch (err) {
+                clearTimeout(timeoutId);
+                const isTimeout = err.name === 'AbortError';
+                const msg = isTimeout ? `Request timed out after ${timeoutMs}ms` : err.message;
+                console.warn(`[AI Engine] ${provider.name} failed: ${msg}`);
+                
+                if (attempt >= retryLimit) {
+                    errors.push(`${provider.name} (${provider.modelName}): ${msg}`);
+                }
             }
+        }
+
+        if (success) {
+            return result;
         }
     }
 
-    // 1. Try DeepSeek API first (Primary Text Provider)
-    try {
-        console.log("[AI Engine] Executing primary request via DeepSeek API...");
-        return await chatWithDeepSeekAPI(prompt, history, useJson);
-    } catch (deepseekErr) {
-        console.warn(`[AI Engine] DeepSeek API failed (Error: ${deepseekErr.message}). Escalating to Gemini backup...`);
-
-        // 2. Try Gemini API as backup
-        try {
-            console.log("[AI Engine] Executing backup request via Gemini API...");
-            return await chatWithGeminiAPI(prompt, history, useJson, null);
-        } catch (geminiErr) {
-            console.warn(`[AI Engine] Gemini backup failed (Error: ${geminiErr.message}). Escalating to Groq backup...`);
-
-            // 3. Try Groq API as final backup
-            const groqModel = useSmart ? "llama-3.3-70b-versatile" : "llama-3.1-8b-instant";
-            try {
-                console.log(`[AI Engine] Executing final backup request via Groq API (${groqModel})...`);
-                return await chatWithGroqAPI(groqModel, prompt, history, useJson);
-            } catch (groqErr) {
-                console.error("[AI Engine] Groq API also failed. All providers exhausted.");
-                throw new Error(`AI Engines failed. DeepSeek: ${deepseekErr.message}. Gemini: ${geminiErr.message}. Groq: ${groqErr.message}`);
-            }
-        }
-    }
+    throw new Error(`All enabled AI providers failed to resolve the request:\n${errors.join('\n')}`);
 }
 
 function safeJSONParse(text) {

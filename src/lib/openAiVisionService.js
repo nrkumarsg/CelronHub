@@ -12,7 +12,7 @@ const getOpenAIKey = () => {
          DEFAULT_OPENAI_KEY;
 };
 
-const DEFAULT_GROQ_KEY = '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';
+const DEFAULT_GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY || '';
 
 const getGroqKey = () => {
   return localStorage.getItem('custom_groq_key') || 
@@ -477,21 +477,17 @@ export const extractBillWithGroq = async (base64ImageOrText, isText = false) => 
  * @param {string} base64Image - Base64 image data (including or excluding data URI prefix)
  * @returns {Promise<Object>} Extracted details matching Partner and Contact schema
  */
-export const extractCardWithGroq = async (base64Image) => {
+export const extractCardWithGroq = async (base64ImageOrText, isText = false) => {
   const apiKey = getGroqKey();
   
   if (!apiKey) {
     throw new Error('Groq API Key is missing. Please configure it in your Settings or .env file.');
   }
 
-  // Ensure clean base64 format with proper Data URI header for Groq
-  let cleanBase64 = base64Image;
-  if (!cleanBase64.startsWith('data:image/')) {
-    cleanBase64 = `data:image/jpeg;base64,${cleanBase64}`;
-  }
+  const modelName = isText ? 'llama-3.3-70b-versatile' : 'meta-llama/llama-4-scout-17b-16e-instruct';
 
   const systemPrompt = `
-    Analyze the provided business card image. Extract structured information for BOTH the organization (Partner) and the contact person (Contact).
+    Analyze the business card information. Extract structured details for BOTH the organization (Partner) and the contact person (Contact).
     
     You MUST output ONLY a valid JSON object with the following schema:
     {
@@ -524,6 +520,26 @@ export const extractCardWithGroq = async (base64Image) => {
     3. Ensure general office lines go to partner.phone, while personal mobile lines go to contact.handphone.
   `;
 
+  const messageContent = [];
+  if (isText) {
+    messageContent.push({
+      type: 'text',
+      text: `Business Card OCR Text:\n"""\n${base64ImageOrText}\n"""`
+    });
+  } else {
+    // Ensure clean base64 format with proper Data URI header for Groq
+    let cleanBase64 = base64ImageOrText;
+    if (!cleanBase64.startsWith('data:image/')) {
+      cleanBase64 = `data:image/jpeg;base64,${cleanBase64}`;
+    }
+    messageContent.push({
+      type: 'image_url',
+      image_url: {
+        url: cleanBase64
+      }
+    });
+  }
+
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -532,22 +548,15 @@ export const extractCardWithGroq = async (base64Image) => {
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        model: modelName,
         messages: [
           {
+            role: 'system',
+            content: systemPrompt
+          },
+          {
             role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: systemPrompt
-              },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: cleanBase64
-                }
-              }
-            ]
+            content: messageContent
           }
         ],
         response_format: { type: 'json_object' },

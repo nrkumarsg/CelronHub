@@ -3,9 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { 
     Search, Plus, Book, FileText, Globe, Trash2, ExternalLink, 
     Edit, Sparkles, LayoutDashboard, Database, Upload, MessageSquare, 
-    AlertTriangle, ShieldAlert, CheckCircle, RefreshCw, BarChart3, HelpCircle 
+    AlertTriangle, ShieldAlert, CheckCircle, RefreshCw, BarChart3, HelpCircle,
+    Ship, Wrench, ChevronLeft, ChevronRight, X
 } from 'lucide-react';
 import { getManuals, deleteManual } from '../lib/manualsService';
+import { getMakers, getModels, getSystems } from '../lib/marineCatalogService';
+import { getCatalogItems } from '../lib/catalogService';
 import BookCover from '../components/common/BookCover';
 import { useAuth } from '../contexts/AuthContext';
 import Papa from 'papaparse';
@@ -23,8 +26,24 @@ export default function ManualsDirectory() {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterMfg, setFilterMfg] = useState('');
     const [filterCategory, setFilterCategory] = useState('');
+    const [filterSystemId, setFilterSystemId] = useState('');
+    const [filterMakerId, setFilterMakerId] = useState('');
+    const [filterModelId, setFilterModelId] = useState('');
     const [viewMode, setViewMode] = useState('grid');
     
+    // Catalog lists for filters
+    const [makersList, setMakersList] = useState([]);
+    const [modelsList, setModelsList] = useState([]);
+    const [systemsList, setSystemsList] = useState([]);
+    
+    // Selected manual for relational details
+    const [selectedManual, setSelectedManual] = useState(null);
+    const [associatedParts, setAssociatedParts] = useState([]);
+    const [partsLoading, setPartsLoading] = useState(false);
+    const [partsPage, setPartsPage] = useState(1);
+    const [totalPartsPages, setTotalPartsPages] = useState(1);
+    const [totalParts, setTotalParts] = useState(0);
+
     // AI Finder State
     const [finderMfg, setFinderMfg] = useState('');
     const [finderModel, setFinderModel] = useState('');
@@ -46,6 +65,42 @@ export default function ManualsDirectory() {
     const [importData, setImportData] = useState([]);
     const [importing, setImporting] = useState(false);
     const [importLog, setImportLog] = useState('');
+    
+    // Global Parts & Specs search states
+    const [globalSearchTerm, setGlobalSearchTerm] = useState('');
+    const [globalSearchTarget, setGlobalSearchTarget] = useState('google');
+
+    const handleGlobalSearch = () => {
+        if (!globalSearchTerm.trim()) {
+            alert('Please enter a search query.');
+            return;
+        }
+        
+        let url = '';
+        const query = encodeURIComponent(globalSearchTerm.trim());
+        
+        switch (globalSearchTarget) {
+            case 'google':
+                url = `https://www.google.com/search?q=${query}`;
+                break;
+            case 'images':
+                url = `https://www.google.com/search?tbm=isch&q=${query}`;
+                break;
+            case 'pdf':
+                url = `https://www.google.com/search?q=${query}+filetype%3Apdf`;
+                break;
+            case 'shipserv':
+                url = `https://www.shipserv.com/search?q=${query}`;
+                break;
+            case 'sinor':
+                url = `https://www.google.com/search?q=${query}+site%3Asinormarine.com`;
+                break;
+            default:
+                url = `https://www.google.com/search?q=${query}`;
+        }
+        
+        window.open(url, '_blank');
+    };
 
     const navigate = useNavigate();
     const { profile } = useAuth();
@@ -60,10 +115,88 @@ export default function ManualsDirectory() {
     }, []);
 
     useEffect(() => {
+        if (profile?.company_id) {
+            fetchCatalogData();
+        }
+    }, [profile]);
+
+    const fetchCatalogData = async () => {
+        try {
+            const cid = profile.company_id;
+            const [makersRes, modelsRes, systemsRes] = await Promise.all([
+                getMakers(cid),
+                getModels(cid),
+                getSystems(1, 1000, '', {}, cid)
+            ]);
+            setMakersList(makersRes.data || []);
+            setModelsList(modelsRes.data || []);
+            setSystemsList(systemsRes.data || []);
+        } catch (e) {
+            console.error("Error fetching catalog data", e);
+        }
+    };
+
+    useEffect(() => {
         if (activeTab === 'dashboard') {
             fetchDashboardStats();
         }
     }, [activeTab]);
+
+    useEffect(() => {
+        if (selectedManual) {
+            setPartsPage(1);
+            fetchAssociatedParts();
+        } else {
+            setAssociatedParts([]);
+        }
+    }, [selectedManual]);
+
+    useEffect(() => {
+        if (selectedManual) {
+            fetchAssociatedParts();
+        }
+    }, [partsPage]);
+
+    const fetchAssociatedParts = async () => {
+        if (!selectedManual) return;
+        setPartsLoading(true);
+        
+        const filters = {};
+        if (selectedManual.system_id) {
+            filters.system_id = selectedManual.system_id;
+        } else {
+            if (selectedManual.maker_id) filters.maker_id = selectedManual.maker_id;
+            if (selectedManual.model_id) filters.model_id = selectedManual.model_id;
+        }
+
+        // If no relational key exists, clear parts list
+        if (!filters.system_id && !filters.maker_id && !filters.model_id) {
+            setAssociatedParts([]);
+            setTotalParts(0);
+            setTotalPartsPages(1);
+            setPartsLoading(false);
+            return;
+        }
+
+        const { data, count, error } = await getCatalogItems(
+            partsPage,
+            10,
+            filters,
+            '',
+            'name',
+            'asc'
+        );
+
+        if (!error) {
+            setAssociatedParts(data || []);
+            setTotalParts(count || 0);
+            setTotalPartsPages(Math.ceil((count || 0) / 10));
+        } else {
+            console.error("Error fetching associated parts:", error);
+            setAssociatedParts([]);
+        }
+        setPartsLoading(false);
+    };
 
     const tryDetectFolder = async () => {
         const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
@@ -125,6 +258,9 @@ export default function ManualsDirectory() {
     const handleDelete = async (id) => {
         if (window.confirm('Remove this manual from library?')) {
             await deleteManual(id);
+            if (selectedManual?.id === id) {
+                setSelectedManual(null);
+            }
             fetchManuals();
             fetchDashboardStats();
         }
@@ -297,7 +433,11 @@ export default function ManualsDirectory() {
         const matchesMfg = !filterMfg || (m.manufacturer || m.author_company || '').toLowerCase().includes(filterMfg.toLowerCase());
         const matchesCat = !filterCategory || (m.category || m.group_name || '').toLowerCase().includes(filterCategory.toLowerCase());
         
-        return matchesSearch && matchesMfg && matchesCat;
+        const matchesSystem = !filterSystemId || m.system_id === filterSystemId;
+        const matchesMaker = !filterMakerId || m.maker_id === filterMakerId;
+        const matchesModel = !filterModelId || m.model_id === filterModelId;
+        
+        return matchesSearch && matchesMfg && matchesCat && matchesSystem && matchesMaker && matchesModel;
     });
 
     return (
@@ -311,7 +451,7 @@ export default function ManualsDirectory() {
                 
                 <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <button 
-                        onClick={() => setActiveTab('library')}
+                        onClick={() => { setActiveTab('library'); setSelectedManual(null); }}
                         style={{
                             display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600,
                             background: activeTab === 'library' ? '#f1f5f9' : 'transparent',
@@ -322,7 +462,7 @@ export default function ManualsDirectory() {
                         <Database size={18} /> Library Grid
                     </button>
                     <button 
-                        onClick={() => setActiveTab('finder')}
+                        onClick={() => { setActiveTab('finder'); setSelectedManual(null); }}
                         style={{
                             display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600,
                             background: activeTab === 'finder' ? '#f1f5f9' : 'transparent',
@@ -333,7 +473,7 @@ export default function ManualsDirectory() {
                         <Sparkles size={18} /> AI Manual Finder
                     </button>
                     <button 
-                        onClick={() => setActiveTab('chat')}
+                        onClick={() => { setActiveTab('chat'); setSelectedManual(null); }}
                         style={{
                             display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600,
                             background: activeTab === 'chat' ? '#f1f5f9' : 'transparent',
@@ -344,7 +484,7 @@ export default function ManualsDirectory() {
                         <MessageSquare size={18} /> AI RAG Chat
                     </button>
                     <button 
-                        onClick={() => setActiveTab('dashboard')}
+                        onClick={() => { setActiveTab('dashboard'); setSelectedManual(null); }}
                         style={{
                             display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600,
                             background: activeTab === 'dashboard' ? '#f1f5f9' : 'transparent',
@@ -355,7 +495,7 @@ export default function ManualsDirectory() {
                         <LayoutDashboard size={18} /> Dashboard & Health
                     </button>
                     <button 
-                        onClick={() => setActiveTab('import')}
+                        onClick={() => { setActiveTab('import'); setSelectedManual(null); }}
                         style={{
                             display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600,
                             background: activeTab === 'import' ? '#f1f5f9' : 'transparent',
@@ -383,24 +523,107 @@ export default function ManualsDirectory() {
             </aside>
 
             {/* Main Content Workspace */}
-            <main style={{ flex: 1, padding: '40px', maxWidth: '1200px', margin: '0 auto' }}>
+            <main style={{ flex: 1, padding: '40px', maxWidth: '1400px', margin: '0 auto', overflowX: 'hidden' }}>
                 
                 {/* 1. LIBRARY GRID TAB */}
                 {activeTab === 'library' && (
                     <div>
+                        {/* Global Parts Finder Banner */}
+                        <div style={{
+                            background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+                            borderRadius: '16px',
+                            padding: '24px',
+                            color: '#fff',
+                            marginBottom: '32px',
+                            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
+                            border: '1px solid rgba(255,255,255,0.05)'
+                        }}>
+                            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <Globe size={18} color="#38bdf8" /> Global Marine Parts &amp; Intelligence Search
+                            </h3>
+                            <p style={{ margin: '0 0 16px 0', fontSize: '0.825rem', color: '#94a3b8' }}>
+                                Search across external databases, suppliers, and Google to fetch datasheets, diagrams, and manufacturer specs.
+                            </p>
+                            
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                <div style={{ flex: 1, minWidth: '240px', position: 'relative' }}>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Enter model, part name, or brand (e.g. Yanmar 6EY18AL piston)..."
+                                        value={globalSearchTerm}
+                                        onChange={(e) => setGlobalSearchTerm(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') handleGlobalSearch(); }}
+                                        style={{
+                                            width: '100%',
+                                            padding: '12px 16px',
+                                            borderRadius: '10px',
+                                            border: '1px solid rgba(255,255,255,0.1)',
+                                            background: 'rgba(255,255,255,0.05)',
+                                            color: '#fff',
+                                            outline: 'none',
+                                            fontSize: '0.9rem',
+                                            transition: 'all 0.2s',
+                                            boxSizing: 'border-box'
+                                        }}
+                                    />
+                                </div>
+                                
+                                <select 
+                                    value={globalSearchTarget}
+                                    onChange={(e) => setGlobalSearchTarget(e.target.value)}
+                                    style={{
+                                        padding: '12px 16px',
+                                        borderRadius: '10px',
+                                        border: '1px solid rgba(255,255,255,0.1)',
+                                        background: '#1e293b',
+                                        color: '#fff',
+                                        fontSize: '0.9rem',
+                                        cursor: 'pointer',
+                                        outline: 'none'
+                                    }}
+                                // Wait, we should make sure we don't styles overflow select width
+                                >
+                                    <option value="google">Google Web</option>
+                                    <option value="images">Google Images</option>
+                                    <option value="pdf">PDF Manuals Only</option>
+                                    <option value="shipserv">ShipServ Directory</option>
+                                    <option value="sinor">Sinor Marine</option>
+                                </select>
+                                
+                                <button 
+                                    onClick={handleGlobalSearch}
+                                    className="btn btn-primary"
+                                    style={{
+                                        padding: '12px 24px',
+                                        borderRadius: '10px',
+                                        background: '#38bdf8',
+                                        color: '#0f172a',
+                                        fontWeight: 700,
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    <Search size={16} /> Search Engine
+                                </button>
+                            </div>
+                        </div>
                         <header style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div>
                                 <h1 style={{ fontSize: '2rem', fontWeight: 800, color: '#1e293b', margin: '0 0 6px 0', letterSpacing: '-0.02em' }}>Technical Library</h1>
                                 <p style={{ margin: 0, color: '#64748b', fontSize: '0.95rem' }}>Browse your collection of technical references and manuals.</p>
                             </div>
-                            <button onClick={() => navigate('/manuals/new')} className="btn btn-primary" style={{ padding: '12px 24px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button onClick={() => navigate('/catalog/manuals/new')} className="btn btn-primary" style={{ padding: '12px 24px', display: 'flex', alignItems: 'center', gap: '8px', background: '#6366f1' }}>
                                 <Plus size={18} /> Add New Manual
                             </button>
                         </header>
 
-                        {/* Search & Filters */}
-                        <div style={{ display: 'flex', gap: '16px', marginBottom: '32px', flexWrap: 'wrap' }}>
-                            <div style={{ flex: 1, minWidth: '280px', display: 'flex', background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '4px 12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                        {/* Search & Relational Dropdown Filters */}
+                        <div style={{ display: 'flex', gap: '16px', marginBottom: '32px', flexWrap: 'wrap', alignItems: 'center' }}>
+                            <div style={{ flex: 2, minWidth: '280px', display: 'flex', background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '4px 12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', color: '#94a3b8' }}><Search size={20} /></div>
                                 <input
                                     type="text"
@@ -410,20 +633,45 @@ export default function ManualsDirectory() {
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                 />
                             </div>
-                            <input 
-                                type="text"
-                                placeholder="Filter Manufacturer"
-                                style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', fontSize: '0.95rem', width: '180px' }}
-                                value={filterMfg}
-                                onChange={(e) => setFilterMfg(e.target.value)}
-                            />
-                            <input 
-                                type="text"
-                                placeholder="Filter Category"
-                                style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', fontSize: '0.95rem', width: '180px' }}
-                                value={filterCategory}
-                                onChange={(e) => setFilterCategory(e.target.value)}
-                            />
+                            
+                            <select
+                                style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', fontSize: '0.95rem', width: '200px', cursor: 'pointer' }}
+                                value={filterMakerId}
+                                onChange={(e) => {
+                                    setFilterMakerId(e.target.value);
+                                    setFilterModelId(''); // Reset model
+                                }}
+                            >
+                                <option value="">All Brands / Makers</option>
+                                {makersList.map(m => (
+                                    <option key={m.id} value={m.id}>{m.name}</option>
+                                ))}
+                            </select>
+
+                            <select
+                                style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', fontSize: '0.95rem', width: '200px', cursor: 'pointer' }}
+                                disabled={!filterMakerId}
+                                value={filterModelId}
+                                onChange={(e) => setFilterModelId(e.target.value)}
+                            >
+                                <option value="">All Models</option>
+                                {modelsList
+                                    .filter(m => m.maker_id === filterMakerId)
+                                    .map(m => (
+                                        <option key={m.id} value={m.id}>{m.name}</option>
+                                    ))}
+                            </select>
+
+                            <select
+                                style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', fontSize: '0.95rem', width: '240px', cursor: 'pointer' }}
+                                value={filterSystemId}
+                                onChange={(e) => setFilterSystemId(e.target.value)}
+                            >
+                                <option value="">All Machinery Systems</option>
+                                {systemsList.map(s => (
+                                    <option key={s.id} value={s.id}>{s.name} ({s.system_no || 'No Ref'})</option>
+                                ))}
+                            </select>
                         </div>
 
                         {loading ? (
@@ -438,55 +686,215 @@ export default function ManualsDirectory() {
                                 <p style={{ color: '#94a3b8', margin: 0 }}>Try adjusting your search criteria or add a new manual.</p>
                             </div>
                         ) : (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '24px' }}>
-                                {filteredManuals.map(manual => (
-                                    <div key={manual.id} className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', background: '#fff' }}>
-                                        <div style={{ marginBottom: '16px' }}>
-                                            <BookCover 
-                                                title={manual.title} 
-                                                group={manual.group_name || manual.category} 
-                                                company={manual.author_company || manual.manufacturer} 
-                                            />
-                                        </div>
-                                        <h3 style={{ margin: '0 0 8px 0', fontSize: '1.05rem', fontWeight: 700, color: '#1e293b', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', height: '40px' }}>
-                                            {manual.title}
-                                        </h3>
-                                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '16px' }}>
-                                            <span style={{ fontSize: '0.7rem', padding: '2px 8px', background: '#eff6ff', color: '#2563eb', borderRadius: '4px', fontWeight: 600 }}>
-                                                {manual.manufacturer || manual.author_company}
-                                            </span>
-                                            {manual.model && (
-                                                <span style={{ fontSize: '0.7rem', padding: '2px 8px', background: '#f5f3ff', color: '#7c3aed', borderRadius: '4px', fontWeight: 600 }}>
-                                                    {manual.model}
+                            <div style={{ display: 'flex', gap: '28px', alignItems: 'flex-start' }}>
+                                {/* Left Side: Manual Cards Grid */}
+                                <div style={{ flex: selectedManual ? '2' : '1', display: 'grid', gridTemplateColumns: selectedManual ? 'repeat(auto-fill, minmax(230px, 1fr))' : 'repeat(auto-fill, minmax(265px, 1fr))', gap: '24px' }}>
+                                    {filteredManuals.map(manual => (
+                                        <div 
+                                            key={manual.id} 
+                                            className="glass-panel" 
+                                            style={{ 
+                                                padding: '16px', 
+                                                display: 'flex', 
+                                                flexDirection: 'column', 
+                                                background: '#fff',
+                                                cursor: 'pointer',
+                                                border: selectedManual?.id === manual.id ? '2px solid #6366f1' : '1px solid #e2e8f0',
+                                                transition: 'all 0.2s ease',
+                                                transform: selectedManual?.id === manual.id ? 'scale(1.01)' : 'none'
+                                            }}
+                                            onClick={() => setSelectedManual(manual)}
+                                        >
+                                            <div style={{ marginBottom: '16px' }}>
+                                                <BookCover 
+                                                    title={manual.title} 
+                                                    group={manual.group_name || manual.category} 
+                                                    company={manual.author_company || manual.manufacturer} 
+                                                />
+                                            </div>
+                                            <h3 style={{ margin: '0 0 8px 0', fontSize: '1.05rem', fontWeight: 700, color: '#1e293b', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', height: '40px' }}>
+                                                {manual.title}
+                                            </h3>
+                                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                                                <span style={{ fontSize: '0.7rem', padding: '2px 8px', background: '#eff6ff', color: '#2563eb', borderRadius: '4px', fontWeight: 600 }}>
+                                                    {manual.manufacturer || manual.author_company}
                                                 </span>
-                                            )}
-                                        </div>
-                                        <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
-                                            <button 
-                                                onClick={() => {
-                                                    setChatManualId(manual.id);
-                                                    setActiveTab('chat');
-                                                    setChatHistory([{ role: 'assistant', content: `Hello! I have loaded "${manual.title}". Ask me any technical questions about this system!` }]);
-                                                }}
-                                                className="btn btn-primary"
-                                                style={{ flex: 1, padding: '8px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-                                            >
-                                                <Sparkles size={14} /> AI Chat
-                                            </button>
-                                            <a href={manual.file_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ padding: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                                <ExternalLink size={14} />
-                                            </a>
-                                            <button onClick={() => navigate(`/manuals/${manual.id}`)} style={{ padding: '8px', background: 'none', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#64748b', cursor: 'pointer' }}>
-                                                <Edit size={14} />
-                                            </button>
-                                            {isAdmin && (
-                                                <button onClick={() => handleDelete(manual.id)} style={{ padding: '8px', background: 'none', border: '1px solid #fee2e2', borderRadius: '8px', color: '#ef4444', cursor: 'pointer' }}>
-                                                    <Trash2 size={14} />
+                                                {manual.model && (
+                                                    <span style={{ fontSize: '0.7rem', padding: '2px 8px', background: '#f5f3ff', color: '#7c3aed', borderRadius: '4px', fontWeight: 600 }}>
+                                                        {manual.model}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }} onClick={e => e.stopPropagation()}>
+                                                <button 
+                                                    onClick={() => {
+                                                        setChatManualId(manual.id);
+                                                        setActiveTab('chat');
+                                                        setChatHistory([{ role: 'assistant', content: `Hello! I have loaded "${manual.title}". Ask me any technical questions about this system!` }]);
+                                                    }}
+                                                    className="btn btn-primary"
+                                                    style={{ flex: 1, padding: '8px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: '#6366f1' }}
+                                                >
+                                                    <Sparkles size={14} /> AI Chat
                                                 </button>
+                                                {manual.file_url && (
+                                                    <a href={manual.file_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ padding: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                        <ExternalLink size={14} />
+                                                    </a>
+                                                )}
+                                                <button onClick={() => navigate(`/catalog/manuals/${manual.id}`)} style={{ padding: '8px', background: 'none', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#64748b', cursor: 'pointer' }}>
+                                                    <Edit size={14} />
+                                                </button>
+                                                {isAdmin && (
+                                                    <button onClick={() => handleDelete(manual.id)} style={{ padding: '8px', background: 'none', border: '1px solid #fee2e2', borderRadius: '8px', color: '#ef4444', cursor: 'pointer' }}>
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Right Side: Relational Profile Side Panel */}
+                                {selectedManual && (
+                                    <aside className="glass-panel" style={{ flex: '1', minWidth: '360px', background: '#fff', padding: '24px', borderRadius: '16px', display: 'flex', flexDirection: 'column', gap: '20px', position: 'sticky', top: '24px', border: '1px solid #e2e8f0' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                            <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#1e293b' }}>Manual Profile</h3>
+                                            <button 
+                                                onClick={() => setSelectedManual(null)}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}
+                                            >
+                                                <X size={20} />
+                                            </button>
+                                        </div>
+
+                                        <div style={{ display: 'flex', gap: '14px' }}>
+                                            <div style={{ width: '80px' }}>
+                                                <BookCover 
+                                                    title={selectedManual.title} 
+                                                    group={selectedManual.group_name || selectedManual.category} 
+                                                    company={selectedManual.author_company || selectedManual.manufacturer} 
+                                                />
+                                            </div>
+                                            <div style={{ flex: 1 }}>
+                                                <h4 style={{ margin: '0 0 6px 0', fontSize: '1rem', fontWeight: 700, color: '#1e293b' }}>{selectedManual.title}</h4>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem', color: '#64748b' }}>
+                                                    <div><strong>Maker:</strong> {selectedManual.manufacturer || selectedManual.author_company}</div>
+                                                    {selectedManual.model && <div><strong>Model:</strong> {selectedManual.model}</div>}
+                                                    {selectedManual.category && <div><strong>Category:</strong> {selectedManual.category}</div>}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Linked Machinery System */}
+                                        <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
+                                            <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <Ship size={16} color="#6366f1" /> Machinery System
+                                            </h4>
+                                            {selectedManual.system_id ? (
+                                                (() => {
+                                                    const sys = systemsList.find(s => s.id === selectedManual.system_id);
+                                                    return sys ? (
+                                                        <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                            <div>
+                                                                <div style={{ fontWeight: 600, fontSize: '0.85rem', color: '#1e293b' }}>{sys.name}</div>
+                                                                <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Ref: {sys.system_no || 'N/A'}</div>
+                                                            </div>
+                                                            <button 
+                                                                onClick={() => navigate(`/catalog/system/${sys.id}`)}
+                                                                className="btn btn-secondary"
+                                                                style={{ padding: '6px 10px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                            >
+                                                                View
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <div style={{ fontSize: '0.85rem', color: '#94a3b8', fontStyle: 'italic' }}>System ID linked but not found.</div>
+                                                    );
+                                                })()
+                                            ) : (
+                                                <div style={{ fontSize: '0.85rem', color: '#94a3b8', fontStyle: 'italic' }}>No Machinery System associated with this manual.</div>
                                             )}
                                         </div>
-                                    </div>
-                                ))}
+
+                                        {/* Linked Spare Parts Grid */}
+                                        <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                                <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                    <Wrench size={16} color="#0ea5e9" /> Spare Parts &amp; Services
+                                                </h4>
+                                                <button 
+                                                    onClick={() => navigate('/catalog/new', { state: { system_id: selectedManual.system_id, maker_id: selectedManual.maker_id, model_id: selectedManual.model_id } })}
+                                                    className="btn btn-primary" 
+                                                    style={{ padding: '6px 10px', fontSize: '0.75rem', background: '#6366f1', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                >
+                                                    <Plus size={12} /> Add New
+                                                </button>
+                                            </div>
+
+                                            {partsLoading ? (
+                                                <div style={{ textAlign: 'center', padding: '20px 0', color: '#94a3b8', fontSize: '0.85rem' }}>
+                                                    <RefreshCw size={18} className="animate-spin" style={{ margin: '0 auto 8px' }} />
+                                                    Loading associated parts...
+                                                </div>
+                                            ) : associatedParts.length === 0 ? (
+                                                <div style={{ padding: '20px', textAlign: 'center', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic' }}>
+                                                    No spare parts linked to this model/system.
+                                                </div>
+                                            ) : (
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', flex: 1, maxHeight: '280px', paddingRight: '4px' }}>
+                                                    {associatedParts.map(part => (
+                                                        <div 
+                                                            key={part.id} 
+                                                            style={{ 
+                                                                display: 'flex', 
+                                                                justifyContent: 'space-between', 
+                                                                alignItems: 'center', 
+                                                                padding: '10px 12px', 
+                                                                background: '#f8fafc', 
+                                                                borderRadius: '8px', 
+                                                                border: '1px solid #e2e8f0',
+                                                                fontSize: '0.8rem'
+                                                            }}
+                                                        >
+                                                            <div>
+                                                                <div style={{ fontWeight: 600, color: '#1e293b' }}>{part.name}</div>
+                                                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Qty: {part.quantity} | Price: {part.selling_price} {part.currency}</div>
+                                                            </div>
+                                                            <button 
+                                                                onClick={() => navigate(`/catalog/${part.id}`)}
+                                                                style={{ padding: '4px 8px', background: 'none', border: '1px solid #e2e8f0', borderRadius: '4px', color: '#6366f1', cursor: 'pointer', fontWeight: 600 }}
+                                                            >
+                                                                Edit
+                                                            </button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            {/* Sub Pagination */}
+                                            {totalPartsPages > 1 && (
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
+                                                    <button 
+                                                        disabled={partsPage === 1}
+                                                        onClick={() => setPartsPage(p => Math.max(1, p - 1))}
+                                                        style={{ border: 'none', background: 'none', cursor: partsPage === 1 ? 'not-allowed' : 'pointer', color: partsPage === 1 ? '#cbd5e1' : '#6366f1', display: 'flex', alignItems: 'center', fontSize: '0.75rem' }}
+                                                    >
+                                                        <ChevronLeft size={14} /> Prev
+                                                    </button>
+                                                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{partsPage} / {totalPartsPages}</span>
+                                                    <button 
+                                                        disabled={partsPage === totalPartsPages}
+                                                        onClick={() => setPartsPage(p => Math.min(totalPartsPages, p + 1))}
+                                                        style={{ border: 'none', background: 'none', cursor: partsPage === totalPartsPages ? 'not-allowed' : 'pointer', color: partsPage === totalPartsPages ? '#cbd5e1' : '#6366f1', display: 'flex', alignItems: 'center', fontSize: '0.75rem' }}
+                                                    >
+                                                        Next <ChevronRight size={14} />
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </aside>
+                                )}
                             </div>
                         )}
                     </div>
@@ -589,7 +997,7 @@ export default function ManualsDirectory() {
                                     setChatManualId(e.target.value);
                                     const selected = manuals.find(m => m.id === e.target.value);
                                     if (selected) {
-                                        setChatHistory([{ role: 'assistant', content: `Hello! I have loaded the RAG context for "${selected.title}". Ask me anything about this model's specifications, service instructions, or troubleshooting!` }]);
+                                        setChatHistory([{ role: 'assistant', content: `Hello! I have loaded the RAG context for "${selected.title}". Ask me any technical questions about this model's specifications, service instructions, or troubleshooting!` }]);
                                     }
                                 }} 
                                 style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#fff', fontSize: '0.9rem' }}
@@ -707,7 +1115,7 @@ export default function ManualsDirectory() {
                                     type="submit" 
                                     disabled={!chatManualId || chatLoading || !chatQuery} 
                                     className="btn btn-primary"
-                                    style={{ padding: '12px 24px' }}
+                                    style={{ padding: '12px 24px', background: '#6366f1' }}
                                 >
                                     Send
                                 </button>
@@ -855,7 +1263,7 @@ export default function ManualsDirectory() {
                                     onClick={executeBulkImport}
                                     disabled={importing}
                                     className="btn btn-primary"
-                                    style={{ width: '100%', padding: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                                    style={{ width: '100%', padding: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: '#6366f1' }}
                                 >
                                     {importing ? (
                                         <>

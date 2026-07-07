@@ -40,6 +40,7 @@ const stripHtml = (html) => (html || '').replace(/<[^>]*>/g, '').replace(/&nbsp;
 
 // ─── Enquiry Card ────────────────────────────────────────────────────────────
 function EnquiryCard({ enq, onOpen, onDrive, onFloat, onDelete, onDuplicate, onQuote, onPO, onOpenRootDrive }) {
+    const navigate = useNavigate();
     const [openMenu, setOpenMenu] = useState(false);
     const status = enq.status || 'Open';
     const sc = getStatusStyle(status);
@@ -170,6 +171,113 @@ function EnquiryCard({ enq, onOpen, onDrive, onFloat, onDelete, onDuplicate, onQ
                     <div style={{ fontSize: '0.82rem', fontWeight: 700, color: isOverdue ? '#ef4444' : '#374151' }}>{fmtDate(enq.due_date)}</div>
                 </div>
             </div>
+
+            {/* Floated Suppliers & Status */}
+            {enq.supplier_quotes && enq.supplier_quotes.length > 0 && (
+                <div style={{ background: '#f8fafc', borderRadius: '12px', padding: '10px 14px', border: '1px solid #e2e8f0', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '0.67rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Supplier Activity</span>
+                        <span style={{ fontSize: '0.67rem', color: '#94a3b8' }}>{enq.supplier_quotes.length} floated</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {enq.supplier_quotes.map((q, idx) => {
+                            const supplierName = q.supplier?.name || 'Unknown Supplier';
+                            const status = q.status || 'Pending';
+                            let statusColor = '#94a3b8';
+                            let statusBg = '#f1f5f9';
+
+                            if (status === 'Sent' || status === 'Pending') {
+                                statusColor = '#2563eb';
+                                statusBg = '#dbeafe';
+                            } else if (status === 'Received') {
+                                statusColor = '#d97706';
+                                statusBg = '#fef3c7';
+                            } else if (status === 'Shortlisted') {
+                                statusColor = '#16a34a';
+                                statusBg = '#dcfce7';
+                            } else if (status === 'Rejected') {
+                                statusColor = '#dc2626';
+                                statusBg = '#fee2e2';
+                            }
+
+                            return (
+                                <div key={q.id || idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem' }}>
+                                    <span style={{ color: '#334155', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '170px' }} title={supplierName}>
+                                        {supplierName}
+                                    </span>
+                                    <span style={{ fontSize: '0.65rem', fontWeight: 800, color: statusColor, background: statusBg, padding: '2px 8px', borderRadius: '9999px', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                                        {status}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {/* Linked Documents (Quotation / PO) */}
+            {enq.workflow_documents && enq.workflow_documents.length > 0 && (
+                <div style={{ background: '#f8fafc', borderRadius: '12px', padding: '10px 14px', border: '1px solid #e2e8f0', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '0.67rem', fontWeight: 800, color: '#0ea5e9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Document Pipeline</span>
+                        <span style={{ fontSize: '0.67rem', color: '#94a3b8' }}>{enq.workflow_documents.length} document(s)</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {enq.workflow_documents.map((doc, idx) => {
+                            let docIcon = <FileText size={12} color="#6366f1" />;
+                            let editorPath = `/workflows/editor/${doc.id}`;
+                            let labelColor = '#475569';
+                            let statusColor = '#64748b';
+                            let statusBg = '#f1f5f9';
+
+                            if (doc.document_type === 'Quotation') {
+                                docIcon = <FileText size={12} color="#6366f1" />;
+                                labelColor = '#4f46e5';
+                                if (doc.status === 'Approved' || doc.status === 'Sent') {
+                                    statusColor = '#16a34a';
+                                    statusBg = '#dcfce7';
+                                } else if (doc.status === 'Draft') {
+                                    statusColor = '#64748b';
+                                    statusBg = '#f1f5f9';
+                                }
+                            } else if (doc.document_type === 'Purchase Order') {
+                                docIcon = <ShoppingCart size={12} color="#10b981" />;
+                                labelColor = '#059669';
+                                if (doc.status === 'Approved' || doc.status === 'Sent') {
+                                    statusColor = '#16a34a';
+                                    statusBg = '#dcfce7';
+                                } else if (doc.status === 'Draft') {
+                                    statusColor = '#64748b';
+                                    statusBg = '#f1f5f9';
+                                }
+                            }
+
+                            return (
+                                <div key={doc.id || idx} onClick={() => navigate(editorPath)}
+                                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem', cursor: 'pointer', padding: '4px', borderRadius: '6px', background: 'transparent', transition: 'background 0.1s' }}
+                                    onMouseOver={e => e.currentTarget.style.background = '#e2e8f0'}
+                                    onMouseOut={e => e.currentTarget.style.background = 'transparent'}
+                                    title={`Click to view/edit ${doc.document_type}`}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '170px' }}>
+                                        {docIcon}
+                                        <span style={{ color: labelColor, fontWeight: 700 }}>
+                                            {doc.document_no}
+                                        </span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#334155' }}>
+                                            ${Number(doc.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                        <span style={{ fontSize: '0.62rem', fontWeight: 800, color: statusColor, background: statusBg, padding: '1px 6px', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                                            {doc.status}
+                                        </span>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
 
             {/* Quick Entry Tray */}
             <div style={{ marginTop: 'auto', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
@@ -404,7 +512,7 @@ export default function UnifiedSupplierHub() {
                 getDocumentSettings(profile.company_id),
                 supabase
                     .from('customer_enquiries')
-                    .select('*, customer:partners(name), contact:contacts(name)')
+                    .select('*, customer:partners(name), contact:contacts(name), supplier_quotes(id, status, quote_amount, supplier:partners(name)), workflow_documents(id, document_type, document_no, status, total_amount)')
                     .eq('company_id', profile.company_id)
                     .order('created_at', { ascending: false })
             ]);
@@ -548,7 +656,17 @@ export default function UnifiedSupplierHub() {
     const handleFloatConfirm = async (suppliers, sentCount) => {
         setIsFloatModalOpen(false);
         if (selectedEnquiry && sentCount > 0) {
+            const supplierIds = (suppliers || []).map(s => s.id);
+            
+            // 1. Update enquiry status
             await supabase.from('customer_enquiries').update({ status: 'RFQ Floated' }).eq('id', selectedEnquiry.id);
+            
+            // 2. Track floated suppliers in supplier_quotes table
+            if (supplierIds.length > 0) {
+                const { trackFloatedRFQ } = await import('../../lib/workflowService');
+                await trackFloatedRFQ(selectedEnquiry.id, supplierIds, profile.company_id);
+            }
+            
             toast.success(`RFQ floated to ${sentCount} supplier(s)! Status updated.`);
             loadAll();
         }

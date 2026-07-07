@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { 
     X, Plus, Search, Filter, ArrowLeft, Save, Trash2, FileText, 
     MoreHorizontal, ChevronDown, Package, Database, Edit, Ship, 
     Link, ArrowRight, Cloud, ImageIcon, Pencil, Globe, QrCode, 
     Camera, ExternalLink, Loader, UploadCloud, CheckCircle2, AlertCircle,
-    ShoppingBag, History, Wrench, RefreshCw, FileCheck, Info, Tag
+    ShoppingBag, History, Wrench, RefreshCw, FileCheck, Info, Tag, FolderOpen, Folder, Smartphone
 } from 'lucide-react';
+import { provisionSparepartFolderStructure, uploadFileToDrive } from '../lib/driveService';
+import { connectGoogleAPI, getStoredToken } from '../lib/googleAuthService';
 import { Modal } from '../components/workflow/QuickAddForms';
 import { supabase } from '../lib/supabase';
 import ScannerModal from '../components/ScannerModal';
@@ -42,6 +44,7 @@ import {
 const CatalogForm = () => {
     const { id } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const { profile } = useAuth();
     const isNewItem = id === 'new';
     const quillRef = useRef(null);
@@ -107,6 +110,69 @@ const CatalogForm = () => {
     const [docInput, setDocInput] = useState({ name: '', type: 'Datasheet', url: '' });
     const [photoUrlInput, setPhotoUrlInput] = useState('');
     const [noteInput, setNoteInput] = useState('');
+
+    // Mobile Upload Gateway State
+    const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
+
+    // Google Drive folder state
+    const [driveFolder, setDriveFolder] = useState(null); // { folderId, photosFolderId, datasheetsFolderId, webViewLink, ... }
+    const [driveFiles, setDriveFiles] = useState({ photos: [], docs: [] });
+    const [loadingDriveFiles, setLoadingDriveFiles] = useState(false);
+    const [provisioningDrive, setProvisioningDrive] = useState(false);
+
+    const fetchDriveFiles = async () => {
+        if (!driveFolder?.folderId) return;
+        const accessToken = localStorage.getItem('google_access_token');
+        if (!accessToken) return;
+
+        setLoadingDriveFiles(true);
+        try {
+            const { listFolderContent } = await import('../lib/driveService');
+            let fetchedPhotos = [];
+            let fetchedDocs = [];
+
+            if (driveFolder.photosFolderId) {
+                const files = await listFolderContent(accessToken, driveFolder.photosFolderId);
+                fetchedPhotos = files.map(f => ({
+                    id: f.id,
+                    name: f.name,
+                    url: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view`,
+                    thumbnail: `https://lh3.googleusercontent.com/d/${f.id}=w400`,
+                    createdTime: f.createdTime
+                }));
+            }
+
+            if (driveFolder.datasheetsFolderId) {
+                const files = await listFolderContent(accessToken, driveFolder.datasheetsFolderId);
+                fetchedDocs = files.map(f => ({
+                    id: f.id,
+                    name: f.name,
+                    url: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view`,
+                    createdTime: f.createdTime
+                }));
+            }
+
+            setDriveFiles({ photos: fetchedPhotos, docs: fetchedDocs });
+        } catch (e) {
+            console.error("Failed to load files from Drive:", e);
+        } finally {
+            setLoadingDriveFiles(false);
+        }
+    };
+
+    useEffect(() => {
+        if (driveFolder?.folderId) {
+            fetchDriveFiles();
+        }
+    }, [driveFolder]);
+    const [uploadingDriveDoc, setUploadingDriveDoc] = useState(false);
+    const [uploadingDrivePhoto, setUploadingDrivePhoto] = useState(false);
+    const docFileInputRef = useRef(null);
+    const photoFileInputRef = useRef(null);
+
+    // Drive connect modal (shown when Drive is not connected on new spare save)
+    const [showDriveModal, setShowDriveModal] = useState(false);
+    const [pendingSaveId, setPendingSaveId] = useState(null); // spare part id waiting for Drive folders
     
     // Compatibility addition state
     const [compatInput, setCompatInput] = useState({ system_id: '', model_id: '' });
@@ -184,6 +250,18 @@ const CatalogForm = () => {
                 spare_number: data.spare_number
             });
 
+            // Restore Drive folder state if already provisioned
+            if (data.gdrive_folder_id) {
+                setDriveFolder({
+                    folderId:            data.gdrive_folder_id,
+                    photosFolderId:      data.gdrive_photos_folder_id,
+                    datasheetsFolderId:  data.gdrive_datasheets_folder_id,
+                    webViewLink:         `https://drive.google.com/drive/folders/${data.gdrive_folder_id}`,
+                    photosWebViewLink:   data.gdrive_photos_folder_id ? `https://drive.google.com/drive/folders/${data.gdrive_photos_folder_id}` : null,
+                    datasheetsWebViewLink: data.gdrive_datasheets_folder_id ? `https://drive.google.com/drive/folders/${data.gdrive_datasheets_folder_id}` : null
+                });
+            }
+
             // Fetch related child structures
             const [docsRes, photosRes, notesRes, compatRes, purchaseRes, auditRes] = await Promise.all([
                 getMarineDocuments('spare_part', id),
@@ -229,8 +307,54 @@ const CatalogForm = () => {
         fetchMasterLists();
         if (!isNewItem) {
             fetchItemData();
+        } else if (location.state) {
+            setFormData(prev => ({
+                ...prev,
+                system_id: location.state.system_id || '',
+                maker_id: location.state.maker_id || '',
+                model_id: location.state.model_id || '',
+            }));
         }
-    }, [id]);
+    }, [id, location.state]);
+
+    // After Drive OAuth redirect back to this spare part — auto-provision if no folder yet
+    useEffect(() => {
+        if (isNewItem) return;
+        const pendingId = sessionStorage.getItem('catalog_spare_drive_pending_id');
+        if (!pendingId || pendingId !== id) return;
+        const accessToken = getStoredToken();
+        if (!accessToken) return;
+
+        // Clear the pending marker so it only runs once
+        sessionStorage.removeItem('catalog_spare_drive_pending_id');
+
+        // Wait until item data is loaded then provision
+        const tryProvision = async () => {
+            const { data } = await import('../lib/catalogService').then(m => m.getCatalogItemById(id));
+            if (!data) return;
+            if (data.gdrive_folder_id) {
+                // Already provisioned (shouldn't happen, but safe)
+                return;
+            }
+            if (!data.spare_number || !data.name) return;
+            setProvisioningDrive(true);
+            try {
+                const result = await provisionSparepartFolderStructure(accessToken, String(data.spare_number), data.name);
+                await supabase.from('catalog_items').update({
+                    gdrive_folder_id:            result.folderId,
+                    gdrive_photos_folder_id:     result.photosFolderId,
+                    gdrive_datasheets_folder_id: result.datasheetsFolderId
+                }).eq('id', id);
+                setDriveFolder(result);
+                toast.success('\uD83D\uDCC2 Drive folders created for ' + data.name + '!');
+            } catch (err) {
+                toast.error('Drive folder creation failed: ' + err.message);
+            } finally {
+                setProvisioningDrive(false);
+            }
+        };
+        tryProvision();
+    }, [id, isNewItem]);
 
     const handleInputChange = (e) => {
         const { name, value } = e.target;
@@ -346,45 +470,289 @@ const CatalogForm = () => {
         if (!formData.name) return toast.error('Item name is required');
 
         setSaving(true);
+
+        // Helper: converts a value to a safe number or null (never empty string "")
+        const safeNum = (v, fallback = null) => {
+            const n = parseFloat(v);
+            return isNaN(n) ? fallback : n;
+        };
+        const safeInt = (v, fallback = null) => {
+            const n = parseInt(v);
+            return isNaN(n) ? fallback : n;
+        };
+
         const payload = {
             ...formData,
-            quantity: parseInt(formData.quantity) || 0,
-            min_stock: parseInt(formData.min_stock) || 0,
-            max_stock: parseInt(formData.max_stock) || 100,
-            selling_price: parseFloat(formData.selling_price) || 0,
-            purchase_price: parseFloat(formData.purchase_price) || 0,
+            quantity:       safeInt(formData.quantity,  0),
+            min_stock:      safeInt(formData.min_stock, 0),
+            max_stock:      safeInt(formData.max_stock, 100),
+            selling_price:  safeNum(formData.selling_price, 0),
+            purchase_price: safeNum(formData.purchase_price, 0),
+            // weight is a numeric column — must be null not ""
+            weight:         formData.weight !== '' && formData.weight !== undefined ? safeNum(formData.weight) : null,
             company_id: profile?.company_id || 'd0000000-0000-0000-0000-000000000001'
         };
 
-        // Standardise empty values to null to keep references correct
-        if (!payload.system_id) delete payload.system_id;
-        if (!payload.maker_id) delete payload.maker_id;
-        if (!payload.model_id) delete payload.model_id;
-        if (!payload.assembly_id) delete payload.assembly_id;
-        if (!payload.warehouse_id) delete payload.warehouse_id;
+        // Clean up all empty strings to null to prevent Postgres type mismatch errors for uuid/numeric/int columns.
+        const cleanedPayload = {};
+        Object.keys(payload).forEach(key => {
+            const val = payload[key];
+            if (val === '' && key !== 'name' && key !== 'type') {
+                cleanedPayload[key] = null;
+            } else {
+                cleanedPayload[key] = val;
+            }
+        });
+
 
         let res;
         if (isNewItem) {
             // Check if we need to auto-generate barcode / spare_number
-            res = await createCatalogItem(payload);
+            res = await createCatalogItem(cleanedPayload);
             if (!res.error && res.data) {
                 toast.success('Spare Part created successfully!');
-                await logMarineAction('spare_part', res.data.id, 'CREATE', { name: payload.name }, profile?.id, profile?.company_id);
-                navigate(`/catalog/${res.data.id}`);
+                await logMarineAction('spare_part', res.data.id, 'CREATE', { name: cleanedPayload.name }, profile?.id, profile?.company_id);
+
+                // Auto-provision Google Drive folder structure right after creation
+                const accessToken = getStoredToken();
+                if (accessToken && res.data.spare_number) {
+                    try {
+                        const driveResult = await provisionSparepartFolderStructure(
+                            accessToken,
+                            String(res.data.spare_number),
+                            cleanedPayload.name
+                        );
+                        await supabase.from('catalog_items').update({
+                            gdrive_folder_id:            driveResult.folderId,
+                            gdrive_photos_folder_id:     driveResult.photosFolderId,
+                            gdrive_datasheets_folder_id: driveResult.datasheetsFolderId
+                        }).eq('id', res.data.id);
+                        toast.success('\uD83D\uDCC2 Drive folders created automatically!');
+                        navigate(`/catalog/${res.data.id}`);
+                    } catch (driveErr) {
+                        console.error('Auto Drive provision failed:', driveErr.message);
+                        toast.error('Spare saved but Drive folders failed — please connect Drive.');
+                        navigate(`/catalog/${res.data.id}`);
+                    }
+                } else {
+                    // Drive not connected — save spare, then show the connect modal
+                    setSaving(false);
+                    setPendingSaveId(res.data.id);
+                    setShowDriveModal(true);
+                    return; // Don't navigate yet — wait for Drive connection
+                }
             } else {
                 toast.error('Failed to create part: ' + (res.error?.message || 'Unknown error'));
             }
         } else {
-            res = await updateCatalogItem(id, payload);
+            res = await updateCatalogItem(id, cleanedPayload);
             if (!res.error) {
                 toast.success('Spare Part updated successfully!');
-                await logMarineAction('spare_part', id, 'UPDATE', { name: payload.name }, profile?.id, profile?.company_id);
+                await logMarineAction('spare_part', id, 'UPDATE', { name: cleanedPayload.name }, profile?.id, profile?.company_id);
                 fetchItemData();
             } else {
                 toast.error('Failed to update part');
             }
         }
         setSaving(false);
+    };
+
+    // ==== Google Drive Folder Provisioning ====
+    const getDriveRootId = async () => {
+        try {
+            const { data: settings } = await supabase.from('document_settings').select('*').maybeSingle();
+            return settings?.gdrive_celron_root_id || settings?.google_drive_folder_id || null;
+        } catch (e) {
+            console.error("Failed to load document settings:", e);
+            return null;
+        }
+    };
+
+    const handleProvisionDriveFolder = async () => {
+        if (!formData.spare_number || !formData.name) {
+            return toast.error('Save the spare part first to generate a spare number.');
+        }
+        const accessToken = localStorage.getItem('google_access_token');
+        if (!accessToken) return toast.error('Connect Google Drive first (top-right Google button).');
+
+        setProvisioningDrive(true);
+        try {
+            const rootId = await getDriveRootId();
+            const result = await provisionSparepartFolderStructure(
+                accessToken,
+                String(formData.spare_number),
+                formData.name,
+                rootId
+            );
+            // Persist folder IDs into catalog_items
+            await supabase.from('catalog_items').update({
+                gdrive_folder_id:           result.folderId,
+                gdrive_photos_folder_id:    result.photosFolderId,
+                gdrive_datasheets_folder_id: result.datasheetsFolderId
+            }).eq('id', id);
+
+            setDriveFolder(result);
+            toast.success('Google Drive folders created successfully!');
+        } catch (err) {
+            console.error('Drive provision error:', err);
+            toast.error('Failed to create Drive folders: ' + err.message);
+        } finally {
+            setProvisioningDrive(false);
+        }
+    };
+
+    const ensurePhotosFolder = async () => {
+        if (driveFolder?.photosFolderId) return driveFolder.photosFolderId;
+        
+        const accessToken = localStorage.getItem('google_access_token');
+        if (!accessToken) {
+            toast.error('Please connect Google Drive first (using the top-right Google icon).');
+            return null;
+        }
+
+        if (!formData.spare_number || !formData.name) {
+            toast.error('Please fill in Name and save the spare part first.');
+            return null;
+        }
+
+        setProvisioningDrive(true);
+        const loadToast = toast.loading('Provisioning Google Drive project folder structure...');
+        try {
+            const rootId = await getDriveRootId();
+            const result = await provisionSparepartFolderStructure(
+                accessToken,
+                String(formData.spare_number),
+                formData.name,
+                rootId
+            );
+            await supabase.from('catalog_items').update({
+                gdrive_folder_id:           result.folderId,
+                gdrive_photos_folder_id:    result.photosFolderId,
+                gdrive_datasheets_folder_id: result.datasheetsFolderId
+            }).eq('id', id);
+
+            setDriveFolder(result);
+            toast.dismiss(loadToast);
+            toast.success('Google Drive folders provisioned!');
+            return result.photosFolderId;
+        } catch (err) {
+            toast.dismiss(loadToast);
+            console.error('Drive provision error:', err);
+            toast.error('Failed to create Drive folders: ' + err.message);
+            return null;
+        } finally {
+            setProvisioningDrive(false);
+        }
+    };
+
+    const ensureDocumentsFolder = async () => {
+        if (driveFolder?.datasheetsFolderId) return driveFolder.datasheetsFolderId;
+        
+        const accessToken = localStorage.getItem('google_access_token');
+        if (!accessToken) {
+            toast.error('Please connect Google Drive first (using the top-right Google icon).');
+            return null;
+        }
+
+        if (!formData.spare_number || !formData.name) {
+            toast.error('Please fill in Name and save the spare part first.');
+            return null;
+        }
+
+        setProvisioningDrive(true);
+        const loadToast = toast.loading('Provisioning Google Drive project folder structure...');
+        try {
+            const rootId = await getDriveRootId();
+            const result = await provisionSparepartFolderStructure(
+                accessToken,
+                String(formData.spare_number),
+                formData.name,
+                rootId
+            );
+            await supabase.from('catalog_items').update({
+                gdrive_folder_id:           result.folderId,
+                gdrive_photos_folder_id:    result.photosFolderId,
+                gdrive_datasheets_folder_id: result.datasheetsFolderId
+            }).eq('id', id);
+
+            setDriveFolder(result);
+            toast.dismiss(loadToast);
+            toast.success('Google Drive folders provisioned!');
+            return result.datasheetsFolderId;
+        } catch (err) {
+            toast.dismiss(loadToast);
+            console.error('Drive provision error:', err);
+            toast.error('Failed to create Drive folders: ' + err.message);
+            return null;
+        } finally {
+            setProvisioningDrive(false);
+        }
+    };
+
+    const handleConnectGoogle = () => {
+        sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
+        connectGoogleAPI('catalog_spare_edit');
+    };
+
+    // Upload file directly to Drive Datasheets_Manuals subfolder
+    const handleDriveDocUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file || !driveFolder?.datasheetsFolderId) return;
+        const accessToken = localStorage.getItem('google_access_token');
+        if (!accessToken) return toast.error('Connect Google Drive first.');
+
+        setUploadingDriveDoc(true);
+        try {
+            const uploaded = await uploadFileToDrive(accessToken, file, { folderId: driveFolder.datasheetsFolderId });
+            // Also record in marine_documents table
+            const payload = {
+                entity_type: 'spare_part',
+                entity_id: id,
+                name: file.name,
+                file_url: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
+                document_type: 'Datasheet',
+                company_id: profile?.company_id
+            };
+            await createMarineDocument(payload);
+            toast.success(`"${file.name}" uploaded to Drive & linked!`);
+            fetchItemData();
+            fetchDriveFiles();
+        } catch (err) {
+            toast.error('Upload failed: ' + err.message);
+        } finally {
+            setUploadingDriveDoc(false);
+            if (docFileInputRef.current) docFileInputRef.current.value = '';
+        }
+    };
+
+    // Upload photo directly to Drive Photos_Media subfolder
+    const handleDrivePhotoUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file || !driveFolder?.photosFolderId) return;
+        const accessToken = localStorage.getItem('google_access_token');
+        if (!accessToken) return toast.error('Connect Google Drive first.');
+
+        setUploadingDrivePhoto(true);
+        try {
+            const uploaded = await uploadFileToDrive(accessToken, file, { folderId: driveFolder.photosFolderId });
+            const webViewLink = uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`;
+            // Record in marine_photos table
+            const payload = {
+                entity_type: 'spare_part',
+                entity_id: id,
+                url: `https://lh3.googleusercontent.com/d/${uploaded.id}=w800`,
+                company_id: profile?.company_id
+            };
+            await createMarinePhoto(payload);
+            toast.success(`"${file.name}" uploaded to Drive & linked!`);
+            fetchItemData();
+            fetchDriveFiles();
+        } catch (err) {
+            toast.error('Upload failed: ' + err.message);
+        } finally {
+            setUploadingDrivePhoto(false);
+            if (photoFileInputRef.current) photoFileInputRef.current.value = '';
+        }
     };
 
     // Sub-modules actions
@@ -782,6 +1150,84 @@ const CatalogForm = () => {
                                 </div>
                             </div>
                         </div>
+
+                        {/* Photos_Media Quick Gallery */}
+                        {!isNewItem && (
+                            <div className="glass-panel" style={{ padding: '24px', borderRadius: '18px', border: '1px solid #e2e8f0' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                                    <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800 }}>Photos & Media</h4>
+                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                        {driveFolder?.photosWebViewLink && (
+                                            <a
+                                                href={driveFolder.photosWebViewLink}
+                                                target="_blank" rel="noopener noreferrer"
+                                                title="Open Photos_Media in Google Drive"
+                                                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#f0fdf4', border: '1px solid #86efac', color: '#166534', padding: '5px 10px', borderRadius: '8px', fontWeight: 700, fontSize: '0.75rem', textDecoration: 'none' }}
+                                            >
+                                                <FolderOpen size={13} /> Drive
+                                            </a>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => setActiveTab('photos')}
+                                            style={{ background: 'none', border: 'none', color: '#1a3c63', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer', padding: '5px 8px' }}
+                                        >
+                                            View All →
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {photos.length > 0 ? (
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                                        {photos.slice(0, 4).map(p => (
+                                            <div key={p.id} style={{ borderRadius: '10px', overflow: 'hidden', border: '1px solid #e2e8f0', aspectRatio: '1', background: '#f8fafc' }}>
+                                                <img
+                                                    src={p.url}
+                                                    alt="Part photo"
+                                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                                                    onError={e => { e.target.style.display = 'none'; }}
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                                        <div style={{ marginBottom: '10px' }}>
+                                            <input
+                                                ref={photoFileInputRef}
+                                                type="file"
+                                                style={{ display: 'none' }}
+                                                onChange={handleDrivePhotoUpload}
+                                                accept="image/*"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={async () => {
+                                                    const folderId = await ensurePhotosFolder();
+                                                    if (folderId) photoFileInputRef.current?.click();
+                                                }}
+                                                disabled={uploadingDrivePhoto}
+                                                style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#7c3aed', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '10px', fontWeight: 700, fontSize: '0.8rem', cursor: uploadingDrivePhoto ? 'not-allowed' : 'pointer' }}
+                                            >
+                                                {uploadingDrivePhoto ? <Loader size={14} className="animate-spin" /> : <Camera size={14} />}
+                                                {uploadingDrivePhoto ? 'Uploading…' : 'Upload Photo'}
+                                            </button>
+                                        </div>
+                                        <p style={{ color: '#94a3b8', fontSize: '0.78rem', margin: 0 }}>No photos yet</p>
+                                    </div>
+                                )}
+
+                                {photos.length > 4 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('photos')}
+                                        style={{ width: '100%', marginTop: '10px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '8px', fontWeight: 700, fontSize: '0.78rem', color: '#64748b', cursor: 'pointer' }}
+                                    >
+                                        +{photos.length - 4} more photos
+                                    </button>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -869,12 +1315,147 @@ const CatalogForm = () => {
 
             {activeTab === 'documents' && (
                 <div className="glass-panel" style={{ padding: '32px', borderRadius: '18px', border: '1px solid #e2e8f0' }}>
-                    <div style={{ marginBottom: '24px' }}>
-                        <h3 style={{ margin: '0 0 6px', fontSize: '1.15rem', fontWeight: 800, color: '#1a3c63' }}>Linked Documents & Manuals</h3>
-                        <p style={{ color: '#64748b', fontSize: '0.85rem' }}>Upload or link machinery manuals, certificates, and wiring diagrams</p>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+                        <div>
+                            <h3 style={{ margin: '0 0 6px', fontSize: '1.15rem', fontWeight: 800, color: '#1a3c63' }}>Datasheets & Manuals</h3>
+                            <p style={{ color: '#64748b', fontSize: '0.85rem' }}>Upload files to Google Drive or link machinery manuals, certificates, and wiring diagrams</p>
+                        </div>
+                        {!isNewItem && (
+                            driveFolder?.datasheetsFolderId ? (
+                                <a
+                                    href={driveFolder.datasheetsWebViewLink}
+                                    target="_blank" rel="noopener noreferrer"
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#f0fdf4', border: '1px solid #86efac', color: '#166534', padding: '8px 16px', borderRadius: '10px', fontWeight: 700, fontSize: '0.85rem', textDecoration: 'none' }}
+                                >
+                                    <FolderOpen size={16} /> Open Datasheets_Manuals in Drive
+                                </a>
+                            ) : (
+                                <button
+                                    onClick={handleProvisionDriveFolder}
+                                    disabled={provisioningDrive}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#1a3c63', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '10px', fontWeight: 700, fontSize: '0.85rem', cursor: provisioningDrive ? 'not-allowed' : 'pointer', opacity: provisioningDrive ? 0.7 : 1 }}
+                                >
+                                    {provisioningDrive ? <Loader size={16} className="animate-spin" /> : <Cloud size={16} />}
+                                    {provisioningDrive ? 'Creating Drive Folders…' : 'Create Drive Folder'}
+                                </button>
+                            )
+                        )}
+                    </div>
+
+                    {/* Drive upload panel */}
+                    <div style={{ background: 'linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%)', border: '1px solid #bfdbfe', borderRadius: '14px', padding: '24px', marginBottom: '24px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div style={{ background: '#1a3c63', borderRadius: '10px', padding: '10px', display: 'flex' }}>
+                                    <UploadCloud size={20} color="#fff" />
+                                </div>
+                                <div>
+                                    <p style={{ margin: 0, fontWeight: 700, color: '#1e293b', fontSize: '0.9rem' }}>Upload to Google Drive</p>
+                                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.78rem' }}>Files go to <strong>Datasheets_Manuals</strong> folder</p>
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                {!getStoredToken() && (
+                                    <button
+                                        type="button"
+                                        onClick={handleConnectGoogle}
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#fee2e2', border: '1px solid #ef4444', color: '#ef4444', padding: '10px 20px', borderRadius: '10px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+                                    >
+                                        <Globe size={16} /> Reconnect Drive
+                                    </button>
+                                )}
+                                <input
+                                    ref={docFileInputRef}
+                                    type="file"
+                                    style={{ display: 'none' }}
+                                    onChange={handleDriveDocUpload}
+                                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.png,.jpg,.jpeg"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        const folderId = await ensureDocumentsFolder();
+                                        if (folderId) docFileInputRef.current?.click();
+                                    }}
+                                    disabled={uploadingDriveDoc}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#1a3c63', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', fontWeight: 700, fontSize: '0.85rem', cursor: uploadingDriveDoc ? 'not-allowed' : 'pointer', opacity: uploadingDriveDoc ? 0.7 : 1 }}
+                                >
+                                    {uploadingDriveDoc ? <Loader size={16} className="animate-spin" /> : <UploadCloud size={16} />}
+                                    {uploadingDriveDoc ? 'Uploading…' : 'Upload File'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        setQrModal({ isOpen: true, folderId: null, folderName: 'Datasheets & Manuals' });
+                                        const folderId = await ensureDocumentsFolder();
+                                        if (folderId) {
+                                            setQrModal({ isOpen: true, folderId, folderName: 'Datasheets & Manuals' });
+                                        } else {
+                                            setQrModal({ isOpen: false, folderId: null, folderName: '' });
+                                        }
+                                    }}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#fff', border: '1px solid #1a3c63', color: '#1a3c63', padding: '10px 20px', borderRadius: '10px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+                                >
+                                    <QrCode size={16} /> Scan with Mobile
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Direct File Drop Holder */}
+                        <div 
+                            onDragOver={(e) => {
+                                e.preventDefault();
+                                e.currentTarget.style.borderColor = '#1a3c63';
+                                e.currentTarget.style.background = '#eff6ff';
+                            }}
+                            onDragLeave={(e) => {
+                                e.preventDefault();
+                                e.currentTarget.style.borderColor = '#cbd5e1';
+                                e.currentTarget.style.background = '#fff';
+                            }}
+                            onDrop={async (e) => {
+                                e.preventDefault();
+                                e.currentTarget.style.borderColor = '#cbd5e1';
+                                e.currentTarget.style.background = '#fff';
+                                
+                                const file = e.dataTransfer.files?.[0];
+                                if (!file) return;
+                                
+                                const folderId = await ensureDocumentsFolder();
+                                if (folderId) {
+                                    setUploadingDriveDoc(true);
+                                    try {
+                                        const accessToken = localStorage.getItem('google_access_token');
+                                        const uploaded = await uploadFileToDrive(accessToken, file, { folderId });
+                                        const payload = {
+                                            entity_type: 'spare_part',
+                                            entity_id: id,
+                                            name: file.name,
+                                            file_url: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
+                                            document_type: 'Datasheet',
+                                            company_id: profile?.company_id
+                                        };
+                                        await createMarineDocument(payload);
+                                        toast.success(`"${file.name}" uploaded to Drive & linked!`);
+                                        fetchItemData();
+                                        fetchDriveFiles();
+                                    } catch (err) {
+                                        toast.error('Upload failed: ' + err.message);
+                                    } finally {
+                                        setUploadingDriveDoc(false);
+                                    }
+                                }
+                            }}
+                            style={{ border: '2px dashed #cbd5e1', borderRadius: '12px', padding: '32px', textAlign: 'center', background: '#fff', transition: 'all 0.2s', cursor: 'pointer' }}
+                        >
+                            <UploadCloud size={36} color="#94a3b8" style={{ marginBottom: '12px', display: 'inline-block' }} />
+                            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#334155' }}>Drag & Drop Files Here</div>
+                            <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '4px' }}>Or click/drop here to select from your computer</div>
+                        </div>
                     </div>
 
                     <form onSubmit={handleAddDocument} style={{ background: '#f8fafc', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
+                        <p style={{ margin: '0 0 12px', fontSize: '0.78rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Or link by URL</p>
                         <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                             <div className="form-group" style={{ flex: 2, minWidth: '200px', marginBottom: 0 }}>
                                 <label className="form-label" style={{ fontSize: '0.78rem' }}>Document Name / Label *</label>
@@ -950,14 +1531,153 @@ const CatalogForm = () => {
 
             {activeTab === 'photos' && (
                 <div className="glass-panel" style={{ padding: '32px', borderRadius: '18px', border: '1px solid #e2e8f0' }}>
-                    <div style={{ marginBottom: '24px' }}>
-                        <h3 style={{ margin: '0 0 6px', fontSize: '1.15rem', fontWeight: 800, color: '#1a3c63' }}>Gallery & Photos</h3>
-                        <p style={{ color: '#64748b', fontSize: '0.85rem' }}>Link photos of physical parts or assembly blueprints</p>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+                        <div>
+                            <h3 style={{ margin: '0 0 6px', fontSize: '1.15rem', fontWeight: 800, color: '#1a3c63' }}>Gallery & Photos</h3>
+                            <p style={{ color: '#64748b', fontSize: '0.85rem' }}>Upload photos to Google Drive or link photos of physical parts or assembly blueprints</p>
+                        </div>
+                        {!isNewItem && (
+                            driveFolder?.photosFolderId ? (
+                                <a
+                                    href={driveFolder.photosWebViewLink}
+                                    target="_blank" rel="noopener noreferrer"
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#f0fdf4', border: '1px solid #86efac', color: '#166534', padding: '8px 16px', borderRadius: '10px', fontWeight: 700, fontSize: '0.85rem', textDecoration: 'none' }}
+                                >
+                                    <FolderOpen size={16} /> Open Photos_Media in Drive
+                                </a>
+                            ) : (
+                                <button
+                                    onClick={handleProvisionDriveFolder}
+                                    disabled={provisioningDrive}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#1a3c63', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '10px', fontWeight: 700, fontSize: '0.85rem', cursor: provisioningDrive ? 'not-allowed' : 'pointer', opacity: provisioningDrive ? 0.7 : 1 }}
+                                >
+                                    {provisioningDrive ? <Loader size={16} className="animate-spin" /> : <Cloud size={16} />}
+                                    {provisioningDrive ? 'Creating Drive Folders…' : 'Create Drive Folder'}
+                                </button>
+                            )
+                        )}
+                    </div>
+
+                    {/* Drive upload panel for photos */}
+                    <div style={{ background: 'linear-gradient(135deg, #fdf4ff 0%, #eff6ff 100%)', border: '1px solid #e9d5ff', borderRadius: '14px', padding: '24px', marginBottom: '24px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div style={{ background: '#7c3aed', borderRadius: '10px', padding: '10px', display: 'flex' }}>
+                                    <Camera size={20} color="#fff" />
+                                </div>
+                                <div>
+                                    <p style={{ margin: 0, fontWeight: 700, color: '#1e293b', fontSize: '0.9rem' }}>Upload to Google Drive</p>
+                                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.78rem' }}>Photos go to <strong>Photos_Media</strong> folder</p>
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                {!getStoredToken() && (
+                                    <button
+                                        type="button"
+                                        onClick={handleConnectGoogle}
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#fee2e2', border: '1px solid #ef4444', color: '#ef4444', padding: '10px 20px', borderRadius: '10px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+                                    >
+                                        <Globe size={16} /> Reconnect Drive
+                                    </button>
+                                )}
+                                <input
+                                    ref={photoFileInputRef}
+                                    type="file"
+                                    style={{ display: 'none' }}
+                                    onChange={handleDrivePhotoUpload}
+                                    accept="image/*"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        const folderId = await ensurePhotosFolder();
+                                        if (folderId) photoFileInputRef.current?.click();
+                                    }}
+                                    disabled={uploadingDrivePhoto}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#7c3aed', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', fontWeight: 700, fontSize: '0.85rem', cursor: uploadingDrivePhoto ? 'not-allowed' : 'pointer', opacity: uploadingDrivePhoto ? 0.7 : 1 }}
+                                >
+                                    {uploadingDrivePhoto ? <Loader size={16} className="animate-spin" /> : <Camera size={16} />}
+                                    {uploadingDrivePhoto ? 'Uploading…' : 'Upload Photo'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        setQrModal({ isOpen: true, folderId: null, folderName: 'Photos & Gallery' });
+                                        const folderId = await ensurePhotosFolder();
+                                        if (folderId) {
+                                            setQrModal({ isOpen: true, folderId, folderName: 'Photos & Gallery' });
+                                        } else {
+                                            setQrModal({ isOpen: false, folderId: null, folderName: '' });
+                                        }
+                                    }}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#fff', border: '1px solid #7c3aed', color: '#7c3aed', padding: '10px 20px', borderRadius: '10px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+                                >
+                                    <QrCode size={16} /> Scan with Mobile
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Direct Image Drop Holder */}
+                        <div 
+                            onDragOver={(e) => {
+                                e.preventDefault();
+                                e.currentTarget.style.borderColor = '#7c3aed';
+                                e.currentTarget.style.background = '#f5f3ff';
+                            }}
+                            onDragLeave={(e) => {
+                                e.preventDefault();
+                                e.currentTarget.style.borderColor = '#cbd5e1';
+                                e.currentTarget.style.background = '#fff';
+                            }}
+                            onDrop={async (e) => {
+                                e.preventDefault();
+                                e.currentTarget.style.borderColor = '#cbd5e1';
+                                e.currentTarget.style.background = '#fff';
+                                
+                                const file = e.dataTransfer.files?.[0];
+                                if (!file) return;
+                                if (!file.type.startsWith('image/')) {
+                                    return toast.error('Only image files are allowed in this gallery drop zone.');
+                                }
+                                
+                                const folderId = await ensurePhotosFolder();
+                                if (folderId) {
+                                    setUploadingDrivePhoto(true);
+                                    try {
+                                        const accessToken = localStorage.getItem('google_access_token');
+                                        const uploaded = await uploadFileToDrive(accessToken, file, { folderId });
+                                        const payload = {
+                                            entity_type: 'spare_part',
+                                            entity_id: id,
+                                            url: `https://lh3.googleusercontent.com/d/${uploaded.id}=w800`,
+                                            company_id: profile?.company_id
+                                        };
+                                        await createMarinePhoto(payload);
+                                        toast.success(`"${file.name}" uploaded to Drive & linked!`);
+                                        fetchItemData();
+                                        fetchDriveFiles();
+                                    } catch (err) {
+                                        toast.error('Upload failed: ' + err.message);
+                                    } finally {
+                                        setUploadingDrivePhoto(false);
+                                    }
+                                }
+                            }}
+                            style={{ border: '2px dashed #cbd5e1', borderRadius: '12px', padding: '32px', textAlign: 'center', background: '#fff', transition: 'all 0.2s', cursor: 'pointer' }}
+                            onClick={async () => {
+                                const folderId = await ensurePhotosFolder();
+                                if (folderId) photoFileInputRef.current?.click();
+                            }}
+                        >
+                            <Camera size={36} color="#94a3b8" style={{ marginBottom: '12px', display: 'inline-block' }} />
+                            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#334155' }}>Drag & Drop Image Here</div>
+                            <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '4px' }}>Or click/drop here to select from your computer</div>
+                        </div>
                     </div>
 
                     <form onSubmit={handleAddPhoto} style={{ display: 'flex', gap: '12px', marginBottom: '28px' }}>
-                        <input type="url" className="form-input" value={photoUrlInput} onChange={e => setPhotoUrlInput(e.target.value)} placeholder="Enter photo image URL (e.g. https://.../image.jpg)" style={{ flex: 1 }} />
-                        <button type="submit" className="btn btn-primary" style={{ background: '#1a3c63', borderColor: '#1a3c63' }}>Add Photo</button>
+                        <input type="url" className="form-input" value={photoUrlInput} onChange={e => setPhotoUrlInput(e.target.value)} placeholder="Or paste a photo URL (e.g. https://.../image.jpg)" style={{ flex: 1 }} />
+                        <button type="submit" className="btn btn-primary" style={{ background: '#1a3c63', borderColor: '#1a3c63' }}>Add by URL</button>
                     </form>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '20px' }}>
@@ -976,6 +1696,108 @@ const CatalogForm = () => {
                             <div style={{ gridColumn: '1 / -1', padding: '32px 0', textAlign: 'center', color: '#94a3b8', fontStyle: 'italic' }}>No photos uploaded.</div>
                         )}
                     </div>
+
+                    {/* Google Drive Live Explorer */}
+                    {driveFolder?.folderId && (
+                        <div className="glass-panel" style={{ padding: '24px', borderRadius: '18px', border: '1px solid #e2e8f0', marginTop: '32px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                                <div>
+                                    <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, color: '#1a3c63', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <HardDrive size={18} /> Google Drive Live Folder Explorer
+                                    </h4>
+                                    <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '0.78rem' }}>Real-time synchronization with GDrive project structure</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={fetchDriveFiles}
+                                    disabled={loadingDriveFiles}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#f8fafc', border: '1px solid #cbd5e1', color: '#475569', padding: '6px 12px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
+                                >
+                                    <RefreshCw size={13} className={loadingDriveFiles ? 'animate-spin' : ''} /> Refresh files
+                                </button>
+                            </div>
+
+                            {loadingDriveFiles ? (
+                                <div style={{ textAlign: 'center', padding: '40px 0', color: '#64748b' }}>
+                                    <Loader size={24} className="animate-spin" style={{ margin: '0 auto 12px' }} />
+                                    <span style={{ fontSize: '0.85rem' }}>Loading live files from Google Drive...</span>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                                    {/* Photos Section */}
+                                    <div>
+                                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <Camera size={14} /> Photos & Media ({driveFiles.photos.length})
+                                        </div>
+                                        {driveFiles.photos.length > 0 ? (
+                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px' }}>
+                                                {driveFiles.photos.map(file => (
+                                                    <a
+                                                        key={file.id}
+                                                        href={file.url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden', display: 'block', background: '#fff', position: 'relative', textDecoration: 'none' }}
+                                                    >
+                                                        <img
+                                                            src={file.thumbnail}
+                                                            alt={file.name}
+                                                            style={{ width: '100%', height: '110px', objectFit: 'cover', display: 'block' }}
+                                                            onError={(e) => {
+                                                                e.target.style.display = 'none';
+                                                            }}
+                                                        />
+                                                        <div style={{ padding: '8px', fontSize: '0.7rem', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
+                                                            {file.name}
+                                                        </div>
+                                                    </a>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div style={{ padding: '16px', border: '1px dashed #cbd5e1', borderRadius: '10px', color: '#94a3b8', fontSize: '0.78rem', textAlign: 'center' }}>
+                                                No photos found in Drive Photos_Media subfolder.
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Documents Section */}
+                                    <div>
+                                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <FileText size={14} /> Datasheets & Manuals ({driveFiles.docs.length})
+                                        </div>
+                                        {driveFiles.docs.length > 0 ? (
+                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '10px' }}>
+                                                {driveFiles.docs.map(file => (
+                                                    <a
+                                                        key={file.id}
+                                                        href={file.url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '10px', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '12px', background: '#fff', textDecoration: 'none', transition: 'border-color 0.2s' }}
+                                                        onMouseEnter={(e) => e.currentTarget.style.borderColor = '#1a3c63'}
+                                                        onMouseLeave={(e) => e.currentTarget.style.borderColor = '#e2e8f0'}
+                                                    >
+                                                        <div style={{ background: '#fee2e2', borderRadius: '8px', padding: '6px', display: 'flex', color: '#ef4444' }}>
+                                                            <FileText size={16} />
+                                                        </div>
+                                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                                            <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+                                                            <div style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '2px' }}>Open in Google Drive</div>
+                                                        </div>
+                                                        <ExternalLink size={12} color="#94a3b8" />
+                                                    </a>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div style={{ padding: '16px', border: '1px dashed #cbd5e1', borderRadius: '10px', color: '#94a3b8', fontSize: '0.78rem', textAlign: 'center' }}>
+                                                No files found in Drive Datasheets_Manuals subfolder.
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -1288,6 +2110,122 @@ const CatalogForm = () => {
                                 </div>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+            {/* ===== Google Drive Connect Modal ===== */}
+            {showDriveModal && (
+                <div style={{
+                    position: 'fixed', inset: 0, zIndex: 9999,
+                    background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(6px)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px'
+                }}>
+                    <div style={{
+                        background: '#ffffff', borderRadius: '24px', padding: '40px 36px',
+                        maxWidth: '480px', width: '100%', boxShadow: '0 25px 60px rgba(0,0,0,0.25)',
+                        border: '1px solid #e2e8f0', textAlign: 'center'
+                    }}>
+                        {/* Icon */}
+                        <div style={{ width: '72px', height: '72px', borderRadius: '20px', background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+                            <Cloud size={36} color="#fff" />
+                        </div>
+
+                        <h2 style={{ margin: '0 0 10px', fontSize: '1.4rem', fontWeight: 800, color: '#1e293b' }}>
+                            Google Drive Not Connected
+                        </h2>
+                        <p style={{ margin: '0 0 8px', color: '#475569', fontSize: '0.95rem', lineHeight: 1.6 }}>
+                            Your spare part <strong>#{formData.spare_number || '—'}</strong> has been saved, but a Google Drive folder structure is required to store photos and datasheets.
+                        </p>
+                        <p style={{ margin: '0 0 28px', color: '#64748b', fontSize: '0.85rem', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: '10px', padding: '10px 14px' }}>
+                            ⚠️ Please connect Google Drive to automatically create the <strong>Photos_Media</strong> and <strong>Datasheets_Manuals</strong> folders for this part.
+                        </p>
+
+                        <button
+                            onClick={() => {
+                                // Store the spare part id so we can auto-provision on return
+                                sessionStorage.setItem('catalog_spare_drive_pending_id', pendingSaveId);
+                                sessionStorage.setItem('google_auth_return_url', `/catalog/${pendingSaveId}`);
+                                connectGoogleAPI('catalog_spare_new');
+                            }}
+                            style={{
+                                width: '100%', padding: '14px', borderRadius: '12px',
+                                background: 'linear-gradient(135deg, #1a3c63 0%, #2563eb 100%)',
+                                color: '#fff', border: 'none', fontWeight: 800, fontSize: '1rem',
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                gap: '10px', marginBottom: '12px', boxShadow: '0 4px 14px rgba(26,60,99,0.35)'
+                            }}
+                        >
+                            <Cloud size={20} /> Connect Google Drive &amp; Create Folders
+                        </button>
+
+                        <button
+                            onClick={() => {
+                                setShowDriveModal(false);
+                                navigate(`/catalog/${pendingSaveId}`);
+                            }}
+                            style={{
+                                width: '100%', padding: '11px', borderRadius: '12px',
+                                background: '#f8fafc', color: '#64748b', border: '1px solid #e2e8f0',
+                                fontWeight: 600, fontSize: '0.88rem', cursor: 'pointer'
+                            }}
+                        >
+                            Skip for now (I'll connect later)
+                        </button>
+                    </div>
+                </div>
+            )}
+            {qrModal.isOpen && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+                    <div className="glass-panel animate-scale-up" style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
+                        <button 
+                            onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+                            style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                            onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                            onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
+                        >
+                            <X size={24} />
+                        </button>
+
+                        <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                            <Smartphone size={24} />
+                        </div>
+
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Mobile Upload Gateway</h3>
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: '1.4' }}>
+                            Scan this QR code with your smartphone camera to upload files directly to your <strong>{qrModal.folderName}</strong> folder.
+                        </p>
+
+                        {!qrModal.folderId ? (
+                            <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                <Loader size={36} className="animate-spin text-primary" />
+                                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
+                            </div>
+                        ) : (
+                            <div>
+                                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block', marginBottom: '24px' }}>
+                                    <img 
+                                        src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
+                                            `${window.location.origin}/upload-media?folderId=${qrModal.folderId}&token=${getStoredToken() || localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent(qrModal.folderName)}`
+                                        )}`}
+                                        alt="Upload QR Code"
+                                        style={{ width: '200px', height: '200px', display: 'block' }}
+                                    />
+                                </div>
+
+                                <div style={{ fontSize: '0.8rem', color: '#94a3b8', background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+                                    <Info size={14} style={{ flexShrink: 0 }} />
+                                    <span>Session active. QR code is valid for temporary uploading.</span>
+                                </div>
+                            </div>
+                        )}
+
+                        <button 
+                            className="btn btn-primary" 
+                            style={{ width: '100%', marginTop: '24px', padding: '12px', borderRadius: '12px', fontWeight: 700 }}
+                            onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+                        >
+                            Done
+                        </button>
                     </div>
                 </div>
             )}

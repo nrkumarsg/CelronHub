@@ -6994,11 +6994,39 @@ export default function WorkflowEditor() {
                 </div>
             )}
 
-            {/* Premium AI Enquiry Document Parser Modal */}
             <SmartEnquiryParserModal 
                 isOpen={showDocumentParserModal}
                 onClose={() => setShowDocumentParserModal(false)}
                 partners={partners}
+                getFolderId={async () => {
+                    const token = localStorage.getItem('google_access_token');
+                    if (!token || !isTokenValid()) {
+                        toast.error("Please connect Google Drive first.");
+                        return null;
+                    }
+                    let fid = formData.drive_folder_id;
+                    if (!fid) {
+                        const rootId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
+                        if (rootId) {
+                            const currentYear = new Date().getFullYear().toString();
+                            const partnerName = partners.find(p => p.id === formData.partner_id)?.name || 'Unknown Partner';
+                            const vesselName = vessels.find(v => v.id === formData.vessel_id)?.vessel_name || '';
+                            const locationName = workLocations.find(l => l.id === formData.work_location_id)?.location_name || '';
+                            const suffix = vesselName || locationName || '';
+                            const folderTitle = suffix ? `${formData.document_no || 'Draft'} - ${partnerName} - ${suffix}` : `${formData.document_no || 'Draft'} - ${partnerName}`;
+                            const cleanTitle = folderTitle.replace(/[/\\?%*:|"<>]/g, '-');
+                            
+                            fid = await provisionFullProjectStructure(token, rootId, currentYear, cleanTitle);
+                            setFormData(prev => ({ ...prev, drive_folder_id: fid }));
+                        }
+                    }
+                    if (fid) {
+                        const { getOrCreateFolder } = await import('../../lib/driveService');
+                        const mediaFolderId = await getOrCreateFolder(token, 'Photos & Gallery', fid);
+                        return mediaFolderId;
+                    }
+                    return null;
+                }}
                 onApply={({ header, items: scannedItems, file: uploadedFile }) => {
                     // 1. Map header fields
                     const headerUpdates = {};

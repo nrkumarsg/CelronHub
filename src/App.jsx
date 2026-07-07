@@ -1,11 +1,10 @@
 import { Routes, Route, useParams, useNavigate, Navigate } from 'react-router-dom';
-import { useEffect } from 'react';
-import { Smartphone } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Smartphone, Lock, ShieldAlert } from 'lucide-react';
 import { downloadApkByIdentifier } from './lib/driveService';
 // Build cache invalidation: v1.0.1
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
-import GDriveConnectionTray from './components/common/GDriveConnectionTray';
 import Dashboard from './pages/Dashboard';
 import Partners from './pages/Partners';
 import PartnerForm from './pages/PartnerForm';
@@ -64,6 +63,7 @@ import ApkManagement from './pages/admin/ApkManagement';
 import ActivityLogs from './pages/admin/ActivityLogs';
 import BillsPortal from './pages/accounts/BillsPortal';
 import UploadMediaGateway from './pages/workflows/UploadMediaGateway';
+import FloatingControlHub from './components/FloatingControlHub';
 
 
 // Authentication & RBAC Components
@@ -96,15 +96,152 @@ const AppLayout = ({ children }) => {
         <main className="main-content">
           {children}
         </main>
-        <GDriveConnectionTray />
+      </div>
+      <FloatingControlHub />
+    </div>
+  );
+};
+
+const RedirectToManual = () => {
+  const { id } = useParams();
+  return <Navigate to={`/catalog/manuals/${id}`} replace />;
+};
+
+import { Toaster } from 'react-hot-toast';
+
+const PasscodeGate = ({ onUnlock }) => {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState(false);
+
+  const handleKeyClick = (num) => {
+    if (code.length < 5) {
+      setCode(prev => {
+        const val = prev + num;
+        if (val.length === 5) {
+          if (val === '55555') {
+            localStorage.setItem('celron_app_unlocked', 'true');
+            sessionStorage.setItem('celron_app_unlocked', 'true');
+            onUnlock();
+          } else {
+            setError(true);
+            setTimeout(() => setError(false), 600);
+            return '';
+          }
+        }
+        return val;
+      });
+    }
+  };
+
+  const handleClear = () => {
+    setCode('');
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (/^\d$/.test(e.key)) {
+        handleKeyClick(parseInt(e.key, 10));
+      } else if (e.key === 'Backspace') {
+        setCode(prev => prev.slice(0, -1));
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [code]);
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      minHeight: '100vh', background: 'radial-gradient(circle at center, #0f172a 0%, #020617 100%)',
+      color: '#fff', fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    }}>
+      <div style={{
+        background: 'rgba(30, 41, 59, 0.4)', backdropFilter: 'blur(16px)',
+        border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '24px',
+        padding: '40px', width: '100%', maxWidth: '380px', textAlign: 'center',
+        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+        animation: error ? 'shake 0.5s' : 'none'
+      }}>
+        <style>{`
+          @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-8px); }
+            40%, 80% { transform: translateX(8px); }
+          }
+        `}</style>
+        
+        <div style={{ display: 'inline-flex', padding: '16px', borderRadius: '50%', background: 'rgba(99, 102, 241, 0.1)', color: '#6366f1', marginBottom: '20px' }}>
+          <Lock size={32} />
+        </div>
+        <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 8px 0', letterSpacing: '-0.02em', color: '#f8fafc' }}>Security Gate</h2>
+        <p style={{ fontSize: '0.8rem', color: '#94a3b8', margin: '0 0 28px 0' }}>
+          Enter the 5-digit passcode to open {window.location.hostname.includes('celronpricescanner') ? 'Celron Price Scanner' : (window.location.hostname.includes('celronspares') ? 'Celron Spares' : 'CelronHub')}
+        </p>
+
+        {/* Indicator dots */}
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '32px' }}>
+          {[...Array(5)].map((_, i) => (
+            <div key={i} style={{
+              width: '16px', height: '16px', borderRadius: '50%',
+              background: i < code.length ? (error ? '#ef4444' : '#6366f1') : '#334155',
+              boxShadow: i < code.length ? `0 0 12px ${error ? '#ef4444' : '#6366f1'}` : 'none',
+              transition: 'all 0.15s ease'
+            }} />
+          ))}
+        </div>
+
+        {/* Digital Keypad */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '20px' }}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+            <button key={num} onClick={() => handleKeyClick(num)} style={{
+              background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.05)',
+              borderRadius: '16px', padding: '16px', fontSize: '1.25rem', color: '#fff',
+              fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s'
+            }}>
+              {num}
+            </button>
+          ))}
+          <button onClick={handleClear} style={{
+            background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)',
+            borderRadius: '16px', padding: '16px', fontSize: '0.9rem', color: '#fca5a5',
+            fontWeight: 700, cursor: 'pointer'
+          }}>
+            CLR
+          </button>
+          <button onClick={() => handleKeyClick(0)} style={{
+            background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.05)',
+            borderRadius: '16px', padding: '16px', fontSize: '1.25rem', color: '#fff',
+            fontWeight: 700, cursor: 'pointer'
+          }}>
+            0
+          </button>
+          <button disabled style={{
+            background: 'transparent', border: 'none', cursor: 'default'
+          }} />
+        </div>
       </div>
     </div>
   );
 };
 
-import { Toaster } from 'react-hot-toast';
-
 function App() {
+  const isCatalogOnly = window.location.hostname.includes('celronpricescanner') || 
+                        window.location.hostname.includes('celronspares') || 
+                        (import.meta.env.VITE_CATALOG_ONLY === 'true' && 
+                         !window.location.hostname.includes('celronhub') && 
+                         !window.location.hostname.includes('celron-partners'));
+
+  const [isUnlocked, setIsUnlocked] = useState(() => {
+    if (!isCatalogOnly) return true;
+    return localStorage.getItem('celron_app_unlocked') === 'true' || 
+           sessionStorage.getItem('celron_app_unlocked') === 'true';
+  });
+
+  if (isCatalogOnly && !isUnlocked) {
+    return <PasscodeGate onUnlock={() => setIsUnlocked(true)} />;
+  }
+
   return (
     <AuthProvider>
       <Toaster position="top-right" reverseOrder={false} />
@@ -120,11 +257,13 @@ function App() {
         {/* Protected Application Layout and Routes */}
         <Route path="*" element={
           <AppLayout>
-            {import.meta.env.VITE_CATALOG_ONLY === 'true' ? (
+            {isCatalogOnly ? (
               <Routes>
                 <Route path="/" element={<ProtectedRoute requiredModule="catalog"><CatalogDirectory /></ProtectedRoute>} />
                 <Route path="/catalog" element={<ProtectedRoute requiredModule="catalog"><CatalogDirectory /></ProtectedRoute>} />
                 <Route path="/catalog/system/:id" element={<ProtectedRoute requiredModule="catalog"><SystemForm /></ProtectedRoute>} />
+                <Route path="/catalog/manuals" element={<ProtectedRoute requiredModule="catalog"><ManualsDirectory /></ProtectedRoute>} />
+                <Route path="/catalog/manuals/:id" element={<ProtectedRoute requiredModule="catalog"><ManualForm /></ProtectedRoute>} />
                 <Route path="/catalog/:id" element={<ProtectedRoute requiredModule="catalog"><CatalogForm /></ProtectedRoute>} />
                 <Route path="/catalog/labels" element={<ProtectedRoute requiredModule="catalog"><PrintLabels /></ProtectedRoute>} />
                 <Route path="*" element={<Navigate to="/" replace />} />
@@ -173,6 +312,8 @@ function App() {
 
               {/* Catalog Module */}
               <Route path="/catalog" element={<ProtectedRoute requiredModule="catalog"><CatalogDirectory /></ProtectedRoute>} />
+              <Route path="/catalog/manuals" element={<ProtectedRoute><ManualsDirectory /></ProtectedRoute>} />
+              <Route path="/catalog/manuals/:id" element={<ProtectedRoute><ManualForm /></ProtectedRoute>} />
               <Route path="/catalog/:id" element={<ProtectedRoute requiredModule="catalog"><CatalogForm /></ProtectedRoute>} />
               <Route path="/catalog/labels" element={<ProtectedRoute requiredModule="catalog"><PrintLabels /></ProtectedRoute>} />
 
@@ -205,8 +346,8 @@ function App() {
               <Route path="/storage" element={<ProtectedRoute><StorageDirectory /></ProtectedRoute>} />
               <Route path="/vault" element={<ProtectedRoute><CorporateVault /></ProtectedRoute>} />
               <Route path="/vault/:folderId" element={<ProtectedRoute><CorporateVault /></ProtectedRoute>} />
-              <Route path="/manuals" element={<ProtectedRoute><ManualsDirectory /></ProtectedRoute>} />
-              <Route path="/manuals/:id" element={<ProtectedRoute><ManualForm /></ProtectedRoute>} />
+              <Route path="/manuals" element={<Navigate to="/catalog/manuals" replace />} />
+              <Route path="/manuals/:id" element={<RedirectToManual />} />
 
               <Route path="/forms" element={<ProtectedRoute><FormsDirectory /></ProtectedRoute>} />
               <Route path="/forms/calibration-lab" element={<ProtectedRoute><CalibrationLab /></ProtectedRoute>} />

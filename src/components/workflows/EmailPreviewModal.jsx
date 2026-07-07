@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Send, Mail, Search, Paperclip, Trash2, Plus, Eye, Edit2, Upload, AlertCircle, CheckCircle2, FolderOpen, RefreshCw, FileText, ImageIcon, Loader2, FileCheck } from 'lucide-react';
+import { X, Send, Mail, Search, Paperclip, Trash2, Plus, Eye, Edit2, Upload, AlertCircle, CheckCircle2, FolderOpen, RefreshCw, FileText, ImageIcon, Loader2, FileCheck, Smartphone, Info } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { getStoredToken } from '../../lib/googleAuthService';
@@ -38,6 +38,9 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
     const [photosMediaFiles, setPhotosMediaFiles] = useState([]);
     const [quotationsReceivedFiles, setQuotationsReceivedFiles] = useState([]);
 
+    const [photosFolderId, setPhotosFolderId] = useState(null);
+    const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
+
     // Hardcoded office contact defaults
     const defaultOfficeContacts = [
         { name: 'Our Office', email: 'accounts@celron.net', post: 'Billing / Finance' },
@@ -67,6 +70,8 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
             const supplierUploadsId = await getOrCreateFolder(token, 'Supplier Enquiry uploads', data.enquiryFolderId);
             const photosId = await getOrCreateFolder(token, 'Photos & Media', data.enquiryFolderId);
             const quotationsId = await getOrCreateFolder(token, 'Quotations received', data.enquiryFolderId);
+
+            setPhotosFolderId(photosId);
 
             // 2. Fetch file contents for each subfolder
             const supplierFiles = await listFolderContent(token, supplierUploadsId);
@@ -490,6 +495,24 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                                 {driveConnected && (
                                     <button
                                         type="button"
+                                        onClick={async () => {
+                                            let targetId = photosFolderId;
+                                            if (!targetId) {
+                                                const token = getStoredToken();
+                                                targetId = await getOrCreateFolder(token, 'Photos & Media', data.enquiryFolderId);
+                                                setPhotosFolderId(targetId);
+                                            }
+                                            setQrModal({ isOpen: true, folderId: targetId, folderName: 'Photos & Media' });
+                                        }}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, color: '#166534', cursor: 'pointer' }}
+                                    >
+                                        <Smartphone size={12} />
+                                        Mobile Upload (QR)
+                                    </button>
+                                )}
+                                {driveConnected && (
+                                    <button
+                                        type="button"
                                         onClick={fetchDriveFiles}
                                         disabled={loadingDriveFiles}
                                         style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
@@ -679,6 +702,64 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
             <style dangerouslySetInnerHTML={{ __html: `
                 @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
             `}} />
+
+            {qrModal.isOpen && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 11000, padding: '20px' }}>
+                    <div style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
+                        <button 
+                            type="button"
+                            onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+                            style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                            onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                            onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
+                        >
+                            <X size={24} />
+                        </button>
+
+                        <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justify: 'center', margin: '0 auto 16px' }}>
+                            <Smartphone size={24} />
+                        </div>
+
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Mobile Upload Gateway</h3>
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: '1.4' }}>
+                            Scan this QR code with your smartphone camera to upload files directly to your <strong>{qrModal.folderName}</strong> folder.
+                        </p>
+
+                        {!qrModal.folderId ? (
+                            <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                <Loader2 size={36} className="animate-spin text-primary" style={{ animation: 'spin 1s linear infinite' }} />
+                                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
+                            </div>
+                        ) : (
+                            <div>
+                                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block', marginBottom: '24px' }}>
+                                    <img 
+                                        src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
+                                            `${window.location.origin}/upload-media?folderId=${qrModal.folderId}&token=${getStoredToken() || localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent(qrModal.folderName)}`
+                                        )}`}
+                                        alt="Upload QR Code"
+                                        style={{ width: '200px', height: '200px', display: 'block' }}
+                                    />
+                                </div>
+
+                                <div style={{ fontSize: '0.8rem', color: '#94a3b8', background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+                                    <Info size={14} style={{ flexShrink: 0 }} />
+                                    <span>Session active. QR code is valid for temporary uploading.</span>
+                                </div>
+                            </div>
+                        )}
+
+                        <button 
+                            type="button"
+                            className="btn btn-primary" 
+                            style={{ width: '100%', marginTop: '24px', padding: '12px', borderRadius: '12px', fontWeight: 700, background: '#6366f1', border: 'none', color: '#fff', cursor: 'pointer' }}
+                            onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
+                        >
+                            Done
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
