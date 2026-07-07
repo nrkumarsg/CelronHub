@@ -65,83 +65,93 @@ const CompanyAutocomplete = ({ value, onChange, onSelect, className, aiDisabled 
 
         setLoading(true);
         setApiError(null);
-        
-        // STAGE 1: LLM Query Cleaning (User Recommendation)
-        let cleaned = input;
-        if (!aiDisabled) {
-            setIsCleaning(true);
-            cleaned = await cleanSearchQuery(input);
-            setCleanedQuery(cleaned);
-            setIsCleaning(false);
-        } else {
-            setCleanedQuery(input);
-        }
-
-        // Wait up to 3 seconds for SDK if not ready
-        let ready = sdkReady;
-        if (!ready) {
-            for (let i = 0; i < 6; i++) {
-                await new Promise(resolve => setTimeout(resolve, 500));
-                if (window.google && window.google.maps && window.google.maps.places) {
-                    ready = true;
-                    setSdkReady(true);
-                    break;
-                }
-            }
-        }
-
-        if (!ready) {
-            console.error('Google Maps SDK failed to load');
-            setApiError('SDK Load Failed');
-            setLoading(false);
-            return;
-        }
 
         try {
+            // STAGE 1: LLM Query Cleaning (User Recommendation)
+            let cleaned = input;
+            if (!aiDisabled) {
+                setIsCleaning(true);
+                try {
+                    cleaned = await cleanSearchQuery(input);
+                } catch (cleanErr) {
+                    console.error('Query Cleaner failed:', cleanErr);
+                } finally {
+                    setIsCleaning(false);
+                }
+                setCleanedQuery(cleaned);
+            } else {
+                setCleanedQuery(input);
+            }
+
+            // Wait up to 3 seconds for SDK if not ready
+            let ready = sdkReady;
+            if (!ready) {
+                for (let i = 0; i < 6; i++) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    if (window.google && window.google.maps && window.google.maps.places) {
+                        ready = true;
+                        setSdkReady(true);
+                        break;
+                    }
+                }
+            }
+
+            if (!ready) {
+                console.error('Google Maps SDK failed to load');
+                setApiError('SDK Load Failed');
+                setLoading(false);
+                return;
+            }
+
             const service = new window.google.maps.places.AutocompleteService();
             // Use the CLEANED query for better matching
             service.getPlacePredictions({ 
                 input: cleaned, 
                 types: ['establishment'] 
             }, (predictions, status) => {
-                if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions) {
-                    
-                    // STAGE 2: Custom Reranker (User Recommendation)
-                    // Prioritize results that match the industrial/Singapore context
-                    const sorted = [...predictions].sort((a, b) => {
-                        const aLower = a.description.toLowerCase();
-                        const bLower = b.description.toLowerCase();
+                try {
+                    if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions) {
                         
-                        // Rule 1: Prioritize industrial keywords
-                        const industrialKeywords = ['industrial', 'engineering', 'marine', 'technical', 'supply', 'logistics', 'automation'];
-                        const aHasIndustry = industrialKeywords.some(k => aLower.includes(k));
-                        const bHasIndustry = industrialKeywords.some(k => bLower.includes(k));
-                        
-                        if (aHasIndustry && !bHasIndustry) return -1;
-                        if (!aHasIndustry && bHasIndustry) return 1;
-                        
-                        // Rule 2: Prioritize Singapore results (local context)
-                        const aInSG = aLower.includes('singapore');
-                        const bInSG = bLower.includes('singapore');
-                        
-                        if (aInSG && !bInSG) return -1;
-                        if (!aInSG && bInSG) return 1;
-                        
-                        return 0;
-                    });
+                        // STAGE 2: Custom Reranker (User Recommendation)
+                        // Prioritize results that match the industrial/Singapore context
+                        const sorted = [...predictions].sort((a, b) => {
+                            const aLower = (a.description || '').toLowerCase();
+                            const bLower = (b.description || '').toLowerCase();
+                            
+                            // Rule 1: Prioritize industrial keywords
+                            const industrialKeywords = ['industrial', 'engineering', 'marine', 'technical', 'supply', 'logistics', 'automation'];
+                            const aHasIndustry = industrialKeywords.some(k => aLower.includes(k));
+                            const bHasIndustry = industrialKeywords.some(k => bLower.includes(k));
+                            
+                            if (aHasIndustry && !bHasIndustry) return -1;
+                            if (!aHasIndustry && bHasIndustry) return 1;
+                            
+                            // Rule 2: Prioritize Singapore results (local context)
+                            const aInSG = aLower.includes('singapore');
+                            const bInSG = bLower.includes('singapore');
+                            
+                            if (aInSG && !bInSG) return -1;
+                            if (!aInSG && bInSG) return 1;
+                            
+                            return 0;
+                        });
 
-                    setSuggestions(sorted);
-                    setApiError(null);
-                } else {
-                    if (status !== 'ZERO_RESULTS') {
-                        console.warn('Place predictions error status:', status);
-                        setApiError(status); // Store status like REQUEST_DENIED
-                    } else {
+                        setSuggestions(sorted);
                         setApiError(null);
+                    } else {
+                        if (status !== 'ZERO_RESULTS') {
+                            console.warn('Place predictions error status:', status);
+                            setApiError(status); // Store status like REQUEST_DENIED
+                        } else {
+                            setApiError(null);
+                        }
+                        setSuggestions([]);
                     }
-                    setSuggestions([]);
+                } catch (callbackErr) {
+                    console.error('Error inside getPlacePredictions callback:', callbackErr);
+                } finally {
+                    setLoading(false);
                 }
-                setLoading(false);
             });
         } catch (error) {
             console.error('Autocomplete service error:', error);
