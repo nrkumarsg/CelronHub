@@ -168,10 +168,19 @@ async function executeClaudeRequest(provider, apiKey, prompt, history, useJson, 
 
 async function executeOpenAICompatibleRequest(provider, apiKey, prompt, history, useJson, image, signal) {
     let url = provider.baseUrl;
-    if (!url.endsWith('/chat/completions') && !url.endsWith('/v1')) {
-        url = url.endsWith('/') ? `${url}chat/completions` : `${url}/chat/completions`;
+    // Normalize URL: ensure it ends with /v1/chat/completions
+    if (url.endsWith('/chat/completions')) {
+        // already correct
     } else if (url.endsWith('/v1')) {
         url = `${url}/chat/completions`;
+    } else if (url.endsWith('/v1/')) {
+        url = `${url}chat/completions`;
+    } else {
+        // baseUrl like https://api.deepseek.com or https://api.groq.com/openai
+        const hasV1 = url.includes('/v1');
+        url = hasV1
+            ? (url.endsWith('/') ? `${url}chat/completions` : `${url}/chat/completions`)
+            : (url.endsWith('/') ? `${url}v1/chat/completions` : `${url}/v1/chat/completions`);
     }
 
     const messages = [];

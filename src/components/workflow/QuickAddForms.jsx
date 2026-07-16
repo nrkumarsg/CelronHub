@@ -13,6 +13,7 @@ import RichTextEditor from '../common/RichTextEditor';
 import CompanyAutocomplete from '../common/CompanyAutocomplete';
 import PartnerDocuments from '../partners/PartnerDocuments';
 import SmartOCRModal from '../common/SmartOCRModal';
+import toast from 'react-hot-toast';
 import DriveScannerLinker from '../workflows/DriveScannerLinker';
 import GDriveConnectionModal from '../common/GDriveConnectionModal';
 import { listFolderContent, getOrCreateFolder } from '../../lib/driveService';
@@ -2247,15 +2248,21 @@ export const QuickVesselAdd = ({ company_id, initialData, onSuccess, onCancel })
                 researchData = data;
             }
 
-            if (researchData) {
-                setFormData(prev => ({
-                    ...prev,
-                    ...researchData.fields
-                }));
+            if (researchData?.fields) {
+                const hasData = Object.values(researchData.fields).some(v => v && v.trim && v.trim());
+                if (hasData) {
+                    setFormData(prev => ({
+                        ...prev,
+                        ...researchData.fields
+                    }));
+                    toast.success(`AI filled vessel details (confidence: ${researchData.confidence || 'medium'}). Please verify before saving.`);
+                } else {
+                    toast.error('AI could not find vessel data. Please fill manually or check the vessel name.');
+                }
             }
         } catch (err) {
             console.error('AI Research Error:', err);
-            alert('AI Research failed. Please fill manually or check vessel name.');
+            toast.error('AI Research failed: ' + (err.message || 'Unknown error. Please fill manually.'));
         } finally {
             setIsAiResearching(false);
         }
