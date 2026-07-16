@@ -90,10 +90,18 @@ export const AuthProvider = ({ children }) => {
                     comp.slug === 'celron-hub' ||
                     comp.id === '8431cd0b-7449-44a5-8213-2a8680d09ebe'
                 );
-                setActiveCompanyId(storedCompany && c.some(comp => comp.id === storedCompany)
+                let resolvedCompany = storedCompany && c.some(comp => comp.id === storedCompany)
                     ? storedCompany 
-                    : (celron?.id || p.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe')
-                );
+                    : (celron?.id || p.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe');
+                
+                if (p?.email?.toLowerCase() === 'nrkumarsg@gmail.com' && resolvedCompany === 'd0000000-0000-0000-0000-000000000001') {
+                    resolvedCompany = '8431cd0b-7449-44a5-8213-2a8680d09ebe';
+                }
+                
+                setActiveCompanyId(resolvedCompany);
+                if (resolvedCompany !== storedCompany) {
+                    localStorage.setItem('active_company_id', resolvedCompany);
+                }
                 
                 hasCache = true;
                 setLoading(false); // INSTANT ACCESS if cache exists
@@ -259,9 +267,13 @@ export const AuthProvider = ({ children }) => {
                 c.slug === 'celron-hub' ||
                 c.id === '8431cd0b-7449-44a5-8213-2a8680d09ebe'
             );
-            const defaultCompany = (storedCompany && myComps.some(c => c.id === storedCompany))
+            let defaultCompany = (storedCompany && myComps.some(c => c.id === storedCompany))
                 ? storedCompany 
                 : (celronCompany?.id || myComps[0]?.id || profileData?.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe');
+
+            if (profileData?.email?.toLowerCase() === 'nrkumarsg@gmail.com' && defaultCompany === 'd0000000-0000-0000-0000-000000000001') {
+                defaultCompany = '8431cd0b-7449-44a5-8213-2a8680d09ebe';
+            }
 
             const activeComp = myComps?.find(c => c.id === defaultCompany);
             if (activeComp?.enabled_modules && profileData.role !== 'superadmin') {
@@ -291,6 +303,7 @@ export const AuthProvider = ({ children }) => {
             setProfile(profileData);
             setCompanies(myComps || []);
             setActiveCompanyId(defaultCompany);
+            localStorage.setItem('active_company_id', defaultCompany);
 
             // Cache for next load
             localStorage.setItem('auth_cached_profile', JSON.stringify(profileData));
