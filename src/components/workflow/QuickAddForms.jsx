@@ -18,7 +18,6 @@ import DriveScannerLinker from '../workflows/DriveScannerLinker';
 import GDriveConnectionModal from '../common/GDriveConnectionModal';
 import { listFolderContent, getOrCreateFolder } from '../../lib/driveService';
 import { isTokenValid, getStoredToken } from '../../lib/googleAuthService';
-import toast from 'react-hot-toast';
 
 
 // Generic Modal Base

@@ -54,7 +54,7 @@ const DEFAULT_PROVIDERS = [
     },
     {
         name: 'OpenAI',
-        enabled: false,
+        enabled: true,
         priority: 5,
         baseUrl: 'https://api.openai.com/v1',
         modelName: 'gpt-4o-mini',
@@ -150,13 +150,16 @@ export async function getDecryptedApiKey(providerName) {
     if (!encrypted) {
         // Fallback checks for legacy browser settings
         if (providerName.toLowerCase() === 'openai') {
-            return localStorage.getItem('custom_openai_key') || '';
+            return localStorage.getItem('custom_openai_key') || import.meta.env.VITE_OPENAI_API_KEY || '';
         }
         if (providerName.toLowerCase() === 'deepseek') {
             return import.meta.env.VITE_DEEPSEEK_API_KEY || '';
         }
         if (providerName.toLowerCase() === 'groq') {
             return import.meta.env.VITE_GROQ_API_KEY || '';
+        }
+        if (providerName.toLowerCase() === 'gemini') {
+            return import.meta.env.VITE_GEMINI_API_KEY || '';
         }
         return '';
     }
