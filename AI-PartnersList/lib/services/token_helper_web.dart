@@ -61,7 +61,7 @@ void clearToken() {
 
 void triggerGoogleLogin() {
   try {
-    final clientId = '696421975815-2tp2llpdq92jubtivn1hpqd1jji421ur.apps.googleusercontent.com';
+    final clientId = '918684400121-3f2c2pldbj7ohkc5396ubfj3snmvhr65.apps.googleusercontent.com';
     final redirectUri = Uri.encodeComponent(html.window.location.origin ?? '');
     
     // Scopes for Drive access

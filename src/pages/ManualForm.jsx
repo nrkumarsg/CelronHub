@@ -38,9 +38,12 @@ export default function ManualForm() {
     const [loading, setLoading] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
-    const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
-    const [checkingMobile, setCheckingMobile] = useState(false);
-    const [isUploadPanelOpen, setIsUploadPanelOpen] = useState(false);
+    const [uploadConfig, setUploadConfig] = useState({
+        isOpen: false,
+        activeFolderId: null,
+        activeFolderName: '',
+        initialTab: 'recent'
+    });
 
     useEffect(() => {
         if (profile?.company_id) {
@@ -203,72 +206,45 @@ export default function ManualForm() {
         }
     };
 
-    const handleOpenMobileUpload = async () => {
+    const ensureManualFolder = async () => {
         if (!formData.manufacturer || !formData.model) {
-            alert('Please select or specify Manufacturer/Brand and Model/Series before opening mobile upload. They are needed to organize files on Google Drive.');
-            return;
+            alert('Please select or specify Manufacturer/Brand and Model/Series before uploading. They are needed to organize files on Google Drive.');
+            return null;
         }
 
         const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
         const expires = sessionStorage.getItem('google_contacts_expires');
 
         if (!token || (expires && new Date(expires) < new Date())) {
-            if (window.confirm('Google Drive access is required to connect your phone. Redirect to login?')) {
+            if (window.confirm('Google Drive access is required to connect. Redirect to login?')) {
                 sessionStorage.setItem('pending_manual_data', JSON.stringify(formData));
                 connectGoogleAPI('manual_upload');
-                return;
             }
-            return;
+            return null;
         }
-
-        setQrModal({ isOpen: true, folderId: null, folderName: `${formData.manufacturer} - ${formData.model}` });
 
         try {
             const manualsRootId = await getOrCreateFolder(token, 'Manuals');
             const mfgFolderId = await getOrCreateFolder(token, formData.manufacturer || 'Unknown', manualsRootId);
             const modelFolderId = await getOrCreateFolder(token, formData.model || 'General', mfgFolderId);
-            
-            setQrModal({
-                isOpen: true,
-                folderId: modelFolderId,
-                folderName: `${formData.manufacturer} ${formData.model}`
-            });
+            return modelFolderId;
         } catch (err) {
-            console.error("Failed to provision mobile folders:", err);
+            console.error("Failed to provision manual folders:", err);
             alert("Error connecting to Google Drive: " + err.message);
-            setQrModal({ isOpen: false, folderId: null, folderName: '' });
         }
+        return null;
     };
 
-    const handleVerifyMobileUpload = async () => {
-        const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
-        if (!token || !qrModal.folderId) return;
+    const handleTriggerUpload = async (tab = 'recent') => {
+        const folderId = await ensureManualFolder();
+        if (!folderId) return;
 
-        setCheckingMobile(true);
-        try {
-            const files = await listFolderContent(token, qrModal.folderId);
-            const pdfFiles = (files || []).filter(f => f.name.toLowerCase().endsWith('.pdf') || f.mimeType === 'application/pdf');
-
-            if (pdfFiles.length > 0) {
-                const latestFile = pdfFiles[0];
-                setFormData(prev => ({
-                    ...prev,
-                    file_url: latestFile.webViewLink,
-                    file_id: latestFile.id,
-                    title: prev.title || latestFile.name.replace(/\.[^/.]+$/, "")
-                }));
-                setFile(null);
-                alert(`Successfully synced uploaded manual: ${latestFile.name}`);
-                setQrModal({ isOpen: false, folderId: null, folderName: '' });
-            } else {
-                alert("No PDF manuals found in the Drive folder yet. Please upload it from your phone first.");
-            }
-        } catch (err) {
-            console.error("Failed to verify mobile upload:", err);
-            alert("Error verifying upload: " + err.message);
-        } finally {
-            setCheckingMobile(false);
-        }
+        setUploadConfig({
+            isOpen: true,
+            activeFolderId: folderId,
+            activeFolderName: `${formData.manufacturer} ${formData.model}`,
+            initialTab: tab
+        });
     };
 
     const handleSave = async (e) => {
@@ -572,7 +548,7 @@ export default function ManualForm() {
                     }}
                 >
                     <div
-                        onClick={() => setIsUploadPanelOpen(true)}
+                        onClick={() => handleTriggerUpload('recent')}
                         style={{ position: 'absolute', inset: 0, cursor: 'pointer', width: '100%', height: '100%', zIndex: 1 }}
                     />
                     
@@ -614,7 +590,7 @@ export default function ManualForm() {
                 <div style={{ display: 'flex', gap: '12px', marginBottom: '32px' }}>
                     <button
                         type="button"
-                        onClick={handleOpenMobileUpload}
+                        onClick={() => handleTriggerUpload('mobile_qr')}
                         className="btn btn-secondary"
                         style={{ flex: 1, padding: '12px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 600 }}
                     >
@@ -650,95 +626,15 @@ export default function ManualForm() {
                 </div>
             </form>
 
-            {qrModal.isOpen && (
-                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-                    <div className="glass-panel" style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
-                        <button 
-                            type="button"
-                            onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
-                            style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
-                        >
-                            <X size={24} />
-                        </button>
-
-                        <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-                            <Smartphone size={24} />
-                        </div>
-
-                        <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Mobile Upload Gateway</h3>
-                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: '1.4' }}>
-                            Scan this QR code with your phone or click the WhatsApp button to upload files directly to your <strong>{qrModal.folderName}</strong> folder.
-                        </p>
-
-                        {!qrModal.folderId ? (
-                            <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                                <Loader size={36} className="animate-spin text-primary" style={{ animation: 'spin 1s linear infinite', color: '#6366f1' }} />
-                                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
-                            </div>
-                        ) : (
-                            (() => {
-                                const uploadUrl = `${window.location.origin}/upload-media?folderId=${qrModal.folderId}&token=${sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent(qrModal.folderName)}`;
-                                return (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center' }}>
-                                        <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block' }}>
-                                            <img 
-                                                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(uploadUrl)}`}
-                                                alt="Upload QR Code"
-                                                style={{ width: '180px', height: '180px', display: 'block' }}
-                                            />
-                                        </div>
-
-                                        <a 
-                                            href={`https://api.whatsapp.com/send?text=${encodeURIComponent("Please upload technical manual here: " + uploadUrl)}`}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            style={{ 
-                                                width: '100%',
-                                                display: 'flex', 
-                                                alignItems: 'center', 
-                                                justifyContent: 'center', 
-                                                gap: '8px', 
-                                                background: '#25D366', 
-                                                color: '#fff', 
-                                                padding: '12px', 
-                                                borderRadius: '12px', 
-                                                fontWeight: 700, 
-                                                textDecoration: 'none', 
-                                                cursor: 'pointer' 
-                                            }}
-                                        >
-                                            Share via WhatsApp
-                                        </a>
-
-                                        <button 
-                                            type="button"
-                                            disabled={checkingMobile}
-                                            onClick={handleVerifyMobileUpload}
-                                            className="btn btn-primary"
-                                            style={{ width: '100%', padding: '12px', borderRadius: '12px', background: '#6366f1', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 700 }}
-                                        >
-                                            {checkingMobile ? (
-                                                <>
-                                                    <RefreshCw size={16} className="animate-spin" /> Verifying File...
-                                                </>
-                                            ) : (
-                                                'Verify & Sync Upload'
-                                            )}
-                                        </button>
-                                    </div>
-                                );
-                            })()
-                        )}
-                    </div>
-                </div>
-            )}
-
             <SmartUploadPanel 
-                isOpen={isUploadPanelOpen} 
-                onClose={() => setIsUploadPanelOpen(false)} 
+                isOpen={uploadConfig.isOpen} 
+                onClose={() => setUploadConfig(prev => ({ ...prev, isOpen: false }))} 
                 onSelect={handleSelectFile}
                 documentType="manual"
                 accept=".pdf"
+                activeFolderId={uploadConfig.activeFolderId}
+                activeFolderName={uploadConfig.activeFolderName}
+                initialTab={uploadConfig.initialTab}
             />
         </div>
     );

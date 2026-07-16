@@ -14,8 +14,9 @@ import EmailPreviewModal from '../../components/workflows/EmailPreviewModal';
 import FastFloatModal from '../../components/workflows/FastFloatModal';
 import html2pdf from 'html2pdf.js';
 import { buildRFQMailtoUrl, buildRFQWhatsAppUrl, buildQuotationMailtoUrl, openEmailUrl } from '../../lib/enquiryEmailService';
-import { listFolderContent, deleteFile, getOrCreateFolder, uploadFileToDrive, provisionEnquiryFolderStructure } from '../../lib/driveService';
-import { getStoredToken } from '../../lib/googleAuthService';
+import { listFolderContent, deleteFile, getOrCreateFolder, uploadFileToDrive, provisionEnquiryFolderStructure, copyFile } from '../../lib/driveService';
+import SmartUploadPanel from '../../components/upload/SmartUploadPanel';
+import { getStoredToken, validateToken } from '../../lib/googleAuthService';
 
 import { useEnquiry } from '../../hooks/useEnquiry';
 import { useSupplierActions } from '../../hooks/useSupplierActions';
@@ -60,6 +61,62 @@ export default function EnquiryDetails() {
     const [galleryFolderId, setGalleryFolderId] = useState(null);
     const [isDraggingPhotos, setIsDraggingPhotos] = useState(false);
     const [showGalleryOCRModal, setShowGalleryOCRModal] = useState(false);
+
+    const [smartUploadConfig, setSmartUploadConfig] = useState({
+        isOpen: false,
+        onSelect: null,
+        documentType: 'workflow',
+        accept: '*',
+        activeFolderId: null,
+        activeFolderName: 'Enquiry Folder',
+        initialTab: 'recent'
+    });
+
+    const openSmartUpload = (onSelect, accept = '*', folderId = null, folderName = 'Enquiry Workspace', initialTab = 'recent') => {
+        setSmartUploadConfig({
+            isOpen: true,
+            onSelect,
+            documentType: 'workflow',
+            accept,
+            activeFolderId: folderId,
+            activeFolderName: folderName,
+            initialTab
+        });
+    };
+
+
+
+    const handleTriggerSmartUpload = async (onSelect, accept = '*', subFolder = null, tab = 'recent', customFolderId = null) => {
+        let folderId = customFolderId || enquiry?.gdrive_folder_id;
+        if (!folderId) {
+            folderId = await ensureEnquiryFolder();
+        }
+        if (!folderId) return;
+
+        let targetFolderId = folderId;
+        if (subFolder) {
+            try {
+                const token = localStorage.getItem('google_access_token');
+                const subFolderId = await getOrCreateFolder(token, subFolder, folderId);
+                if (subFolder === 'Photos & Gallery') {
+                    setGalleryFolderId(subFolderId);
+                }
+                targetFolderId = subFolderId;
+            } catch (err) {
+                console.error(`Failed to get or create subfolder ${subFolder}:`, err);
+            }
+        }
+
+        const enqNo = enquiry.enquiry_no || 'Draft';
+        openSmartUpload(
+            onSelect,
+            accept,
+            targetFolderId,
+            `Enquiry ${enqNo}${subFolder ? ' - ' + subFolder : ''}`,
+            tab
+        );
+    };
+
 
     const {
         suppliers,
@@ -838,16 +895,22 @@ export default function EnquiryDetails() {
                 } catch (e) { console.error("Folder creation failed", e); }
             }
 
-            // 2. Handle Attachment Upload (Option B - Upload directly to root folder)
+            // 2. Handle Attachment Upload (Option B - Upload directly to root folder or copy Drive file)
             if (attachment && accessToken && isValid && projectFolderId) {
-                const { uploadFileToDrive } = await import('../../lib/driveService');
-                const uploadResult = await uploadFileToDrive(accessToken, attachment, {
-                    folderId: projectFolderId,
-                    title: attachment.name,
-                    company_id: profile.company_id
-                });
-                gdriveFileId = uploadResult.id;
-                gdriveFileLink = uploadResult.webViewLink;
+                if (attachment.isGoogleDrive) {
+                    const copiedFile = await copyFile(accessToken, attachment.id, projectFolderId);
+                    gdriveFileId = copiedFile.id;
+                    gdriveFileLink = copiedFile.webViewLink;
+                } else {
+                    const { uploadFileToDrive } = await import('../../lib/driveService');
+                    const uploadResult = await uploadFileToDrive(accessToken, attachment, {
+                        folderId: projectFolderId,
+                        title: attachment.name,
+                        company_id: profile.company_id
+                    });
+                    gdriveFileId = uploadResult.id;
+                    gdriveFileLink = uploadResult.webViewLink;
+                }
             }
 
             const payload = {
@@ -1880,20 +1943,18 @@ export default function EnquiryDetails() {
                             <Upload size={40} color="#94a3b8" style={{ marginBottom: '16px' }} />
                             <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: '6px' }}>Enquiry Document</div>
                             <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '20px' }}>Drag & drop or browse for PDF/Images</div>
-                            <input 
-                                type="file" 
-                                style={{ display: 'none' }} 
-                                id="vault-upload" 
-                                onChange={(e) => {
-                                    const file = e.target.files[0];
-                                    if (!file) return;
-                                    setAttachment(file);
-                                }}
-                            />
-                            <label htmlFor="vault-upload" className="btn btn-primary" style={{ padding: '10px 24px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                            <button 
+                                type="button"
+                                onClick={() => handleTriggerSmartUpload((file) => {
+                                    if (file) setAttachment(file);
+                                }, '.pdf,image/*', null, 'recent')}
+                                className="btn btn-primary" 
+                                style={{ padding: '10px 24px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px', border: 'none' }}
+                            >
                                 {attachment ? <CheckCircle2 size={16} /> : <Plus size={16} />} 
                                 {attachment ? attachment.name.substring(0, 20) + '...' : 'Select Document'}
-                            </label>
+                            </button>
+
                         </div>
 
                         {enquiry.gdrive_file_link && (
@@ -2018,15 +2079,21 @@ export default function EnquiryDetails() {
                                 </a>
                             )}
                             <button 
+                                type="button"
                                 className="btn btn-secondary" 
-                                onClick={() => setShowGalleryOCRModal(true)}
+                                onClick={() => handleTriggerSmartUpload(async (file) => {
+                                    if (file) await handleGalleryUpload(file);
+                                }, 'image/*', 'Photos & Gallery', 'ocr')}
                                 style={{ background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)', border: '1px solid #ddd6fe', color: '#7c3aed' }}
                             >
                                 <Sparkles size={16} /> Smart OCR
                             </button>
                             <button 
+                                type="button"
+                                onClick={() => handleTriggerSmartUpload(async (file) => {
+                                    if (file) await handleGalleryUpload(file);
+                                }, 'image/*', 'Photos & Gallery', 'mobile_qr')}
                                 className="btn btn-secondary" 
-                                onClick={handleShowQr}
                                 style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid #bbf7d0', color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}
                             >
                                 <Smartphone size={16} /> Mobile Upload (QR)
@@ -2040,18 +2107,17 @@ export default function EnquiryDetails() {
                                 <RefreshCw size={16} className={loadingGallery ? 'animate-spin' : ''} />
                                 Synchronize
                             </button>
-                            <label className="btn btn-primary" style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden', background: '#f43f5e', border: '1px solid #f43f5e' }}>
+                            <button 
+                                type="button"
+                                onClick={() => handleTriggerSmartUpload(async (file) => {
+                                    if (file) await handleGalleryUpload(file);
+                                }, 'image/*', 'Photos & Gallery', 'recent')}
+                                className="btn btn-primary" 
+                                style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden', background: '#f43f5e', border: '1px solid #f43f5e', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                            >
                                 <Upload size={16} /> Upload Photo
-                                <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => {
-                                    const files = Array.from(e.target.files);
-                                    const uploadSequence = async () => {
-                                        for (const f of files) {
-                                            await handleGalleryUpload(f);
-                                        }
-                                    };
-                                    uploadSequence();
-                                }} />
-                            </label>
+                            </button>
+
                         </div>
                     </div>
 
@@ -2214,7 +2280,27 @@ export default function EnquiryDetails() {
                                                     }
                                                 }
                                             }}
-                                            onClick={() => document.getElementById('explorer-upload').click()}
+                                                                            onClick={() => handleTriggerSmartUpload(async (file) => {
+                                                if (!file) return;
+                                                setUploadingExplorer(true);
+                                                setUploadProgress(0);
+                                                try {
+                                                    const token = getStoredToken();
+                                                    if (file.isGoogleDrive) {
+                                                        await copyFile(token, file.id, explorerFolderId);
+                                                    } else {
+                                                        await uploadFileToDrive(token, file, { folderId: explorerFolderId });
+                                                    }
+                                                    fetchExplorerFiles(explorerFolderId, explorerPath.length === 1);
+                                                    toast.success("File added successfully!");
+                                                } catch (err) {
+                                                    console.error('Upload error:', err);
+                                                    toast.error('Failed to add file: ' + err.message);
+                                                } finally {
+                                                    setUploadingExplorer(false);
+                                                    setUploadProgress(0);
+                                                }
+                                            }, '*', null, 'recent', explorerFolderId)}
                                             style={{
                                                 border: isDraggingExplorer ? '2px dashed #4f46e5' : '2px dashed #cbd5e1',
                                                 background: isDraggingExplorer ? '#eff6ff' : '#f8fafc',
@@ -2250,7 +2336,6 @@ export default function EnquiryDetails() {
                                             )}
                                         </div>
                                     )}
-                                    <input id="explorer-upload" type="file" multiple hidden onChange={handleExplorerUpload} />
                                 </div>
                             </div>
 
@@ -2615,6 +2700,16 @@ export default function EnquiryDetails() {
                     </div>
                 </div>
             )}
+            <SmartUploadPanel 
+                isOpen={smartUploadConfig.isOpen}
+                onClose={() => setSmartUploadConfig(prev => ({ ...prev, isOpen: false }))}
+                onSelect={smartUploadConfig.onSelect}
+                documentType={smartUploadConfig.documentType}
+                accept={smartUploadConfig.accept}
+                activeFolderId={smartUploadConfig.activeFolderId}
+                activeFolderName={smartUploadConfig.activeFolderName}
+                initialTab={smartUploadConfig.initialTab}
+            />
         </div>
     );
 }

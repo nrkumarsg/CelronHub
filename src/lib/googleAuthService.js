@@ -31,7 +31,7 @@ const SCOPES = [
  */
 export const connectGoogleAPI = (state = 'sync', customScope = null, loginHint = null) => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    const redirectUri = import.meta.env.VITE_GOOGLE_REDIRECT_URI || (window.location.origin + '/oauth-callback');
+    const redirectUri = window.location.origin + '/oauth-callback';
 
     if (!clientId) {
         alert('Google Client ID not configured in .env file');

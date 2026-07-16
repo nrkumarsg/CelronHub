@@ -17,6 +17,7 @@ import DriveScannerLinker from '../workflows/DriveScannerLinker';
 import GDriveConnectionModal from '../common/GDriveConnectionModal';
 import { listFolderContent, getOrCreateFolder } from '../../lib/driveService';
 import { isTokenValid, getStoredToken } from '../../lib/googleAuthService';
+import toast from 'react-hot-toast';
 
 
 // Generic Modal Base
@@ -123,7 +124,7 @@ export const Modal = ({ isOpen, onClose, title, children, icon: Icon, size = 'md
 };
 
 // Quick Partner Add
-export const QuickPartnerAdd = ({ company_id, initialData, onSuccess, onCancel, hideActions = false, onDataChange, title: propTitle, defaultType = 'Supplier', aiDisabled = false }) => {
+export const QuickPartnerAdd = ({ company_id, initialData, onSuccess, onCancel, hideActions = false, onDataChange, title: propTitle, defaultType = 'Supplier', aiDisabled = false, onImportDraft }) => {
     const [formData, setFormData] = useState(initialData || {
         name: '',
         uen: '',
@@ -151,6 +152,76 @@ export const QuickPartnerAdd = ({ company_id, initialData, onSuccess, onCancel, 
     const [aiPreview, setAiPreview] = useState(null);
     const [aiStatus, setAiStatus] = useState('');
     const [isMapsResearching, setIsMapsResearching] = useState(false);
+    const [draftMatches, setDraftMatches] = useState([]);
+
+    useEffect(() => {
+        if (!formData.name && !formData.uen) {
+            setDraftMatches([]);
+            return;
+        }
+
+        const delayDebounce = setTimeout(async () => {
+            try {
+                let query = supabase
+                    .from('partners')
+                    .select('*, contacts(*)')
+                    .eq('status', 'pending_approval');
+                
+                const nameVal = formData.name ? formData.name.trim() : '';
+                const uenVal = formData.uen ? formData.uen.trim() : '';
+                
+                if (nameVal && uenVal) {
+                    query = query.or(`name.ilike.%${nameVal}%,uen.ilike.%${uenVal}%`);
+                } else if (nameVal) {
+                    query = query.ilike('name', `%${nameVal}%`);
+                } else if (uenVal) {
+                    query = query.ilike('uen', `%${uenVal}%`);
+                } else {
+                    return;
+                }
+
+                const { data, error } = await query.limit(5);
+                if (error) throw error;
+                
+                // Avoid matching the current edited partner if we imported it
+                const filtered = (data || []).filter(d => d.id !== formData.id);
+                setDraftMatches(filtered);
+            } catch (err) {
+                console.error('Failed to search drafts:', err);
+            }
+        }, 400);
+
+        return () => clearTimeout(delayDebounce);
+    }, [formData.name, formData.uen, formData.id]);
+
+    const handleImportAndApproveDraft = (draft) => {
+        const updated = {
+            ...formData,
+            id: draft.id,
+            name: draft.name || '',
+            uen: draft.uen || '',
+            address: draft.address || '',
+            country: draft.country || '',
+            city: draft.city || '',
+            pincode: draft.postal_code || '',
+            email1: draft.email1 || '',
+            phone1: draft.phone1 || '',
+            weblink: draft.weblink || '',
+            brand: draft.brand || draft.brands || '',
+            notes: draft.notes || '',
+            activity_summary: draft.business_scope || '',
+            status: 'new'
+        };
+        setFormData(updated);
+        if (onDataChange) onDataChange(updated);
+        
+        if (onImportDraft) {
+            onImportDraft(draft);
+        } else {
+            toast.success(`Imported and approved draft: ${draft.name}`);
+        }
+        setDraftMatches([]);
+    };
 
     useEffect(() => {
         if (initialData) {
@@ -679,6 +750,74 @@ export const QuickPartnerAdd = ({ company_id, initialData, onSuccess, onCancel, 
                             )}
                         </div>
                     )}
+                </div>
+            )}
+
+            {draftMatches.length > 0 && (
+                <div style={{
+                    marginBottom: '20px',
+                    padding: '16px',
+                    background: 'rgba(124, 58, 237, 0.08)',
+                    border: '1.5px dashed #c084fc',
+                    borderRadius: '12px',
+                    color: '#5b21b6'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                        <Sparkles size={18} color="#7c3aed" />
+                        <span style={{ fontWeight: 800, fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Scanned Card Drafts Found ({draftMatches.length})
+                        </span>
+                    </div>
+                    <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', color: '#6d28d9' }}>
+                        A matching record was found in the business card scanner queue. You can import and approve it directly to activate it in the database.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {draftMatches.map(draft => {
+                            const contact = draft.contacts?.[0] || {};
+                            return (
+                                <div key={draft.id} style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    background: '#fff',
+                                    padding: '10px 14px',
+                                    borderRadius: '10px',
+                                    border: '1px solid #e9d5ff',
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                                }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                        <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#1e1b4b' }}>{draft.name}</span>
+                                        <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                                            {draft.uen ? `UEN: ${draft.uen}` : 'No UEN'} • {draft.address || 'No Address'}
+                                        </span>
+                                        {contact.name && (
+                                            <span style={{ fontSize: '0.75rem', color: '#7c3aed', fontWeight: 500 }}>
+                                                Rep: {contact.name} ({contact.post || 'Representative'})
+                                            </span>
+                                        )}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleImportAndApproveDraft(draft)}
+                                        style={{
+                                            background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)',
+                                            color: '#fff',
+                                            border: 'none',
+                                            padding: '6px 14px',
+                                            borderRadius: '8px',
+                                            fontSize: '0.75rem',
+                                            fontWeight: 700,
+                                            cursor: 'pointer',
+                                            boxShadow: '0 2px 4px rgba(124, 58, 237, 0.2)',
+                                            transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        Import &amp; Approve
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
             )}
 
@@ -1309,6 +1448,7 @@ export const QuickPartnerContactDualAdd = ({ company_id, initialPartner, initial
     const [showLookupModal, setShowLookupModal] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
 
+
     const loadContact = (c) => {
         setContactData({
             id: c.id,
@@ -1465,69 +1605,57 @@ export const QuickPartnerContactDualAdd = ({ company_id, initialPartner, initial
         if (!partnerData.name) return alert('Partner Name is required');
         setLoading(true);
         try {
-            // Bypass all AI validation, auto-fills, and API requests during submission if AI features are disabled (smartPasteEnabled is false)
-            if (!smartPasteEnabled) {
-                console.log('[SaveAll] AI features disabled. Bypassing all AI validation, auto-fills, and API requests. Executing clean database write.');
-                
-                // Sanitize payload and perform direct, instant database write
-                const partnerPayload = { ...partnerData, company_id };
-                delete partnerPayload.contacts;
-                delete partnerPayload.isAiResearching;
-                delete partnerPayload.isMapsResearching;
-                delete partnerPayload.aiStatus;
-                delete partnerPayload.aiPreview;
+            // Validate UUID for company_id to prevent database syntax errors
+            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            const validCompanyId = uuidRegex.test(company_id) ? company_id : null;
 
-                const { data: pData, error: pError } = partnerData.id
-                    ? await supabase.from('partners').update(partnerPayload).eq('id', partnerData.id).select()
-                    : await supabase.from('partners').insert([partnerPayload]).select();
-                
-                if (pError) throw pError;
-                const savedPartner = pData[0];
-
-                let savedContact = null;
-                if (contactData.name) {
-                    const contactPayload = { ...contactData, partnerId: savedPartner.id };
-                    delete contactPayload.isAiResearching;
-                    delete contactPayload.aiPreview;
-
-                    if (!contactData.id) {
-                        contactPayload.company_id = company_id;
-                    }
-                    const { data: cData, error: cError } = contactData.id
-                        ? await supabase.from('contacts').update(contactPayload).eq('id', contactData.id).select()
-                        : await supabase.from('contacts').insert([contactPayload]).select();
-                    
-                    if (cError) throw cError;
-                    savedContact = cData[0];
-                }
-
-                onSuccess({ partner: savedPartner, contact: savedContact });
-                return;
-            }
+            // Sanitize partner payload
+            const partnerPayload = { ...partnerData, company_id: validCompanyId };
+            delete partnerPayload.contacts;
+            delete partnerPayload.isAiResearching;
+            delete partnerPayload.isMapsResearching;
+            delete partnerPayload.aiStatus;
+            delete partnerPayload.aiPreview;
+            delete partnerPayload.cleanedQuery;
+            delete partnerPayload.isCleaning;
+            delete partnerPayload.isExtracting;
+            delete partnerPayload.customCategory;
 
             // 1. Save Partner
             const isPartnerExisting = !!partnerData.id;
-            
-            // Sanitize payload
-            const partnerPayload = { ...partnerData, company_id };
-            delete partnerPayload.contacts;
-
             const { data: pData, error: pError } = isPartnerExisting 
                 ? await supabase.from('partners').update(partnerPayload).eq('id', partnerData.id).select()
                 : await supabase.from('partners').insert([partnerPayload]).select();
             
             if (pError) throw pError;
+            if (!pData || pData.length === 0) {
+                throw new Error('No partner data returned from database operation');
+            }
             const savedPartner = pData[0];
 
             // 2. Save Contact if name is provided
             let savedContact = null;
             if (contactData.name) {
+                const contactPayload = { ...contactData, partnerId: savedPartner.id };
+                delete contactPayload.isAiResearching;
+                delete contactPayload.aiPreview;
+                delete contactPayload.isCleaning;
+                delete contactPayload.isExtracting;
+                delete contactPayload.customCategory;
+
+                if (!contactData.id) {
+                    contactPayload.company_id = validCompanyId;
+                }
+
                 const isContactExisting = !!contactData.id;
                 const { data: cData, error: cError } = isContactExisting
-                    ? await supabase.from('contacts').update({ ...contactData, partnerId: savedPartner.id }).eq('id', contactData.id).select()
-                    : await supabase.from('contacts').insert([{ ...contactData, partnerId: savedPartner.id, company_id }]).select();
+                    ? await supabase.from('contacts').update(contactPayload).eq('id', contactData.id).select()
+                    : await supabase.from('contacts').insert([contactPayload]).select();
                 
                 if (cError) throw cError;
+                if (!cData || cData.length === 0) {
+                    throw new Error('No contact data returned from database operation');
+                }
                 savedContact = cData[0];
             }
 
@@ -1711,6 +1839,21 @@ export const QuickPartnerContactDualAdd = ({ company_id, initialPartner, initial
                                 title={title}
                                 defaultType={defaultType}
                                 aiDisabled={!smartPasteEnabled}
+                                onImportDraft={(draft) => {
+                                    const contact = draft.contacts?.[0] || {};
+                                    setContactData({
+                                        id: contact.id || '',
+                                        name: contact.name || '',
+                                        email: contact.email || '',
+                                        handphone: contact.handphone || '',
+                                        phone: contact.phone || '',
+                                        post: contact.post || '',
+                                        department: contact.department || '',
+                                        address: contact.address || '',
+                                        partnerId: draft.id
+                                    });
+                                    toast.success(`Imported and approved draft: ${draft.name}`);
+                                }}
                             />
                         </div>
                         <div>

@@ -12,6 +12,7 @@ import PartnerDocuments from '../components/partners/PartnerDocuments';
 import { COUNTRIES, PARTNER_CATEGORIES } from '../lib/constants';
 import { supabase } from '../lib/supabase';
 import { runUniversalSearch } from '../lib/universalFinder';
+import toast from 'react-hot-toast';
 
 export default function PartnerForm() {
     const { id } = useParams();
@@ -65,6 +66,83 @@ export default function PartnerForm() {
     const [loading, setLoading] = useState(false);
     const [activeTab, setActiveTab] = useState('details'); // 'details' or 'documents'
     const [dbCategories, setDbCategories] = useState([]);
+
+    const [draftMatches, setDraftMatches] = useState([]);
+
+    useEffect(() => {
+        if (!formData.name && !formData.uen) {
+            setDraftMatches([]);
+            return;
+        }
+
+        const delayDebounce = setTimeout(async () => {
+            try {
+                let query = supabase
+                    .from('partners')
+                    .select('*, contacts(*)')
+                    .eq('status', 'pending_approval');
+                
+                const nameVal = formData.name ? formData.name.trim() : '';
+                const uenVal = formData.uen ? formData.uen.trim() : '';
+                
+                if (nameVal && uenVal) {
+                    query = query.or(`name.ilike.%${nameVal}%,uen.ilike.%${uenVal}%`);
+                } else if (nameVal) {
+                    query = query.ilike('name', `%${nameVal}%`);
+                } else if (uenVal) {
+                    query = query.ilike('uen', `%${uenVal}%`);
+                } else {
+                    return;
+                }
+
+                const { data, error } = await query.limit(5);
+                if (error) throw error;
+
+                // Avoid matching the current edited partner if we imported it
+                const filtered = (data || []).filter(d => d.id !== formData.id);
+                setDraftMatches(filtered);
+            } catch (err) {
+                console.error('Failed to search drafts in partner form:', err);
+            }
+        }, 400);
+
+        return () => clearTimeout(delayDebounce);
+    }, [formData.name, formData.uen, formData.id]);
+
+    const handleImportAndApproveDraft = (draft) => {
+        const updated = {
+            ...formData,
+            id: draft.id,
+            name: draft.name || '',
+            uen: draft.uen || '',
+            address: draft.address || '',
+            country: draft.country || '',
+            city: draft.city || '',
+            pincode: draft.postal_code || '',
+            email1: draft.email1 || '',
+            phone1: draft.phone1 || '',
+            weblink: draft.weblink || '',
+            brand: draft.brand || draft.brands || '',
+            notes: draft.notes || '',
+            activity_summary: draft.business_scope || '',
+            status: 'new'
+        };
+        setFormData(updated);
+
+        // Populate contact if exists
+        const contact = draft.contacts?.[0] || {};
+        setPrimaryContact({
+            id: contact.id || '',
+            name: contact.name || '',
+            post: contact.post || '',
+            department: contact.department || '',
+            email: contact.email || '',
+            handphone: contact.handphone || ''
+        });
+
+        toast.success(`Imported and prepared draft: ${draft.name}`);
+        setDraftMatches([]);
+    };
 
     const modules = {
         toolbar: [
@@ -297,7 +375,10 @@ export default function PartnerForm() {
 
         setLoading(true);
         try {
-            const dataToSave = { ...formData, id: isNew ? undefined : id };
+            const dataToSave = { ...formData, id: id === 'new' ? formData.id : id };
+            if (formData.id && id === 'new') {
+                dataToSave.status = 'new';
+            }
             if (isNew && profile?.company_id) {
                 dataToSave.company_id = profile.company_id;
             }
@@ -585,6 +666,73 @@ export default function PartnerForm() {
                                         onChange={(val) => setFormData(prev => ({ ...prev, name: val }))}
                                         onSelect={handleCompanySelect}
                                     />
+                                    {draftMatches.length > 0 && (
+                                        <div style={{
+                                            marginTop: '16px',
+                                            padding: '16px',
+                                            background: 'rgba(124, 58, 237, 0.08)',
+                                            border: '1.5px dashed #c084fc',
+                                            borderRadius: '12px',
+                                            color: '#5b21b6'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                                                <Sparkles size={18} color="#7c3aed" />
+                                                <span style={{ fontWeight: 800, fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                    Scanned Card Drafts Found ({draftMatches.length})
+                                                </span>
+                                            </div>
+                                            <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', color: '#6d28d9' }}>
+                                                A matching record was found in the business card scanner queue. You can import and approve it directly to activate it in the database.
+                                            </p>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                {draftMatches.map(draft => {
+                                                    const contact = draft.contacts?.[0] || {};
+                                                    return (
+                                                        <div key={draft.id} style={{
+                                                            display: 'flex',
+                                                            justifyContent: 'space-between',
+                                                            alignItems: 'center',
+                                                            background: '#fff',
+                                                            padding: '10px 14px',
+                                                            borderRadius: '10px',
+                                                            border: '1px solid #e9d5ff',
+                                                            boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                                                        }}>
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#1e1b4b' }}>{draft.name}</span>
+                                                                <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                                                                    {draft.uen ? `UEN: ${draft.uen}` : 'No UEN'} • {draft.address || 'No Address'}
+                                                                </span>
+                                                                {contact.name && (
+                                                                    <span style={{ fontSize: '0.75rem', color: '#7c3aed', fontWeight: 500 }}>
+                                                                        Rep: {contact.name} ({contact.post || 'Representative'})
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleImportAndApproveDraft(draft)}
+                                                                style={{
+                                                                    background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)',
+                                                                    color: '#fff',
+                                                                    border: 'none',
+                                                                    padding: '6px 14px',
+                                                                    borderRadius: '8px',
+                                                                    fontSize: '0.75rem',
+                                                                    fontWeight: 700,
+                                                                    cursor: 'pointer',
+                                                                    boxShadow: '0 2px 4px rgba(124, 58, 237, 0.2)',
+                                                                    transition: 'all 0.2s'
+                                                                }}
+                                                            >
+                                                                Import &amp; Approve
+                                                            </button>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 

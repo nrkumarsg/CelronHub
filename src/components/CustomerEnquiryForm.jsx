@@ -5,7 +5,9 @@ import { useVesselsStore } from '../lib/vesselsStore';
 import { useWorkLocationsStore } from '../lib/workLocationsStore';
 import { connectGoogleAPI } from '../lib/googleAuthService';
 import { createEnquiry, generateEnquiryNo, updateEnquiry } from '../lib/workflowService';
-import { uploadFileToDrive, checkFileExists } from '../lib/driveService';
+import { uploadFileToDrive, checkFileExists, copyFile } from '../lib/driveService';
+import SmartUploadPanel from './upload/SmartUploadPanel';
+import toast from 'react-hot-toast';
 import { X, Upload, Save, FileText, ImageIcon, Crop as CropIcon, Copy, Loader2, Sparkles, ExternalLink, AlertCircle, Ship, ChevronDown } from 'lucide-react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
@@ -62,6 +64,92 @@ export default function CustomerEnquiryForm({ onClose, onSave, editingEnquiry = 
     const [attachment, setAttachment] = useState(null);
     const [attachmentUrl, setAttachmentUrl] = useState(null);
     const [isAttachmentImg, setIsAttachmentImg] = useState(false);
+    const [gdriveFolderId, setGdriveFolderId] = useState(editingEnquiry?.gdrive_folder_id || null);
+
+    const [smartUploadConfig, setSmartUploadConfig] = useState({
+        isOpen: false,
+        onSelect: null,
+        documentType: 'enquiry',
+        accept: '*',
+        activeFolderId: null,
+        activeFolderName: 'Enquiry Folder',
+        initialTab: 'recent'
+    });
+
+    const openSmartUpload = (onSelect, accept = '*', folderId = null, folderName = 'Enquiry Workspace', initialTab = 'recent') => {
+        setSmartUploadConfig({
+            isOpen: true,
+            onSelect,
+            documentType: 'enquiry',
+            accept,
+            activeFolderId: folderId,
+            activeFolderName: folderName,
+            initialTab
+        });
+    };
+
+    const ensureEnquiryFolder = async () => {
+        let folderId = gdriveFolderId || editingEnquiry?.gdrive_folder_id;
+        if (folderId) return folderId;
+
+        const accessToken = localStorage.getItem('google_access_token');
+        const isValid = await validateToken(accessToken);
+        if (!accessToken || !isValid) {
+            setIsGDriveModalOpen(true);
+            return null;
+        }
+
+        const enquiryNo = editingEnquiry?.enquiry_no || await generateEnquiryNo(profile.company_id);
+        
+        try {
+            const { getDocumentSettings } = await import('../lib/store');
+            const { provisionFullProjectStructure } = await import('../lib/driveService');
+
+            const settings = await getDocumentSettings();
+            const topRootId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
+            if (topRootId) {
+                const year = `YEAR${new Date().getFullYear()}`;
+                const partner = customers.find(c => c.id === formData.customer_id)?.name || 'Unknown Partner';
+                const vesselName = vessels.find(v => v.id === formData.vessel_id)?.vessel_name;
+                const locationName = workLocations.find(l => l.id === formData.work_location_id)?.location_name;
+
+                let projectFolderName = `${enquiryNo} - ${partner}`;
+                if (vesselName) projectFolderName += ` - ${vesselName}`;
+                if (locationName) projectFolderName += ` - ${locationName}`;
+                if (formData.customer_ref) projectFolderName += ` - ${formData.customer_ref}`;
+
+                const cleanFolderName = projectFolderName.replace(/[/\\?%*:|"<>]/g, '-');
+
+                folderId = await provisionFullProjectStructure(
+                    accessToken,
+                    topRootId,
+                    year,
+                    cleanFolderName
+                );
+
+                setGdriveFolderId(folderId);
+                return folderId;
+            }
+        } catch (err) {
+            console.error("Failed to ensure enquiry folder:", err);
+            toast.error("Failed to create Google Drive folder structure");
+        }
+        return null;
+    };
+
+    const handleTriggerAttachmentUpload = async () => {
+        const folderId = await ensureEnquiryFolder();
+        if (!folderId) return;
+
+        const enquiryNo = editingEnquiry?.enquiry_no || 'New Enquiry';
+        openSmartUpload(
+            handleSelectAttachment,
+            'image/*,application/pdf',
+            folderId,
+            `Enquiry ${enquiryNo}`,
+            'recent'
+        );
+    };
 
     // 2. OCR Tool State (Temp scratch image for text extraction)
     const [ocrFile, setOcrFile] = useState(null);
@@ -215,6 +303,32 @@ export default function CustomerEnquiryForm({ onClose, onSave, editingEnquiry = 
             reader.readAsDataURL(selectedFile);
         } else if (selectedFile.type === 'application/pdf') {
             setAttachmentUrl(URL.createObjectURL(selectedFile));
+        } else {
+            setAttachmentUrl(null);
+        }
+    };
+
+    const handleSelectAttachment = (file) => {
+        if (!file) return;
+        setAttachment(file);
+
+        if (file.isGoogleDrive) {
+            setAttachmentUrl(null);
+            setIsAttachmentImg(false);
+            return;
+        }
+
+        if (attachmentUrl) URL.revokeObjectURL(attachmentUrl);
+
+        const isImg = file.type?.startsWith('image/');
+        setIsAttachmentImg(isImg);
+
+        if (isImg) {
+            const reader = new FileReader();
+            reader.addEventListener('load', () => setAttachmentUrl(reader.result));
+            reader.readAsDataURL(file);
+        } else if (file.type === 'application/pdf') {
+            setAttachmentUrl(URL.createObjectURL(file));
         } else {
             setAttachmentUrl(null);
         }
@@ -475,16 +589,22 @@ export default function CustomerEnquiryForm({ onClose, onSave, editingEnquiry = 
                 }
             }
 
-            // 2. Handle Drive Upload if attachment exists (Option B - Upload directly to root folder)
+            // 2. Handle Drive Upload if attachment exists (Option B - Upload directly to root folder or copy Drive file)
             if (attachment && accessToken && projectFolderId) {
-                const uploadResult = await uploadFileToDrive(accessToken, attachment, {
-                    folderId: projectFolderId,
-                    title: attachment.name,
-                    company_id: profile.company_id
-                });
+                if (attachment.isGoogleDrive) {
+                    const copiedFile = await copyFile(accessToken, attachment.id, projectFolderId);
+                    gdriveFileId = copiedFile.id;
+                    gdriveFileLink = copiedFile.webViewLink;
+                } else {
+                    const uploadResult = await uploadFileToDrive(accessToken, attachment, {
+                        folderId: projectFolderId,
+                        title: attachment.name,
+                        company_id: profile.company_id
+                    });
 
-                gdriveFileId = uploadResult.id;
-                gdriveFileLink = uploadResult.webViewLink;
+                    gdriveFileId = uploadResult.id;
+                    gdriveFileLink = uploadResult.webViewLink;
+                }
             }
 
             // 3. Prepare Payload
@@ -939,18 +1059,21 @@ export default function CustomerEnquiryForm({ onClose, onSave, editingEnquiry = 
                                 This file will be saved systematically into <span style={{ fontFamily: 'monospace', background: '#f1f5f9', padding: '2px 4px', borderRadius: '4px' }}>Vault → Enquiry Received/2026/</span>
                             </p>
 
-                            <label style={{
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', padding: '20px',
-                                background: '#f8fafc', border: '2px dashed #cbd5e1', borderRadius: '12px',
-                                cursor: 'pointer', color: '#475569', fontWeight: 500, transition: 'all 0.2s', textAlign: 'center'
-                            }} className="upload-dropzone">
+                            <div 
+                                onClick={handleTriggerAttachmentUpload}
+                                style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', padding: '20px',
+                                    background: '#f8fafc', border: '2px dashed #cbd5e1', borderRadius: '12px',
+                                    cursor: 'pointer', color: '#475569', fontWeight: 500, transition: 'all 0.2s', textAlign: 'center'
+                                }} 
+                                className="upload-dropzone"
+                            >
                                 <FileText size={20} style={{ marginRight: '12px', color: 'var(--accent)' }} />
                                 <div style={{ textAlign: 'left' }}>
                                     <div style={{ fontSize: '0.9rem' }}>{attachment ? attachment.name : 'Click to Upload Final Document...'}</div>
                                     <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 400 }}>Supports PDF or Images</div>
                                 </div>
-                                <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={handleAttachmentChange} />
-                            </label>
+                            </div>
 
                             {/* Existing Attachment Display (Embedded Preview) */}
                             {!attachment && editingEnquiry?.gdrive_file_link && (
@@ -1012,11 +1135,17 @@ export default function CustomerEnquiryForm({ onClose, onSave, editingEnquiry = 
                             )}
 
                             {attachment && (
-                                <div style={{ marginTop: '16px', borderRadius: '8px', overflow: 'hidden', border: '1px solid #e2e8f0', height: isAttachmentImg ? 'auto' : '300px' }}>
-                                    {isAttachmentImg ? (
+                                <div style={{ marginTop: '16px', borderRadius: '8px', overflow: 'hidden', border: '1px solid #e2e8f0', height: (isAttachmentImg && !attachment.isGoogleDrive) ? 'auto' : '300px' }}>
+                                    {attachment.isGoogleDrive ? (
+                                        <iframe 
+                                            src={(attachment.webViewLink || '').replace('/view', '/preview')} 
+                                            style={{ width: '100%', height: '100%', border: 'none' }} 
+                                            title="Attachment Preview" 
+                                        />
+                                    ) : isAttachmentImg ? (
                                         <img src={attachmentUrl} alt="Attachment Preview" style={{ width: '100%', maxHeight: '300px', objectFit: 'contain', background: '#000' }} />
                                     ) : (
-                                        <iframe src={`${attachmentUrl}#toolbar=0`} style={{ width: '100%', height: '100%', border: 'none' }} title="Attachment Preview" />
+                                        <embed src={attachmentUrl} type="application/pdf" style={{ width: '100%', height: '100%', border: 'none' }} />
                                     )}
                                 </div>
                             )}
@@ -1268,6 +1397,16 @@ export default function CustomerEnquiryForm({ onClose, onSave, editingEnquiry = 
                     )}
                 </Modal>
             )}
+            <SmartUploadPanel 
+                isOpen={smartUploadConfig.isOpen}
+                onClose={() => setSmartUploadConfig(prev => ({ ...prev, isOpen: false }))}
+                onSelect={smartUploadConfig.onSelect}
+                documentType={smartUploadConfig.documentType}
+                accept={smartUploadConfig.accept}
+                activeFolderId={smartUploadConfig.activeFolderId}
+                activeFolderName={smartUploadConfig.activeFolderName}
+                initialTab={smartUploadConfig.initialTab}
+            />
         </div>
     );
 }

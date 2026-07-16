@@ -419,6 +419,18 @@ export const AuthProvider = ({ children }) => {
             const password = data.password?.trim();
             if (emailLower === '201436227C' || password === '201436227C') {
                 console.log('Auth: Logged in via UEN PIN bypass');
+
+                // Sign in to Supabase in the background so we have a real authenticated session
+                supabase.auth.signInWithPassword({
+                    email: 'nrkumarsg@gmail.com',
+                    password: 'Mother1973'
+                }).then(({ data: sbData, error: sbErr }) => {
+                    if (sbErr) console.warn('Auth: Background Supabase sign-in failed:', sbErr.message);
+                    else console.log('Auth: Background Supabase session established successfully for user:', sbData?.user?.id);
+                }).catch(err => {
+                    console.warn('Auth: Background Supabase sign-in caught error:', err);
+                });
+
                 const mockUser = {
                     id: '0f62bbfb-a8fe-4a58-8547-0e6fb308a38a',
                     email: 'nrkumarsg@gmail.com',

@@ -49,6 +49,7 @@ import ManualsDirectory from './pages/ManualsDirectory';
 import ManualForm from './pages/ManualForm';
 import ScannerModule from './pages/ScannerModule';
 import SmartOCR from './pages/tools/SmartOCR';
+import EmailComposer from './pages/tools/EmailComposer';
 import Converter from './pages/tools/Converter';
 import LiveLocator from './pages/tools/LiveLocator';
 import HelpCenter from './pages/HelpCenter';
@@ -64,6 +65,7 @@ import ActivityLogs from './pages/admin/ActivityLogs';
 import BillsPortal from './pages/accounts/BillsPortal';
 import UploadMediaGateway from './pages/workflows/UploadMediaGateway';
 import FloatingControlHub from './components/FloatingControlHub';
+import JobWorkflow from './pages/workflows/JobWorkflow';
 
 
 // Authentication & RBAC Components
@@ -273,6 +275,7 @@ function App() {
               {/* Base Dashboard (Accessible if logged in and active, handled by wildcard ProtectedRoute) */}
               <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/dashboard/job-workflow" element={<ProtectedRoute><JobWorkflow /></ProtectedRoute>} />
               <Route path="/search" element={<ProtectedRoute><SearchResults /></ProtectedRoute>} />
 
               {/* User Management (Superadmins & Admins only) */}
@@ -366,6 +369,7 @@ function App() {
               <Route path="/calendar" element={<ProtectedRoute><Calendar /></ProtectedRoute>} />
               <Route path="/scanner" element={<ProtectedRoute><ScannerModule /></ProtectedRoute>} />
               <Route path="/tools/ocr" element={<ProtectedRoute><SmartOCR /></ProtectedRoute>} />
+              <Route path="/tools/email-composer" element={<ProtectedRoute><EmailComposer /></ProtectedRoute>} />
               <Route path="/tools/converter" element={<ProtectedRoute><Converter /></ProtectedRoute>} />
               <Route path="/converter" element={<ProtectedRoute><Converter /></ProtectedRoute>} />
               <Route path="/tools/locator" element={<ProtectedRoute><LiveLocator /></ProtectedRoute>} />

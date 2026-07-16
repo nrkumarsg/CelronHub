@@ -72,7 +72,11 @@ const CompanyAutocomplete = ({ value, onChange, onSelect, className, aiDisabled 
             if (!aiDisabled) {
                 setIsCleaning(true);
                 try {
-                    cleaned = await cleanSearchQuery(input);
+                    // Wrap with 800ms timeout race so it doesn't hang autocomplete
+                    cleaned = await Promise.race([
+                        cleanSearchQuery(input),
+                        new Promise((resolve) => setTimeout(() => resolve(input), 800))
+                    ]);
                 } catch (cleanErr) {
                     console.error('Query Cleaner failed:', cleanErr);
                 } finally {
@@ -103,12 +107,19 @@ const CompanyAutocomplete = ({ value, onChange, onSelect, className, aiDisabled 
                 return;
             }
 
+            // Safety timeout to prevent infinite spinner if Google callback never fires
+            const safetyTimeout = setTimeout(() => {
+                console.warn('Autocomplete service request timed out after 3 seconds - forcing loading to false');
+                setLoading(false);
+            }, 3000);
+
             const service = new window.google.maps.places.AutocompleteService();
             // Use the CLEANED query for better matching
             service.getPlacePredictions({ 
                 input: cleaned, 
                 types: ['establishment'] 
             }, (predictions, status) => {
+                clearTimeout(safetyTimeout);
                 try {
                     if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions) {
                         
@@ -195,6 +206,7 @@ const CompanyAutocomplete = ({ value, onChange, onSelect, className, aiDisabled 
         setInputValue(suggestion.description);
         setShowDropdown(false);
         setSuggestions([]);
+        setLoading(false);
 
         if (onSelect && window.google && window.google.maps && window.google.maps.places) {
             const service = new window.google.maps.places.PlacesService(document.createElement('div'));
@@ -228,7 +240,7 @@ const CompanyAutocomplete = ({ value, onChange, onSelect, className, aiDisabled 
                     {inputValue && (
                         <button
                             type="button"
-                            onClick={() => { setInputValue(''); onChange(''); setShowDropdown(false); }}
+                            onClick={() => { setInputValue(''); onChange(''); setShowDropdown(false); setLoading(false); }}
                             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '50%' }}
                         >
                             <X size={14} color="#94a3b8" />

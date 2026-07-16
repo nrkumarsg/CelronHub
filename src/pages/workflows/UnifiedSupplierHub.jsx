@@ -225,7 +225,9 @@ function EnquiryCard({ enq, onOpen, onDrive, onFloat, onDelete, onDuplicate, onQ
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                         {enq.workflow_documents.map((doc, idx) => {
                             let docIcon = <FileText size={12} color="#6366f1" />;
-                            let editorPath = `/workflows/editor/${doc.id}`;
+                            let editorPath = doc.document_type === 'Enquiry' 
+                                ? `/workflows/enquiry/${doc.id}` 
+                                : `/workflows/editor/${doc.document_type.toLowerCase().replace(/ /g, '-')}/${doc.id}`;
                             let labelColor = '#475569';
                             let statusColor = '#64748b';
                             let statusBg = '#f1f5f9';
@@ -302,6 +304,14 @@ function EnquiryCard({ enq, onOpen, onDrive, onFloat, onDelete, onDuplicate, onQ
                     </button>
                     <button className="enq-ql-btn enq-ql-po" onClick={() => onPO(enq)} title="Order2Supplier">
                         <ShoppingCart size={12} /> Order2Supp
+                    </button>
+                    <button 
+                        className="enq-ql-btn enq-ql-workflow" 
+                        onClick={() => navigate(`/dashboard/job-workflow?enquiry_id=${enq.id}&enquiry_no=${enq.enquiry_no}`)} 
+                        title="Open Job Workflow Board"
+                        style={{ gridColumn: 'span 3', background: '#eef2ff', color: '#4f46e5', borderColor: '#c7d2fe' }}
+                    >
+                        <Activity size={12} /> Job Workflow Board
                     </button>
                 </div>
             </div>
@@ -808,6 +818,13 @@ export default function UnifiedSupplierHub() {
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <button 
+                        className="btn btn-secondary" 
+                        onClick={() => navigate('/workflows/jobs-dashboard')}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, borderColor: '#10b981', color: '#047857', background: '#ecfdf5' }}
+                    >
+                        <Briefcase size={18} /> Go to Job Control
+                    </button>
                     <button className="btn btn-secondary" onClick={loadAll} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <RefreshCcw size={16} /> Refresh
                     </button>

@@ -2,17 +2,36 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
     Search, X, Clock, Clipboard, Download, Cloud, Monitor, 
     AlertCircle, FileText, CheckCircle, Pin, Folder, Star, 
-    Sparkles, ShieldAlert, FileImage, FileCode, Keyboard
+    Sparkles, ShieldAlert, FileImage, FileCode, Keyboard,
+    Smartphone, QrCode, Image as ImageIcon, Loader2
 } from 'lucide-react';
+import ReactCrop from 'react-image-crop';
+import 'react-image-crop/dist/ReactCrop.css';
+import { performOCR } from '../../lib/googleAuthService';
+import { parseOCRBusinessCard } from '../../lib/geminiService';
 import { RecentFilesStore } from './RecentFilesStore';
 import { AIFileClassifier } from './AIFileClassifier';
 import { DuplicateChecker } from './DuplicateChecker';
 import { listFolderContent } from '../../lib/driveService';
 import { getStoredToken } from '../../lib/googleAuthService';
 
-export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentType = 'manual', accept = '.pdf' }) {
-    const [activeTab, setActiveTab] = useState('recent'); // 'recent', 'clipboard', 'downloads', 'gdrive', 'dragdrop'
+export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentType = 'manual', accept = '.pdf', activeFolderId = null, activeFolderName = 'System Workspace', initialTab = 'recent' }) {
+    const [activeTab, setActiveTab] = useState(initialTab || 'recent');
     const [searchTerm, setSearchTerm] = useState('');
+    
+    // OCR states
+    const [ocrFile, setOcrFile] = useState(null);
+    const [ocrPreviewUrl, setOcrPreviewUrl] = useState(null);
+    const [crop, setCrop] = useState({ unit: '%', width: 90, height: 90, x: 5, y: 5 });
+    const [completedCrop, setCompletedCrop] = useState(null);
+    const [isExtracting, setIsExtracting] = useState(false);
+    const [extractedText, setExtractedText] = useState('');
+    const [aiResult, setAiResult] = useState(null);
+    const [isAiProcessing, setIsAiProcessing] = useState(false);
+    const imgRef = useRef(null);
+
+    // Mobile QR state
+    const [isPolling, setIsPolling] = useState(false);
     
     // Store data states
     const [recentFiles, setRecentFiles] = useState([]);
@@ -43,13 +62,14 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
     // Load Local Store data on mount/open
     useEffect(() => {
         if (isOpen) {
+            setActiveTab(initialTab || 'recent');
             setRecentFiles(RecentFilesStore.getUploads(documentType));
             setFavorites(RecentFilesStore.getFavoriteFolders(documentType));
             setLastOpened(RecentFilesStore.getLastOpenedFolder(documentType));
             loadMockDownloads();
             loadGoogleDriveFiles();
         }
-    }, [isOpen, documentType]);
+    }, [isOpen, documentType, initialTab]);
 
     // Handle Keyboard Shortcuts
     useEffect(() => {
@@ -256,6 +276,128 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
         setDuplicateRecord(null);
         if (previewUrl) URL.revokeObjectURL(previewUrl);
         setPreviewUrl('');
+        // Clean OCR states too
+        setOcrFile(null);
+        if (ocrPreviewUrl) URL.revokeObjectURL(ocrPreviewUrl);
+        setOcrPreviewUrl(null);
+        setExtractedText('');
+        setAiResult(null);
+    };
+
+    // Polling for mobile uploads inside SmartUploadPanel
+    useEffect(() => {
+        let intervalId;
+        const token = getStoredToken() || localStorage.getItem('google_access_token');
+        if (activeTab === 'mobile_qr' && activeFolderId && token) {
+            setIsPolling(true);
+            let knownFileIds = [];
+
+            const initFiles = async () => {
+                try {
+                    const files = await listFolderContent(token, activeFolderId);
+                    knownFileIds = files.map(f => f.id);
+                } catch (e) {
+                    console.error("[SmartUploadPanel] Failed to list initial files:", e);
+                }
+            };
+            initFiles();
+
+            intervalId = setInterval(async () => {
+                try {
+                    const files = await listFolderContent(token, activeFolderId);
+                    const newFiles = files.filter(f => !knownFileIds.includes(f.id) && f.mimeType !== 'application/vnd.google-apps.folder');
+                    if (newFiles.length > 0) {
+                        const targetFile = newFiles[0];
+                        clearInterval(intervalId);
+                        setIsPolling(false);
+                        handleSelectGoogleDriveFile(targetFile);
+                    }
+                } catch (e) {
+                    console.error("[SmartUploadPanel] Polling error:", e);
+                }
+            }, 3000);
+        } else {
+            setIsPolling(false);
+        }
+
+        return () => {
+            if (intervalId) {
+                clearInterval(intervalId);
+            }
+        };
+    }, [activeTab, activeFolderId]);
+
+    const handleOcrFileChange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            setOcrFile(file);
+            const url = URL.createObjectURL(file);
+            setOcrPreviewUrl(url);
+            setExtractedText('');
+            setAiResult(null);
+        }
+    };
+
+    const onImageLoad = (e) => {
+        imgRef.current = e.currentTarget;
+    };
+
+    const extractOcrText = async () => {
+        if (!completedCrop || !imgRef.current) return;
+        setIsExtracting(true);
+        try {
+            const canvas = document.createElement('canvas');
+            const scaleX = imgRef.current.naturalWidth / imgRef.current.width;
+            const scaleY = imgRef.current.naturalHeight / imgRef.current.height;
+            
+            const isPercent = completedCrop.unit === '%';
+            const cropX = isPercent ? (completedCrop.x * imgRef.current.width) / 100 : completedCrop.x;
+            const cropY = isPercent ? (completedCrop.y * imgRef.current.height) / 100 : completedCrop.y;
+            const cropW = isPercent ? (completedCrop.width * imgRef.current.width) / 100 : completedCrop.width;
+            const cropH = isPercent ? (completedCrop.height * imgRef.current.height) / 100 : completedCrop.height;
+
+            canvas.width = cropW * scaleX;
+            canvas.height = cropH * scaleY;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(
+                imgRef.current,
+                cropX * scaleX,
+                cropY * scaleY,
+                cropW * scaleX,
+                cropH * scaleY,
+                0,
+                0,
+                canvas.width,
+                canvas.height
+            );
+
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+            const croppedFile = new File([blob], 'ocr_cropped.jpg', { type: 'image/jpeg' });
+            
+            const text = await performOCR(croppedFile);
+            setExtractedText(text);
+
+            if (text) {
+                setIsAiProcessing(true);
+                try {
+                    const result = await parseOCRBusinessCard(text);
+                    setAiResult(result);
+                } catch (aiErr) {
+                    console.warn('AI Parsing failed, using raw text', aiErr);
+                } finally {
+                    setIsAiProcessing(false);
+                }
+            }
+
+            // Stage the cropped image file so it is ready for submit
+            handleFileStaged(croppedFile);
+        } catch (err) {
+            console.error('OCR Extraction failed', err);
+            alert('Failed to extract text from image. Please try again.');
+        } finally {
+            setIsExtracting(false);
+        }
     };
 
     // Filter uploads based on Search query
@@ -276,9 +418,9 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                 style={{ 
                     background: '#ffffff', 
                     color: '#1e293b', 
-                    maxWidth: '850px', 
+                    maxWidth: '960px', 
                     width: '100%', 
-                    height: '580px',
+                    height: '660px',
                     borderRadius: '24px', 
                     border: '1px solid #e2e8f0', 
                     boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', 
@@ -364,6 +506,28 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                             }}
                         >
                             <Monitor size={16} /> Drag &amp; Drop Zone
+                        </button>
+                        <button 
+                            onClick={() => { setActiveTab('ocr'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+                                background: activeTab === 'ocr' ? '#6366f1' : 'transparent',
+                                color: activeTab === 'ocr' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.2s'
+                            }}
+                        >
+                            <Sparkles size={16} /> Smart OCR
+                        </button>
+                        <button 
+                            onClick={() => { setActiveTab('mobile_qr'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+                                background: activeTab === 'mobile_qr' ? '#6366f1' : 'transparent',
+                                color: activeTab === 'mobile_qr' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.2s'
+                            }}
+                        >
+                            <Smartphone size={16} /> Mobile Upload (QR)
                         </button>
 
                         <div style={{ marginTop: 'auto', borderTop: '1px solid #e2e8f0', paddingTop: '16px', fontSize: '0.75rem', color: '#94a3b8' }}>
@@ -552,6 +716,107 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                                 <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>
                                     Drag your document file from your computer and release it here.
                                 </p>
+                            </div>
+                        )}
+                        {/* 6. SMART OCR TAB */}
+                        {activeTab === 'ocr' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+                                {!ocrFile ? (
+                                    <label style={{
+                                        flex: 1, border: '2px dashed #cbd5e1', borderRadius: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: '#f8fafc', gap: '12px', minHeight: '200px'
+                                    }}>
+                                        <ImageIcon size={48} color="#94a3b8" />
+                                        <span style={{ fontWeight: 600, color: '#64748b', fontSize: '0.85rem' }}>Click to upload image for OCR</span>
+                                        <input type="file" accept="image/*" hidden onChange={handleOcrFileChange} />
+                                    </label>
+                                ) : (
+                                    <div style={{ display: 'flex', gap: '16px', height: '100%', minHeight: '320px', overflow: 'hidden' }}>
+                                        {/* Left: Crop area */}
+                                        <div style={{ flex: 1.2, display: 'flex', flexDirection: 'column', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px', overflow: 'hidden' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                                                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b' }}>Crop target area</span>
+                                                <button onClick={() => setOcrFile(null)} style={{ fontSize: '0.7rem', color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Change Image</button>
+                                            </div>
+                                            <div style={{ flex: 1, overflow: 'auto', background: '#1e293b', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '8px' }}>
+                                                <ReactCrop
+                                                    crop={crop}
+                                                    onChange={c => setCrop(c)}
+                                                    onComplete={c => setCompletedCrop(c)}
+                                                >
+                                                    <img src={ocrPreviewUrl} onLoad={onImageLoad} alt="OCR Source" style={{ maxWidth: '100%', maxHeight: '220px' }} />
+                                                </ReactCrop>
+                                            </div>
+                                            <button 
+                                                onClick={extractOcrText} 
+                                                disabled={isExtracting}
+                                                style={{ marginTop: '12px', width: '100%', background: '#6366f1', color: '#fff', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                                            >
+                                                {isExtracting ? (
+                                                    <>
+                                                        <Loader2 size={16} className="animate-spin" />
+                                                        Extracting Text...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Sparkles size={16} />
+                                                        Extract &amp; Apply
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+                                        {/* Right: Results area */}
+                                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px', overflow: 'hidden' }}>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', marginBottom: '8px' }}>Extracted Results</span>
+                                            {isAiProcessing ? (
+                                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', color: '#64748b' }}>
+                                                    <Loader2 size={24} className="animate-spin" style={{ marginBottom: '8px' }} />
+                                                    <span style={{ fontSize: '0.8rem' }}>AI parsing details...</span>
+                                                </div>
+                                            ) : (
+                                                <textarea
+                                                    readOnly
+                                                    value={extractedText || 'No text extracted yet. Adjust crop and click "Extract & Apply".'}
+                                                    style={{ flex: 1, width: '100%', padding: '10px', fontSize: '0.8rem', border: '1px solid #cbd5e1', borderRadius: '8px', background: '#f8fafc', resize: 'none', outline: 'none' }}
+                                                />
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* 7. MOBILE UPLOAD (QR) TAB */}
+                        {activeTab === 'mobile_qr' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '300px', textAlign: 'center', padding: '20px' }}>
+                                {!activeFolderId ? (
+                                    <div style={{ color: '#64748b' }}>
+                                        <AlertCircle size={48} style={{ opacity: 0.3, marginBottom: '12px', margin: '0 auto' }} />
+                                        <h4 style={{ margin: '0 0 4px 0' }}>No Active Folder Linked</h4>
+                                        <p style={{ fontSize: '0.8rem', margin: 0 }}>This page has not established a Google Drive folder structure yet. Please upload a document first to initialize the folders.</p>
+                                    </div>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+                                        <div style={{ background: '#fff', padding: '16px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+                                            <img 
+                                                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
+                                                    `${window.location.origin}/upload-media?folderId=${activeFolderId}&token=${getStoredToken() || localStorage.getItem('google_access_token') || ''}&jobName=${encodeURIComponent(activeFolderName)}`
+                                                )}`} 
+                                                alt="QR Code" 
+                                                style={{ width: '180px', height: '180px' }} 
+                                            />
+                                        </div>
+                                        <div>
+                                            <h4 style={{ margin: '0 0 4px 0', color: '#1e293b' }}>Scan to Upload from Smartphone</h4>
+                                            <p style={{ fontSize: '0.8rem', color: '#64748b', maxWidth: '360px', margin: '0 auto 8px' }}>
+                                                Scan this QR code with your mobile camera or WhatsApp to easily take photos and upload them directly.
+                                            </p>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#059669', fontSize: '0.8rem', fontWeight: 600 }}>
+                                                <Loader2 size={14} className="animate-spin" />
+                                                <span>{isPolling ? 'Waiting for mobile uploads...' : 'Connecting to Drive...'}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
 

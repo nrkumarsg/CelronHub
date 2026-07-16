@@ -21,9 +21,11 @@ import {
 } from 'lucide-react';
 import SearchableSelect from '../../components/common/SearchableSelect';
 import { getExchangeRateWithGemini } from '../../lib/geminiService';
-import { listFolderContent, uploadFileToDrive, deleteFile, getOrCreateFolder, provisionFullProjectStructure, provisionPartnerStructure } from '../../lib/driveService';
+import { listFolderContent, uploadFileToDrive, deleteFile, getOrCreateFolder, provisionFullProjectStructure, provisionPartnerStructure, moveFolder, copyFile } from '../../lib/driveService';
+import SmartUploadPanel from '../../components/upload/SmartUploadPanel';
 import { validateToken, connectGoogleAPI, getStoredToken, performOCR, isTokenValid } from '../../lib/googleAuthService';
 import SmartEnquiryParserModal from '../../components/workflow/SmartEnquiryParserModal';
+import SmartAttachmentDropzone from '../../components/common/SmartAttachmentDropzone';
 import { useAuth } from '../../contexts/AuthContext';
 import {
     getWorkflowDocumentById,
@@ -120,6 +122,62 @@ export default function WorkflowEditor() {
     const [whatsappShareModal, setWhatsappShareModal] = useState({ isOpen: false });
     const [emailPreview, setEmailPreview] = useState(null);
     
+    const [smartUploadConfig, setSmartUploadConfig] = useState({
+        isOpen: false,
+        onSelect: null,
+        documentType: 'workflow',
+        accept: '*',
+        activeFolderId: null,
+        activeFolderName: 'Job Folder',
+        initialTab: 'recent'
+    });
+
+    const openSmartUpload = (onSelect, accept = '*', folderId = null, folderName = 'Job Workspace', initialTab = 'recent') => {
+        setSmartUploadConfig({
+            isOpen: true,
+            onSelect,
+            documentType: 'workflow',
+            accept,
+            activeFolderId: folderId,
+            activeFolderName: folderName,
+            initialTab
+        });
+    };
+
+    const handleTriggerSmartUpload = async (onSelect, accept = '*', subFolder = null, tab = 'recent') => {
+        toast.info("Preparing folder structure on Google Drive...");
+        const rootId = await ensureJobFolder();
+        if (!rootId) {
+            toast.error("Failed to establish Google Drive folder. Please log in first.");
+            return;
+        }
+
+        let targetFolderId = rootId;
+        const token = getStoredToken();
+
+        if (subFolder) {
+            try {
+                targetFolderId = await getOrCreateFolder(token, subFolder, rootId);
+                if (subFolder === 'Photos & Gallery') {
+                    setGalleryFolderId(targetFolderId);
+                } else if (subFolder === 'Explorer') {
+                    setExplorerFolderId(targetFolderId);
+                }
+            } catch (err) {
+                console.error(`Failed to get or create subfolder ${subFolder}:`, err);
+            }
+        }
+
+        const jobNo = formData.assigned_job_no || formData.document_no || 'New Job';
+        openSmartUpload(
+            onSelect,
+            accept,
+            targetFolderId,
+            `Job ${jobNo}${subFolder ? ' - ' + subFolder : ''}`,
+            tab
+        );
+    };
+    
     // Stale closure protection for async handlers (id changes after save)
     const currentIdRef = useRef(id);
     useEffect(() => {
@@ -148,11 +206,14 @@ export default function WorkflowEditor() {
     const [galleryFolderId, setGalleryFolderId] = useState(null);
     const [worksuiteFiles, setWorksuiteFiles] = useState([]);
     const [supportDocsFiles, setSupportDocsFiles] = useState([]);
+    const [supplierBillsFiles, setSupplierBillsFiles] = useState([]);
     const [loadingDriveFiles, setLoadingDriveFiles] = useState(false);
     const [activeAttachmentTab, setActiveAttachmentTab] = useState('worksuite');
     const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
     const [isDraggingExplorer, setIsDraggingExplorer] = useState(false);
     const [isDraggingSigned, setIsDraggingSigned] = useState(false);
+
+    const [linkedEnquiry, setLinkedEnquiry] = useState(null);
 
     // Payments State
     const [customerPayments, setCustomerPayments] = useState([]);
@@ -206,6 +267,9 @@ export default function WorkflowEditor() {
     const [loadingExplorer, setLoadingExplorer] = useState(false);
     const [authStatus, setAuthStatus] = useState('checking'); // 'checking' | 'connected' | 'expired' | 'disconnected'
     const [explorerFolderId, setExplorerFolderId] = useState(null);
+    const [worksuiteFolderId, setWorksuiteFolderId] = useState(null);
+    const [supportDocsFolderId, setSupportDocsFolderId] = useState(null);
+    const [supplierBillsFolderId, setSupplierBillsFolderId] = useState(null);
     const [explorerPath, setExplorerPath] = useState([]); // Array of {id, name} for breadcrumbs
     const [explorerError, setExplorerError] = useState(null);
     const [uploadingExplorer, setUploadingExplorer] = useState(false);
@@ -264,6 +328,93 @@ export default function WorkflowEditor() {
             window.open(`https://drive.google.com/drive/folders/${folderId}`, '_blank');
         } else {
             toast.error('No Google Drive folder linked for this Job.');
+        }
+    };
+
+    // Manual upload current PDF to Google Drive Worksuite folder
+    const handleManualUploadPDFToDrive = async () => {
+        if (!formData.id) {
+            toast.error('Please save the document first before uploading to Google Drive.');
+            return;
+        }
+        setSaving(true);
+        const toastId = toast.loading('Generating and uploading PDF to Google Drive...');
+        try {
+            const token = getStoredToken();
+            if (!token) {
+                toast.error('Google Drive connection required. Please connect via Corporate Vault > Connect Google.', { id: toastId });
+                setSaving(false);
+                return;
+            }
+
+            const rootId = await ensureJobFolder();
+            if (!rootId) {
+                toast.error('Failed to resolve or create Google Drive Job folder.', { id: toastId });
+                setSaving(false);
+                return;
+            }
+
+            const worksuiteFolderId = await getOrCreateFolder(token, 'Worksuite', rootId);
+            const wFiles = await listFolderContent(token, worksuiteFolderId);
+
+            let maxVer = 0;
+            const prefixStr = `${formData.document_no}_Amendment_v`;
+            if (Array.isArray(wFiles)) {
+                wFiles.forEach(f => {
+                    if (f.name && f.name.startsWith(prefixStr) && f.name.endsWith('.pdf')) {
+                        const verPart = f.name.substring(prefixStr.length).replace('.pdf', '');
+                        const verNum = parseInt(verPart, 10);
+                        if (!isNaN(verNum) && verNum > maxVer) {
+                            maxVer = verNum;
+                        }
+                    }
+                });
+            }
+            const nextVer = maxVer + 1;
+            const filename = `${formData.document_no}_Amendment_v${nextVer}.pdf`;
+
+            const pdfBlob = await generateSleekPDF({
+                ...formData,
+                items: lineItems,
+                partners: partners.find(p => p.id === formData.partner_id),
+                vessels: vessels.find(v => v.id === formData.vessel_id),
+                work_locations: workLocations.find(wl => wl.id === formData.work_location_id),
+                contacts: contacts.find(c => c.id === formData.contact_id)
+            }, settings, 'blob');
+
+            const uploadResult = await uploadFileToDrive(
+                token,
+                new File([pdfBlob], filename, { type: 'application/pdf' }),
+                { folderId: worksuiteFolderId }
+            );
+
+            if (!uploadResult?.id) {
+                throw new Error('Failed to upload file to Google Drive');
+            }
+
+            const driveUrl = `https://drive.google.com/file/d/${uploadResult.id}/view`;
+
+            // Append the Drive URL to the document's attachment_urls
+            const existingUrls = Array.isArray(formData.attachment_urls) ? formData.attachment_urls : [];
+            const { error: dbErr } = await supabase
+                .from('workflow_documents')
+                .update({ attachment_urls: [...existingUrls, driveUrl] })
+                .eq('id', formData.id);
+
+            if (dbErr) throw dbErr;
+
+            // Update local state
+            setFormData(prev => ({ ...prev, attachment_urls: [...existingUrls, driveUrl] }));
+
+            // Refresh the drive attachments so they show up immediately
+            fetchDriveAttachments();
+
+            toast.success(`Successfully saved PDF to Google Drive: ${filename}`, { id: toastId });
+        } catch (err) {
+            console.error('Manual GDrive upload failed:', err);
+            toast.error(`Failed to save PDF to Google Drive: ${err.message}`, { id: toastId });
+        } finally {
+            setSaving(false);
         }
     };
 
@@ -872,6 +1023,42 @@ export default function WorkflowEditor() {
                     year, 
                     projName
                 );
+
+                // Auto-consolidate linked Enquiry folder under this new Job folder
+                if (formData.enquiry_id) {
+                    try {
+                        const { data: enqData } = await supabase
+                            .from('customer_enquiries')
+                            .select('id, enquiry_no, gdrive_folder_id')
+                            .eq('id', formData.enquiry_id)
+                            .single();
+                        
+                        if (enqData && enqData.gdrive_folder_id) {
+                            console.log(`[Consolidation] Moving Enquiry folder ${enqData.enquiry_no} (${enqData.gdrive_folder_id}) into Job folder (${folderId})...`);
+                            await moveFolder(token, enqData.gdrive_folder_id, folderId);
+                            console.log(`[Consolidation] Successfully moved Enquiry folder!`);
+                        }
+                    } catch (moveErr) {
+                        console.warn('[Consolidation] Failed to move linked enquiry folder:', moveErr.message);
+                    }
+                }
+
+                // Auto-link all suite documents (Quotation, Purchase Orders, etc.) under the same job number
+                if (formData.enquiry_id && formData.assigned_job_no) {
+                    try {
+                        console.log(`[Consolidation] Linking all documents for enquiry ${formData.enquiry_id} to job ${formData.assigned_job_no}...`);
+                        const { error: linkErr } = await supabase
+                            .from('workflow_documents')
+                            .update({ assigned_job_no: formData.assigned_job_no })
+                            .eq('enquiry_id', formData.enquiry_id);
+                        
+                        if (linkErr) throw linkErr;
+                        console.log('[Consolidation] Database records linked successfully!');
+                    } catch (linkErr) {
+                        console.warn('[Consolidation] Failed to auto-link database documents:', linkErr.message);
+                    }
+                }
+
                 ensuredFolderIdRef.current = folderId;
                 setExplorerFolderId(folderId);
                 setExplorerPath([{ id: folderId, name: projName }]);
@@ -1144,8 +1331,14 @@ export default function WorkflowEditor() {
             const projectFolderId = await provisionFullProjectStructure(token, rootId, year, projName);
             const targetFolderId = projectFolderId;
             
-            const result = await uploadFileToDrive(token, file, { folderId: targetFolderId });
-            const poUrl = `https://drive.google.com/file/d/${result.id}/view`;
+            let poUrl = '';
+            if (file.isGoogleDrive) {
+                const copiedFile = await copyFile(token, file.id, targetFolderId);
+                poUrl = `https://drive.google.com/file/d/${copiedFile.id}/view`;
+            } else {
+                const result = await uploadFileToDrive(token, file, { folderId: targetFolderId });
+                poUrl = `https://drive.google.com/file/d/${result.id}/view`;
+            }
 
             // Update state and DB
             setFormData(prev => ({ ...prev, customer_po_attachment_url: poUrl }));
@@ -1199,14 +1392,22 @@ export default function WorkflowEditor() {
             setGalleryFiles(mediaFiles.filter(f => f.mimeType.startsWith('image/') || f.name.match(/\.(jpg|jpeg|png|gif|webp)$/i)));
 
             // Fetch Worksuite
-            const worksuiteFolderId = await getOrCreateFolder(token, 'Worksuite', rootId);
-            const wFiles = await listFolderContent(token, worksuiteFolderId);
+            const worksuiteId = await getOrCreateFolder(token, 'Worksuite', rootId);
+            setWorksuiteFolderId(worksuiteId);
+            const wFiles = await listFolderContent(token, worksuiteId);
             setWorksuiteFiles(wFiles);
 
             // Fetch SupportDocs
-            const supportDocsFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
-            const sFiles = await listFolderContent(token, supportDocsFolderId);
+            const supportId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+            setSupportDocsFolderId(supportId);
+            const sFiles = await listFolderContent(token, supportId);
             setSupportDocsFiles(sFiles);
+
+            // Fetch SupplierBills&Expenses
+            const billsId = await getOrCreateFolder(token, 'SupplierBills&Expenses', rootId);
+            setSupplierBillsFolderId(billsId);
+            const sbFiles = await listFolderContent(token, billsId);
+            setSupplierBillsFiles(sbFiles);
         } catch (err) {
             console.error('Error fetching drive attachments:', err);
         } finally {
@@ -1323,10 +1524,14 @@ export default function WorkflowEditor() {
             const rootId = await ensureJobFolder();
             const mediaFolderId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
             
-            await uploadFileToDrive(token, file, { 
-                folderId: mediaFolderId,
-                onProgress: (pct) => setGalleryUploadProgress(pct)
-            });
+            if (file.isGoogleDrive) {
+                await copyFile(token, file.id, mediaFolderId);
+            } else {
+                await uploadFileToDrive(token, file, { 
+                    folderId: mediaFolderId,
+                    onProgress: (pct) => setGalleryUploadProgress(pct)
+                });
+            }
             
             setGalleryUploadSuccess(true);
             setTimeout(() => setGalleryUploadSuccess(false), 3000);
@@ -1736,6 +1941,16 @@ export default function WorkflowEditor() {
                     if (suiteData) {
                         setWorkflowDocs(suiteData);
                     }
+                }
+
+                // Fetch linked customer enquiry details
+                if (data.enquiry_id) {
+                    const { data: enq } = await supabase
+                        .from('customer_enquiries')
+                        .select('id, enquiry_no, customer_name, subject, status, issue_date')
+                        .eq('id', data.enquiry_id)
+                        .single();
+                    if (enq) setLinkedEnquiry(enq);
                 }
             } else {
                 console.warn('No data returned for ID:', id);
@@ -2325,163 +2540,167 @@ export default function WorkflowEditor() {
             
             const { data, error } = await saveWorkflowDocument(dataToSave, uniqueItems);
             if (error) throw error;
-            
-            if (isNew) {
-                currentIdRef.current = data.id; // Update ref immediately for sequential async calls
-                navigate(`/workflows/editor/${type}/${data.id}`, { replace: true });
-            } else {
-                toast.success('Saved successfully');
-                fetchDocument();
 
-                // --- Amendment PDF: auto-generate for existing suite documents ---
-                // Runs in background so the UI is not blocked
-                const isSuiteDoc = formData.is_job || [
-                    'Order Acknowledgment', 'Delivery Order', 'Packing List',
-                    'Proforma Invoice', 'Tax Invoice', 'Certificate', 'Service Report'
-                ].includes(formData.document_type);
+            // --- Amendment PDF: auto-generate for existing/new suite documents ---
+            // Runs in background so the UI is not blocked
+            const isSuiteDoc = data.is_job || [
+                'Order Acknowledgment', 'Delivery Order', 'Packing List',
+                'Proforma Invoice', 'Tax Invoice', 'Certificate', 'Service Report'
+            ].includes(data.document_type);
 
-                if (isSuiteDoc) {
-                    (async () => {
-                        try {
-                            const token = getStoredToken();
-                            if (!token) return; // Skip if not connected to Google
+            if (isSuiteDoc) {
+                (async () => {
+                    try {
+                        const token = getStoredToken();
+                        if (!token) return; // Skip if not connected to Google
 
-                            const rootId = await ensureJobFolder();
-                            if (!rootId) return;
-                            const worksuiteFolderId = await getOrCreateFolder(token, 'Worksuite', rootId);
-                            const wFiles = await listFolderContent(token, worksuiteFolderId);
+                        const rootId = await ensureJobFolder();
+                        if (!rootId) return;
+                        const worksuiteFolderId = await getOrCreateFolder(token, 'Worksuite', rootId);
+                        const wFiles = await listFolderContent(token, worksuiteFolderId);
 
-                            let maxVer = 0;
-                            const prefixStr = `${data.document_no}_Amendment_v`;
-                            if (Array.isArray(wFiles)) {
-                                wFiles.forEach(f => {
-                                    if (f.name && f.name.startsWith(prefixStr) && f.name.endsWith('.pdf')) {
-                                        const verPart = f.name.substring(prefixStr.length).replace('.pdf', '');
-                                        const verNum = parseInt(verPart, 10);
-                                        if (!isNaN(verNum) && verNum > maxVer) {
-                                            maxVer = verNum;
-                                        }
+                        let maxVer = 0;
+                        const prefixStr = `${data.document_no}_Amendment_v`;
+                        if (Array.isArray(wFiles)) {
+                            wFiles.forEach(f => {
+                                if (f.name && f.name.startsWith(prefixStr) && f.name.endsWith('.pdf')) {
+                                    const verPart = f.name.substring(prefixStr.length).replace('.pdf', '');
+                                    const verNum = parseInt(verPart, 10);
+                                    if (!isNaN(verNum) && verNum > maxVer) {
+                                        maxVer = verNum;
                                     }
-                                });
-                            }
-                            const nextVer = maxVer + 1;
-                            const filename = `${data.document_no}_Amendment_v${nextVer}.pdf`;
-
-                            console.log(`[Amendment] Generating versioned amendment PDF for ${data.document_no} as ${filename}...`);
-
-                            const pdfBlob = await generateSleekPDF({
-                                ...data,
-                                items: uniqueItems,
-                                partners: partners.find(p => p.id === data.partner_id),
-                                vessels: vessels.find(v => v.id === data.vessel_id),
-                                work_locations: workLocations.find(wl => wl.id === data.work_location_id),
-                                contacts: contacts.find(c => c.id === data.contact_id)
-                            }, settings, 'blob');
-
-                            const uploadResult = await uploadFileToDrive(
-                                token,
-                                new File([pdfBlob], filename, { type: 'application/pdf' }),
-                                { folderId: worksuiteFolderId }
-                            );
-
-                            const driveUrl = `https://drive.google.com/file/d/${uploadResult.id}/view`;
-
-                            // Append the Drive URL to the document's attachment_urls
-                            const existingUrls = Array.isArray(data.attachment_urls) ? data.attachment_urls : [];
-                            await supabase
-                                .from('workflow_documents')
-                                .update({ attachment_urls: [...existingUrls, driveUrl] })
-                                .eq('id', data.id);
-
-                            toast.success(`Amendment PDF saved: ${filename}`, { duration: 4000 });
-                            console.log('[Amendment] PDF uploaded to Drive:', driveUrl);
-                        } catch (amendErr) {
-                            console.warn('[Amendment] PDF generation failed (non-blocking):', amendErr.message);
-                        }
-                    })();
-                }
-
-                // ─── Enquiry PDF Auto-Routing ─────────────────────────────────────────────
-                // When a Quotation or Purchase Order has an enquiry_id, auto-save a copy
-                // of the generated PDF to the Enquiry's Quote2Cust / Order2Supplier subfolder.
-                // Runs in background — does NOT block the UI.
-                const isEnquiryLinkedDoc = data.enquiry_id && (
-                    data.document_type === 'Quotation' ||
-                    data.document_type === 'Purchase Order'
-                );
-
-                if (isEnquiryLinkedDoc) {
-                    (async () => {
-                        try {
-                            const token = getStoredToken();
-                            if (!token) {
-                                console.log('[EnquiryPDF] No Drive token — skipping auto-route');
-                                return;
-                            }
-
-                            // 1. Fetch the linked enquiry (for folder info)
-                            const { data: enqData } = await supabase
-                                .from('customer_enquiries')
-                                .select('id, enquiry_no, customer_name, gdrive_folder_id, partners:customer_id(name)')
-                                .eq('id', data.enquiry_id)
-                                .single();
-
-                            if (!enqData) {
-                                console.warn('[EnquiryPDF] Enquiry not found for ID:', data.enquiry_id);
-                                return;
-                            }
-
-                            // 2. Generate PDF blob using the same sleek PDF engine
-                            const now = new Date();
-                            const filename = `${data.document_type.replace(/\s+/g, '_')}_${data.document_no}_${now.toISOString().slice(0, 10)}.pdf`;
-
-                            const pdfBlob = await generateSleekPDF({
-                                ...data,
-                                items: uniqueItems,
-                                partners: partners.find(p => p.id === data.partner_id),
-                                vessels: vessels.find(v => v.id === data.vessel_id),
-                                work_locations: workLocations.find(wl => wl.id === data.work_location_id)
-                            }, settings, 'blob');
-
-                            if (!pdfBlob) {
-                                console.warn('[EnquiryPDF] PDF blob generation returned null');
-                                return;
-                            }
-
-                            // 3. Route to correct subfolder
-                            const rootFolderId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
-                            const { routePdfToEnquiryFolder } = await import('../../lib/enquiryPdfService');
-                            const result = await routePdfToEnquiryFolder({
-                                pdfBlob,
-                                filename,
-                                enquiryId: data.enquiry_id,
-                                documentType: data.document_type,
-                                driveToken: token,
-                                rootFolderId,
-                                enquiry: enqData
+                                }
                             });
+                        }
+                        const nextVer = maxVer + 1;
+                        const filename = `${data.document_no}_Amendment_v${nextVer}.pdf`;
 
-                            if (result?.url) {
-                                // 4. Save the Drive URL back to the workflow document
-                                const existingUrls = Array.isArray(data.attachment_urls) ? data.attachment_urls : [];
-                                if (!existingUrls.includes(result.url)) {
+                        console.log(`[Amendment] Generating versioned amendment PDF for ${data.document_no} as ${filename}...`);
+
+                        const pdfBlob = await generateSleekPDF({
+                            ...data,
+                            items: uniqueItems,
+                            partners: partners.find(p => p.id === data.partner_id),
+                            vessels: vessels.find(v => v.id === data.vessel_id),
+                            work_locations: workLocations.find(wl => wl.id === data.work_location_id),
+                            contacts: contacts.find(c => c.id === data.contact_id)
+                        }, settings, 'blob');
+
+                        const uploadResult = await uploadFileToDrive(
+                            token,
+                            new File([pdfBlob], filename, { type: 'application/pdf' }),
+                            { folderId: worksuiteFolderId }
+                        );
+
+                        const driveUrl = `https://drive.google.com/file/d/${uploadResult.id}/view`;
+
+                        // Append the Drive URL to the document's attachment_urls
+                        const existingUrls = Array.isArray(data.attachment_urls) ? data.attachment_urls : [];
+                        await supabase
+                            .from('workflow_documents')
+                            .update({ attachment_urls: [...existingUrls, driveUrl] })
+                            .eq('id', data.id);
+
+                        toast.success(`Amendment PDF saved: ${filename}`, { duration: 4000 });
+                        console.log('[Amendment] PDF uploaded to Drive:', driveUrl);
+                    } catch (amendErr) {
+                        console.warn('[Amendment] PDF generation failed (non-blocking):', amendErr.message);
+                    }
+                })();
+            }
+
+            // ─── Enquiry PDF Auto-Routing ─────────────────────────────────────────────
+            // When a Quotation or Purchase Order has an enquiry_id, auto-save a copy
+            // of the generated PDF to the Enquiry's Quote2Cust / Order2Supplier subfolder.
+            // Runs in background — does NOT block the UI.
+            const isEnquiryLinkedDoc = data.enquiry_id && (
+                data.document_type === 'Quotation' ||
+                data.document_type === 'Purchase Order'
+            );
+
+            if (isEnquiryLinkedDoc) {
+                (async () => {
+                    try {
+                        const token = getStoredToken();
+                        if (!token) {
+                            console.log('[EnquiryPDF] No Drive token — skipping auto-route');
+                            return;
+                        }
+
+                        // 1. Fetch the linked enquiry (for folder info)
+                        const { data: enqData } = await supabase
+                            .from('customer_enquiries')
+                            .select('id, enquiry_no, customer_name, gdrive_folder_id, partners:customer_id(name)')
+                            .eq('id', data.enquiry_id)
+                            .single();
+
+                        if (!enqData) {
+                            console.warn('[EnquiryPDF] Enquiry not found for ID:', data.enquiry_id);
+                            return;
+                        }
+
+                        // 2. Generate PDF blob using the same sleek PDF engine
+                        const now = new Date();
+                        const filename = `${data.document_type.replace(/\s+/g, '_')}_${data.document_no}_${now.toISOString().slice(0, 10)}.pdf`;
+
+                        const pdfBlob = await generateSleekPDF({
+                            ...data,
+                            items: uniqueItems,
+                            partners: partners.find(p => p.id === data.partner_id),
+                            vessels: vessels.find(v => v.id === data.vessel_id),
+                            work_locations: workLocations.find(wl => wl.id === data.work_location_id)
+                        }, settings, 'blob');
+
+                        if (!pdfBlob) {
+                            console.warn('[EnquiryPDF] PDF blob generation returned null');
+                            return;
+                        }
+
+                        // 3. Route to correct subfolder
+                        const rootFolderId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
+                        const { routePdfToEnquiryFolder } = await import('../../lib/enquiryPdfService');
+                        const result = await routePdfToEnquiryFolder({
+                            pdfBlob,
+                            filename,
+                            enquiryId: data.enquiry_id,
+                            documentType: data.document_type,
+                            driveToken: token,
+                            rootFolderId,
+                            enquiry: enqData
+                        });
+
+                        if (result?.url) {
+                            // 4. Save the Drive URL back to the workflow document
+                            const existingUrls = Array.isArray(data.attachment_urls) ? data.attachment_urls : [];
+                            if (!existingUrls.includes(result.url)) {
                                     await supabase
                                         .from('workflow_documents')
                                         .update({ attachment_urls: [...existingUrls, result.url] })
                                         .eq('id', data.id);
-                                }
-                                toast.success(
-                                    `📁 PDF saved to Enquiry ${enqData.enquiry_no} → ${result.subfolderName}`,
-                                    { duration: 5000, icon: '✅' }
-                                );
-                                console.log(`[EnquiryPDF] Routed to ${result.subfolderName}:`, result.url);
                             }
-                        } catch (enqPdfErr) {
-                            // Non-blocking — just log the error
-                            console.warn('[EnquiryPDF] Auto-routing failed (non-blocking):', enqPdfErr.message);
+                            toast.success(
+                                `📁 PDF saved to Enquiry ${enqData.enquiry_no} → ${result.subfolderName}`,
+                                { duration: 5000, icon: '✅' }
+                            );
+                            console.log(`[EnquiryPDF] Routed to ${result.subfolderName}:`, result.url);
                         }
-                    })();
+                    } catch (enqPdfErr) {
+                        // Non-blocking — just log the error
+                        console.warn('[EnquiryPDF] Auto-routing failed (non-blocking):', enqPdfErr.message);
+                    }
+                })();
+            }
+
+            if (isNew) {
+                currentIdRef.current = data.id; // Update ref immediately for sequential async calls
+                if (type.toLowerCase() === 'enquiry') {
+                    navigate(`/workflows/enquiry/${data.id}`, { replace: true });
+                } else {
+                    navigate(`/workflows/editor/${type}/${data.id}`, { replace: true });
                 }
+            } else {
+                toast.success('Saved successfully');
+                fetchDocument();
             }
             return data;
         } catch (err) {
@@ -2498,7 +2717,11 @@ export default function WorkflowEditor() {
         setSaving(true);
         try {
             const { data } = await createDocumentRevision(id);
-            navigate(`/workflows/editor/${type}/${data.id}`);
+            if (type.toLowerCase() === 'enquiry') {
+                navigate(`/workflows/enquiry/${data.id}`);
+            } else {
+                navigate(`/workflows/editor/${type}/${data.id}`);
+            }
         } catch (err) {
             console.error(err);
             alert('Failed to create revision');
@@ -2534,37 +2757,50 @@ export default function WorkflowEditor() {
             }
             const { jobNo } = result;
             
-            // Handle PO File Upload if present
-            if (poFile) {
-                if (!isTokenValid()) {
-                    if (window.confirm('Your Google connection has expired or is not connected. Connect now to upload PO?')) {
-                        sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
-                        connectGoogleAPI();
-                        setSaving(false);
-                        return;
-                    }
-                }
+            // Provision Drive folder and migrate files if Google API is connected
+            if (isTokenValid()) {
                 try {
                     const accessToken = localStorage.getItem('google_access_token');
                     if (accessToken) {
-                        const currentYear = new Date(formData.issue_date).getFullYear().toString();
+                        const currentYear = new Date(formData.issue_date || new Date()).getFullYear().toString();
                         const rootId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
-                        
                         const projName = getProjectFolderName();
                         const projectFolderId = await provisionFullProjectStructure(accessToken, rootId, currentYear, projName);
-                        const targetFolderId = projectFolderId;
-                        
-                        const uploadResult = await uploadFileToDrive(accessToken, poFile, { folderId: targetFolderId });
-                        const poUrl = `https://drive.google.com/file/d/${uploadResult.id}/view`;
 
-                        // Update all documents associated with this job with the attachment URL
+                        // Save folder ID to the newly created Job document
                         await supabase.from('workflow_documents').update({ 
-                            customer_po_attachment_url: poUrl,
-                            attachment_urls: [poUrl]
-                        }).eq('assigned_job_no', jobNo);
+                            drive_folder_id: projectFolderId
+                        }).eq('document_no', jobNo);
+
+                        // If PO file is uploaded, upload it to Drive
+                        if (poFile) {
+                            const uploadResult = await uploadFileToDrive(accessToken, poFile, { folderId: projectFolderId });
+                            const poUrl = `https://drive.google.com/file/d/${uploadResult.id}/view`;
+
+                            // Update all documents associated with this job with the attachment URL
+                            await supabase.from('workflow_documents').update({ 
+                                customer_po_attachment_url: poUrl,
+                                attachment_urls: [poUrl]
+                            }).eq('assigned_job_no', jobNo);
+                        }
+
+                        // Migrate Enquiry files if enquiry_id is linked
+                        const targetEnquiryId = formData?.enquiry_id || poModal?.activeEnquiryId;
+                        if (targetEnquiryId) {
+                            const { data: enqData } = await supabase
+                                .from('customer_enquiries')
+                                .select('gdrive_folder_id')
+                                .eq('id', targetEnquiryId)
+                                .maybeSingle();
+
+                            if (enqData?.gdrive_folder_id) {
+                                const { migrateEnquiryFilesToJob } = await import('../../lib/driveService');
+                                await migrateEnquiryFilesToJob(accessToken, enqData.gdrive_folder_id, projectFolderId);
+                            }
+                        }
                     }
-                } catch (uploadErr) {
-                    console.error("PO Upload to Drive failed:", uploadErr);
+                } catch (driveErr) {
+                    console.error("Google Drive setup/migration failed:", driveErr);
                     // Non-blocking error for main conversion
                 }
             }
@@ -2634,7 +2870,11 @@ export default function WorkflowEditor() {
             if (existingDoc) {
                 if (window.confirm(`${targetType} (${nextNo}) already exists! Do you want to open it instead?`)) {
                     const slug = targetType.toLowerCase().replace(/ /g, '-');
-                    navigate(`/workflows/editor/${slug}/${existingDoc.id}`);
+                    if (slug === 'enquiry') {
+                        navigate(`/workflows/enquiry/${existingDoc.id}`);
+                    } else {
+                        navigate(`/workflows/editor/${slug}/${existingDoc.id}`);
+                    }
                 }
                 setSaving(false);
                 return;
@@ -2696,7 +2936,7 @@ export default function WorkflowEditor() {
         try {
             const savedEnq = await revertQuotationToEnquiry(id);
             alert(`Quotation reverted successfully. New Enquiry: ${savedEnq.document_no}`);
-            navigate(`/workflows/editor/enquiry/${savedEnq.id}`);
+            navigate(`/workflows/enquiry/${savedEnq.id}`);
         } catch (err) {
             console.error(err);
             alert('Failed to revert quotation: ' + err.message);
@@ -3622,6 +3862,14 @@ export default function WorkflowEditor() {
                                 <Folder size={16} fill="#3b82f6" fillOpacity={0.15} /> Open Job Folder
                             </button>
                             <button 
+                                onClick={handleManualUploadPDFToDrive} 
+                                className="btn btn-secondary" 
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#10b981', color: '#047857', background: '#ecfdf5', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
+                                disabled={saving}
+                            >
+                                <UploadCloud size={16} /> Save PDF to Drive
+                            </button>
+                            <button 
                                 onClick={handleOpenRootDrive} 
                                 className="btn btn-secondary" 
                                 style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#f59e0b', color: '#b45309', background: '#fffbeb', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
@@ -4242,7 +4490,18 @@ export default function WorkflowEditor() {
                                 )}
                                 <button 
                                     className="btn btn-secondary" 
-                                    onClick={() => setShowOCRModal(true)}
+                                    onClick={async () => {
+                                        let targetId = galleryFolderId;
+                                        if (!targetId) {
+                                            const token = getStoredToken();
+                                            const rootId = await ensureJobFolder();
+                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+                                            setGalleryFolderId(targetId);
+                                        }
+                                        openSmartUpload(async (file) => {
+                                            if (file) await handleGalleryUpload(file);
+                                        }, 'image/*', targetId, 'Photos & Gallery', 'ocr');
+                                    }}
                                     style={{ background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)', border: '1px solid #ddd6fe', color: '#7c3aed' }}
                                 >
                                     <Sparkles size={16} /> Smart OCR
@@ -4257,7 +4516,9 @@ export default function WorkflowEditor() {
                                             targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
                                             setGalleryFolderId(targetId);
                                         }
-                                        setQrModal({ isOpen: true, folderId: targetId, folderName: 'Photos & Gallery' });
+                                        openSmartUpload(async (file) => {
+                                            if (file) await handleGalleryUpload(file);
+                                        }, 'image/*', targetId, 'Photos & Gallery', 'mobile_qr');
                                     }}
                                     style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid #bbf7d0', color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}
                                 >
@@ -4272,21 +4533,26 @@ export default function WorkflowEditor() {
                                     <RefreshCw size={16} className={loadingGallery ? 'animate-spin' : ''} />
                                     Synchronize
                                 </button>
-                                <label className="btn btn-primary" style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
+                                <button 
+                                    type="button"
+                                    onClick={async () => {
+                                        let targetId = galleryFolderId;
+                                        if (!targetId) {
+                                            const token = getStoredToken();
+                                            const rootId = await ensureJobFolder();
+                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+                                            setGalleryFolderId(targetId);
+                                        }
+                                        openSmartUpload(async (file) => {
+                                            if (file) await handleGalleryUpload(file);
+                                        }, 'image/*', targetId, 'Photos & Gallery', 'recent');
+                                    }}
+                                    className="btn btn-primary" 
+                                    style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden', display: 'inline-flex', alignItems: 'center', gap: '6px', border: 'none' }}
+                                >
                                     <Upload size={16} /> Upload Photo
                                     {loadingGallery && <div className="btn-loading-overlay" />}
-                                    <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => {
-                                        const files = Array.from(e.target.files);
-                                        // For simplicity, we handle one by one or we could implement a queue
-                                        // Here we'll just process them sequentially to show progress for each
-                                        const uploadSequence = async () => {
-                                            for (const f of files) {
-                                                await handleGalleryUpload(f);
-                                            }
-                                        };
-                                        uploadSequence();
-                                    }} />
-                                </label>
+                                </button>
                             </div>
                         </div>
 
@@ -5088,7 +5354,7 @@ export default function WorkflowEditor() {
                                         <button 
                                             type="button"
                                             className="btn btn-secondary"
-                                            onClick={() => document.getElementById('po-direct-upload').click()}
+                                            onClick={() => handleTriggerSmartUpload(handleUploadPODirect, '.pdf,image/*', null, 'recent')}
                                             style={{ borderRadius: '10px', padding: '10px 20px', fontSize: '0.9rem', flex: 1 }}
                                         >
                                             <RefreshCw size={18} style={{ marginRight: '8px' }} /> Update PO
@@ -5096,7 +5362,7 @@ export default function WorkflowEditor() {
                                     </div>
                                 ) : (
                                     <div 
-                                        onClick={() => document.getElementById('po-direct-upload').click()}
+                                        onClick={() => handleTriggerSmartUpload(handleUploadPODirect, '.pdf,image/*', null, 'recent')}
                                         style={{ 
                                             border: '2px dashed #cbd5e1', 
                                             borderRadius: '12px', 
@@ -5114,7 +5380,6 @@ export default function WorkflowEditor() {
                                         <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '4px' }}>Syncs to GDrive Project Folder</div>
                                     </div>
                                 )}
-                                <input id="po-direct-upload" type="file" hidden onChange={(e) => handleUploadPODirect(e.target.files[0])} />
                             </div>
 
                             {/* General GDrive Attachments List */}
@@ -5136,11 +5401,11 @@ export default function WorkflowEditor() {
                                                 <Folder size={14} /> Open Folder
                                             </a>
                                         )}
-                                        <label style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', margin: 0 }}>
-                                            <Plus size={14} /> Upload File
-                                            <input type="file" multiple style={{ display: 'none' }} onChange={async (e) => {
-                                                const files = Array.from(e.target.files);
-                                                if (files.length === 0) return;
+                                        <button 
+                                            type="button"
+                                            style={{ cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--accent)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', margin: 0, padding: 0 }}
+                                            onClick={() => handleTriggerSmartUpload(async (file) => {
+                                                if (!file) return;
                                                 
                                                 try {
                                                     const token = await getStoredToken();
@@ -5198,25 +5463,27 @@ export default function WorkflowEditor() {
                                                     const subfolderId = parentFolderId;
                                                     const newUrls = [...(formData.attachment_urls || [])];
                                                     
-                                                    for (let i = 0; i < files.length; i++) {
-                                                        const file = files[i];
-                                                        setAttachmentUploadProgress({ fileName: file.name, percent: 0 });
-                                                        
-                                                        const response = await uploadFileToDrive(token, file, {
+                                                    setAttachmentUploadProgress({ fileName: file.name, percent: 0 });
+                                                    
+                                                    let response;
+                                                    if (file.isGoogleDrive) {
+                                                        response = await copyFile(token, file.id, subfolderId);
+                                                    } else {
+                                                        response = await uploadFileToDrive(token, file, {
                                                             folderId: subfolderId,
                                                             title: file.name,
                                                             onProgress: (percent) => {
                                                                 setAttachmentUploadProgress({ fileName: file.name, percent });
                                                             }
                                                         });
+                                                    }
+                                                    
+                                                    if (response && response.id) {
+                                                        const { makeFilePublic } = await import('../../lib/driveService');
+                                                        await makeFilePublic(token, response.id);
                                                         
-                                                        if (response && response.id) {
-                                                            const { makeFilePublic } = await import('../../lib/driveService');
-                                                            await makeFilePublic(token, response.id);
-                                                            
-                                                            const webViewLink = `https://drive.google.com/file/d/${response.id}/view?usp=drivesdk&filename=${encodeURIComponent(file.name)}`;
-                                                            newUrls.push(webViewLink);
-                                                        }
+                                                        const webViewLink = `https://drive.google.com/file/d/${response.id}/view?usp=drivesdk&filename=${encodeURIComponent(file.name)}`;
+                                                        newUrls.push(webViewLink);
                                                     }
                                                     
                                                     setAttachmentUploadProgress(null);
@@ -5228,14 +5495,16 @@ export default function WorkflowEditor() {
                                                         .eq('id', formData.id);
                                                         
                                                     if (saveErr) throw saveErr;
-                                                    toast.success('Successfully uploaded all files to Google Drive!');
+                                                    toast.success('Successfully added file to Google Drive!');
                                                 } catch (err) {
                                                     console.error(err);
                                                     setAttachmentUploadProgress(null);
-                                                    alert('Upload failed: ' + err.message);
+                                                    alert('Failed to add file: ' + err.message);
                                                 }
-                                            }} />
-                                        </label>
+                                            }, '*', null, 'recent')}
+                                        >
+                                            <Plus size={14} /> Upload File
+                                        </button>
                                     </div>
                                 </label>
                                 
@@ -5320,6 +5589,28 @@ export default function WorkflowEditor() {
                                     </tr>
                                 </thead>
                                 <tbody>
+                                    {linkedEnquiry && (
+                                        <tr style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
+                                            <td style={{ padding: '12px', fontSize: '0.85rem', fontWeight: 600 }}>Customer Enquiry</td>
+                                            <td style={{ padding: '12px', fontSize: '0.85rem', color: '#b45309', fontWeight: 600 }}>{linkedEnquiry.enquiry_no}</td>
+                                            <td style={{ padding: '12px', fontSize: '0.85rem' }}>{new Date(linkedEnquiry.issue_date).toLocaleDateString('en-GB')}</td>
+                                            <td style={{ padding: '12px', textAlign: 'right', fontSize: '0.85rem', color: '#94a3b8' }}>-</td>
+                                            <td style={{ padding: '12px', textAlign: 'center' }}>
+                                                <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 600, background: '#fffbeb', color: '#b45309' }}>
+                                                    {linkedEnquiry.status || 'Active'}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '12px', textAlign: 'right' }}>
+                                                <button 
+                                                    className="btn btn-sm btn-secondary" 
+                                                    type="button"
+                                                    onClick={() => navigate(`/workflows/enquiry/${linkedEnquiry.id}`)}
+                                                >
+                                                    Open
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    )}
                                     {workflowDocs.map(doc => (
                                         <tr key={doc.id} style={{ borderBottom: '1px solid #f1f5f9', background: doc.id === id ? '#f0f9ff' : 'transparent' }}>
                                             <td style={{ padding: '12px', fontSize: '0.85rem', fontWeight: 600 }}>{doc.document_type}</td>
@@ -5336,9 +5627,13 @@ export default function WorkflowEditor() {
                                                     <button 
                                                         className="btn btn-sm btn-secondary" 
                                                 onClick={() => {
-                                                            const targetType = doc.document_type.toLowerCase().replace(/\s+/g, '-');
-                                                            navigate(`/workflows/editor/${targetType}/${doc.id}`);
-                                                        }}
+                                                             const targetType = doc.document_type.toLowerCase().replace(/\s+/g, '-');
+                                                             if (doc.document_type === 'Enquiry') {
+                                                                 navigate(`/workflows/enquiry/${doc.id}`);
+                                                             } else {
+                                                                 navigate(`/workflows/editor/${targetType}/${doc.id}`);
+                                                             }
+                                                         }}
                                                     >
                                                         Open
                                                     </button>
@@ -5462,7 +5757,28 @@ export default function WorkflowEditor() {
                                             }
                                         }
                                     }}
-                                    onClick={() => document.getElementById('explorer-upload').click()}
+                                    onClick={() => handleTriggerSmartUpload(async (file) => {
+                                        if (!file) return;
+                                        setUploadingExplorer(true);
+                                        setUploadProgress(0);
+                                        try {
+                                            const token = getStoredToken();
+                                            const rootId = await ensureJobFolder();
+                                            if (file.isGoogleDrive) {
+                                                await copyFile(token, file.id, rootId);
+                                            } else {
+                                                await uploadFileToDrive(token, file, { folderId: rootId });
+                                            }
+                                            fetchExplorerFiles();
+                                            toast.success("File added successfully!");
+                                        } catch (err) {
+                                            console.error('Upload error:', err);
+                                            toast.error('Failed to add file: ' + err.message);
+                                        } finally {
+                                            setUploadingExplorer(false);
+                                            setUploadProgress(0);
+                                        }
+                                    }, '*', 'Explorer', 'recent')}
                                     style={{
                                         border: isDraggingExplorer ? '2px dashed var(--accent)' : '2px dashed #cbd5e1',
                                         background: isDraggingExplorer ? '#eff6ff' : '#f8fafc',
@@ -5497,7 +5813,6 @@ export default function WorkflowEditor() {
                                         }} />
                                     )}
                                 </div>
-                                <input id="explorer-upload" type="file" multiple hidden onChange={handleExplorerUpload} />
                             </div>
                         </div>
 
@@ -6602,7 +6917,7 @@ export default function WorkflowEditor() {
                                             { id: 'worksuite', name: 'Worksuite Docs', count: worksuiteFiles.length },
                                             { id: 'supportDocs', name: 'Support Docs', count: supportDocsFiles.length },
                                             { id: 'gallery', name: 'Photos', count: galleryFiles.length },
-                                            { id: 'workflowDocs', name: 'Suite Docs', count: workflowDocs.filter(d => d.id !== id).length }
+                                            { id: 'supplierBills', name: 'Supplier Bills', count: supplierBillsFiles.length }
                                         ].map(tab => {
                                             const isActive = activeAttachmentTab === tab.id;
                                             return (
@@ -6762,33 +7077,22 @@ export default function WorkflowEditor() {
                                                     </div>
                                                 )}
 
-                                                {/* Suite Docs tab */}
-                                                {activeAttachmentTab === 'workflowDocs' && (
+                                                                                                {/* Supplier Bills tab */}
+                                                {activeAttachmentTab === 'supplierBills' && (
                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                                        {/* Root Job Reference */}
-                                                        {formData.assigned_job_no && formData.document_type !== 'Job' && !workflowDocs.some(d => d.document_type === 'Job') && (
-                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#fff', border: '1px solid #f1f5f9', borderRadius: '6px' }}>
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                    <Package size={16} color="#64748b" />
-                                                                    <span style={{ fontSize: '12px', fontWeight: 500, color: '#64748b' }}>Job: {formData.assigned_job_no}</span>
-                                                                </div>
-                                                                <span style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic' }}>Job Context</span>
-                                                            </div>
-                                                        )}
-
-                                                        {workflowDocs.filter(d => d.id !== id).length === 0 ? (
+                                                        {supplierBillsFiles.length === 0 ? (
                                                             <div style={{ textAlign: 'center', padding: '24px', color: '#94a3b8', fontSize: '12px' }}>
-                                                                No other documents found in this job suite.
+                                                                No documents found in Google Drive 'SupplierBills&Expenses' folder.
                                                             </div>
                                                         ) : (
-                                                            workflowDocs.filter(d => d.id !== id).map(doc => {
-                                                                const filename = `${doc.document_type}_${doc.document_no}.pdf`;
-                                                                const isAttached = emailPreview.attachments?.some(a => a.name === filename);
+                                                            supplierBillsFiles.map(file => {
+                                                                const isAttached = emailPreview.attachments?.some(a => a.name === file.name);
                                                                 return (
-                                                                    <div key={doc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#fff', border: '1px solid #f1f5f9', borderRadius: '6px' }}>
-                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                            <FileText size={16} color="#3b82f6" />
-                                                                            <span style={{ fontSize: '12px', fontWeight: 500, color: '#334155' }}>{doc.document_type}: {doc.document_no}</span>
+                                                                    <div key={file.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#fff', border: '1px solid #f1f5f9', borderRadius: '6px' }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                                                            {getExplorerFileIcon(file.mimeType)}
+                                                                            <span style={{ fontSize: '12px', fontWeight: 500, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
+                                                                            {file.size && <span style={{ fontSize: '10px', color: '#94a3b8' }}>({Math.round(parseInt(file.size) / 1024)} KB)</span>}
                                                                         </div>
                                                                         {isAttached ? (
                                                                             <span style={{ fontSize: '11px', fontWeight: 600, color: '#10b981', display: 'flex', alignItems: 'center', gap: '3px' }}>
@@ -6797,7 +7101,7 @@ export default function WorkflowEditor() {
                                                                         ) : (
                                                                             <button
                                                                                 type="button"
-                                                                                onClick={() => attachDocumentFromSuite(doc)}
+                                                                                onClick={() => attachDriveFile(file)}
                                                                                 disabled={saving}
                                                                                 style={{ padding: '4px 10px', fontSize: '11px', fontWeight: 600, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', borderRadius: '4px', cursor: 'pointer' }}
                                                                             >
@@ -6814,27 +7118,33 @@ export default function WorkflowEditor() {
                                         )}
                                     </div>
 
-                                    {/* Local File Attachment */}
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
-                                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#475569' }}>Upload Local Files</span>
-                                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', background: '#3b82f6', color: '#fff', padding: '6px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, transition: 'all 0.2s', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
-                                            <Upload size={13} /> + Add File
-                                            <input
-                                                type="file"
-                                                multiple
-                                                onChange={(e) => {
-                                                    const files = Array.from(e.target.files);
-                                                    if (files.length > 0) {
-                                                        setEmailPreview(prev => ({
-                                                            ...prev,
-                                                            attachments: [...(prev.attachments || []), ...files]
-                                                        }));
-                                                    }
-                                                    e.target.value = null;
-                                                }}
-                                                style={{ display: 'none' }}
-                                            />
-                                        </label>
+                                    <div style={{ marginTop: '12px' }}>
+                                        <SmartAttachmentDropzone
+                                            activeFolderId={
+                                                activeAttachmentTab === 'worksuite' ? worksuiteFolderId :
+                                                activeAttachmentTab === 'support' ? supportDocsFolderId :
+                                                activeAttachmentTab === 'photos' ? galleryFolderId : supplierBillsFolderId
+                                            }
+                                            activeFolderName={
+                                                activeAttachmentTab === 'worksuite' ? 'Worksuite' :
+                                                activeAttachmentTab === 'support' ? 'SupportDocs' :
+                                                activeAttachmentTab === 'photos' ? 'Photos & Gallery' : 'SupplierBills&Expenses'
+                                            }
+                                            onFileAdded={(file) => {
+                                                if (file.isGoogleDrive) {
+                                                    // For google drive, we download and attach it
+                                                    attachDriveFile(file);
+                                                } else {
+                                                    // For local file, stage directly
+                                                    setEmailPreview(prev => ({
+                                                        ...prev,
+                                                        attachments: [...(prev.attachments || []), file]
+                                                    }));
+                                                }
+                                            }}
+                                            isDriveConnected={!!getStoredToken()}
+                                            onOpenAuth={() => connectGoogleAPI('job_' + id)}
+                                        />
                                     </div>
 
                                     {/* Currently Attached Files List */}
@@ -7584,6 +7894,16 @@ export default function WorkflowEditor() {
                     />
                 </div>
             </div>
+            <SmartUploadPanel 
+                isOpen={smartUploadConfig.isOpen}
+                onClose={() => setSmartUploadConfig(prev => ({ ...prev, isOpen: false }))}
+                onSelect={smartUploadConfig.onSelect}
+                documentType={smartUploadConfig.documentType}
+                accept={smartUploadConfig.accept}
+                activeFolderId={smartUploadConfig.activeFolderId}
+                activeFolderName={smartUploadConfig.activeFolderName}
+                initialTab={smartUploadConfig.initialTab}
+            />
 
             <style dangerouslySetInnerHTML={{
                 __html: `

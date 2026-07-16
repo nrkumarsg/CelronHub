@@ -113,6 +113,24 @@ export default function AiDriveCardParser() {
   });
   const [isSavingApproval, setIsSavingApproval] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState('az');
+
+  const sortItems = (items) => {
+    return [...items].sort((a, b) => {
+      if (sortBy === 'az') {
+        return (a.name || '').localeCompare(b.name || '');
+      }
+      if (sortBy === 'za') {
+        return (b.name || '').localeCompare(a.name || '');
+      }
+      if (sortBy === 'lastScan') {
+        const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
+        const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
+        return dateB - dateA;
+      }
+      return 0;
+    });
+  };
 
   const loadSubfolders = async (rootId, token) => {
     if (!rootId || !token) return;
@@ -711,6 +729,43 @@ export default function AiDriveCardParser() {
     return match ? match[1] : '';
   };
 
+  // Filter & Sort computed values
+  const filteredPendingDrafts = pendingDrafts.filter(draft => {
+    const rep = draft.contacts?.[0] || {};
+    const query = searchQuery.toLowerCase();
+    return (
+      (draft.name || '').toLowerCase().includes(query) ||
+      (draft.address || '').toLowerCase().includes(query) ||
+      (draft.email1 || '').toLowerCase().includes(query) ||
+      (draft.phone1 || '').toLowerCase().includes(query) ||
+      (draft.uen || '').toLowerCase().includes(query) ||
+      (rep.name || '').toLowerCase().includes(query) ||
+      (rep.post || '').toLowerCase().includes(query) ||
+      (rep.email || '').toLowerCase().includes(query) ||
+      (rep.handphone || '').toLowerCase().includes(query)
+    );
+  });
+
+  const sortedPendingDrafts = sortItems(filteredPendingDrafts);
+
+  const filteredActivePartners = activeDirectoryPartners.filter(partner => {
+    const query = searchQuery.toLowerCase();
+    const hasContactMatch = (partner.contacts || []).some(c => 
+      (c.name || '').toLowerCase().includes(query) ||
+      (c.email || '').toLowerCase().includes(query) ||
+      (c.handphone || '').toLowerCase().includes(query)
+    );
+    return (
+      (partner.name || '').toLowerCase().includes(query) ||
+      (partner.address || '').toLowerCase().includes(query) ||
+      (partner.uen || '').toLowerCase().includes(query) ||
+      (partner.weblink || '').toLowerCase().includes(query) ||
+      hasContactMatch
+    );
+  });
+
+  const sortedActivePartners = sortItems(filteredActivePartners);
+
   return (
     <div style={{ background: '#f8fafc', minHeight: '100%', padding: '32px', color: '#334155', borderRadius: '16px' }}>
       
@@ -1032,25 +1087,60 @@ export default function AiDriveCardParser() {
             </button>
           </div>
 
-          <div style={{ position: 'relative', width: '300px' }}>
-            <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-            <input 
-              type="text" 
-              placeholder="Search by name, contact, UEN..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ 
-                width: '100%', 
-                padding: '10px 12px 10px 40px', 
-                borderRadius: '10px', 
-                border: '1px solid #e2e8f0', 
-                fontSize: '0.85rem',
-                outline: 'none',
-                transition: 'border-color 0.2s'
-              }}
-              onFocus={e => e.target.style.borderColor = '#7c3aed'}
-              onBlur={e => e.target.style.borderColor = '#e2e8f0'}
-            />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748b', whiteSpace: 'nowrap' }}>Sort:</span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                style={{
+                  padding: '10px 36px 10px 12px',
+                  borderRadius: '10px',
+                  border: '1px solid #e2e8f0',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  color: '#475569',
+                  background: '#fff',
+                  outline: 'none',
+                  cursor: 'pointer',
+                  appearance: 'none',
+                  WebkitAppearance: 'none',
+                  backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>")`,
+                  backgroundRepeat: 'no-repeat',
+                  backgroundPosition: 'right 12px center',
+                  backgroundSize: '16px',
+                  transition: 'border-color 0.2s',
+                  minWidth: '150px'
+                }}
+                onFocus={e => e.target.style.borderColor = '#7c3aed'}
+                onBlur={e => e.target.style.borderColor = '#e2e8f0'}
+              >
+                <option value="az">A-Z</option>
+                <option value="za">Z-A</option>
+                <option value="lastScan">Last Scan - First Order</option>
+              </select>
+            </div>
+
+            <div style={{ position: 'relative', width: '300px' }}>
+              <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+              <input 
+                type="text" 
+                placeholder="Search by name, contact, UEN..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{ 
+                  width: '100%', 
+                  padding: '10px 12px 10px 40px', 
+                  borderRadius: '10px', 
+                  border: '1px solid #e2e8f0', 
+                  fontSize: '0.85rem',
+                  outline: 'none',
+                  transition: 'border-color 0.2s'
+                }}
+                onFocus={e => e.target.style.borderColor = '#7c3aed'}
+                onBlur={e => e.target.style.borderColor = '#e2e8f0'}
+              />
+            </div>
           </div>
         </div>
 
@@ -1067,21 +1157,7 @@ export default function AiDriveCardParser() {
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#475569', margin: '0 0 4px 0' }}>Perfect Sync! Review Queue Empty</h3>
               <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>All business cards in Google Drive have been pre-indexed and approved. Click "Sync Folder" to scan for new uploads!</p>
             </div>
-          ) : pendingDrafts.filter(draft => {
-            const rep = draft.contacts?.[0] || {};
-            const query = searchQuery.toLowerCase();
-            return (
-              (draft.name || '').toLowerCase().includes(query) ||
-              (draft.address || '').toLowerCase().includes(query) ||
-              (draft.email1 || '').toLowerCase().includes(query) ||
-              (draft.phone1 || '').toLowerCase().includes(query) ||
-              (draft.uen || '').toLowerCase().includes(query) ||
-              (rep.name || '').toLowerCase().includes(query) ||
-              (rep.post || '').toLowerCase().includes(query) ||
-              (rep.email || '').toLowerCase().includes(query) ||
-              (rep.handphone || '').toLowerCase().includes(query)
-            );
-          }).length === 0 ? (
+          ) : sortedPendingDrafts.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '64px 32px', background: '#fafafb', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
               <Search size={48} color="#94a3b8" style={{ margin: '0 auto 16px auto' }} />
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#475569', margin: '0 0 4px 0' }}>No Cards Found</h3>
@@ -1089,21 +1165,7 @@ export default function AiDriveCardParser() {
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
-              {pendingDrafts.filter(draft => {
-                const rep = draft.contacts?.[0] || {};
-                const query = searchQuery.toLowerCase();
-                return (
-                  (draft.name || '').toLowerCase().includes(query) ||
-                  (draft.address || '').toLowerCase().includes(query) ||
-                  (draft.email1 || '').toLowerCase().includes(query) ||
-                  (draft.phone1 || '').toLowerCase().includes(query) ||
-                  (draft.uen || '').toLowerCase().includes(query) ||
-                  (rep.name || '').toLowerCase().includes(query) ||
-                  (rep.post || '').toLowerCase().includes(query) ||
-                  (rep.email || '').toLowerCase().includes(query) ||
-                  (rep.handphone || '').toLowerCase().includes(query)
-                );
-              }).map((draft) => {
+              {sortedPendingDrafts.map((draft) => {
                 const driveId = getDriveFileId(draft.info);
                 const rep = draft.contacts?.[0] || {};
                 
@@ -1137,6 +1199,35 @@ export default function AiDriveCardParser() {
                       <span style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(234, 179, 8, 0.9)', color: '#fff', padding: '3px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 700 }}>
                         PENDING REVIEW
                       </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteDraft(draft.id);
+                        }}
+                        style={{
+                          position: 'absolute',
+                          top: '10px',
+                          left: '10px',
+                          background: 'rgba(239, 68, 68, 0.9)',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          width: '30px',
+                          height: '30px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                          transition: 'background 0.2s',
+                          zIndex: 10
+                        }}
+                        onMouseOver={e => e.currentTarget.style.background = '#dc2626'}
+                        onMouseOut={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.9)'}
+                        title="Delete this draft"
+                      >
+                        <Trash2 size={15} />
+                      </button>
                     </div>
 
                     <div style={{ padding: '16px' }}>
@@ -1169,21 +1260,7 @@ export default function AiDriveCardParser() {
           )
         ) : (
           /* Active Partners List */
-          activeDirectoryPartners.filter(partner => {
-            const query = searchQuery.toLowerCase();
-            const hasContactMatch = (partner.contacts || []).some(c => 
-              (c.name || '').toLowerCase().includes(query) ||
-              (c.email || '').toLowerCase().includes(query) ||
-              (c.handphone || '').toLowerCase().includes(query)
-            );
-            return (
-              (partner.name || '').toLowerCase().includes(query) ||
-              (partner.address || '').toLowerCase().includes(query) ||
-              (partner.uen || '').toLowerCase().includes(query) ||
-              (partner.weblink || '').toLowerCase().includes(query) ||
-              hasContactMatch
-            );
-          }).length === 0 ? (
+          sortedActivePartners.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '64px 32px', background: '#fafafb', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
               <Search size={48} color="#94a3b8" style={{ margin: '0 auto 16px auto' }} />
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#475569', margin: '0 0 4px 0' }}>No Partners Found</h3>
@@ -1191,21 +1268,7 @@ export default function AiDriveCardParser() {
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
-              {activeDirectoryPartners.filter(partner => {
-                const query = searchQuery.toLowerCase();
-                const hasContactMatch = (partner.contacts || []).some(c => 
-                  (c.name || '').toLowerCase().includes(query) ||
-                  (c.email || '').toLowerCase().includes(query) ||
-                  (c.handphone || '').toLowerCase().includes(query)
-                );
-                return (
-                  (partner.name || '').toLowerCase().includes(query) ||
-                  (partner.address || '').toLowerCase().includes(query) ||
-                  (partner.uen || '').toLowerCase().includes(query) ||
-                  (partner.weblink || '').toLowerCase().includes(query) ||
-                  hasContactMatch
-                );
-              }).map((partner) => (
+              {sortedActivePartners.map((partner) => (
                 <div 
                   key={partner.id}
                   style={{ 

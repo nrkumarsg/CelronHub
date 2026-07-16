@@ -569,7 +569,11 @@ export default function EnquiryList() {
                                             unique.push(p);
                                         }
                                     });
-                                    return unique;
+                                    return unique.map(p => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.name}
+                                        </option>
+                                    ));
                                 })()}
                             </select>
                         </div>
@@ -651,7 +655,7 @@ export default function EnquiryList() {
                                                     onClick={() => {
                                                         if (activeTab === 'enquiries') navigate(`/workflows/enquiry/${item.id}`);
                                                         else if (activeTab === 'jobs') navigate(`/workflows/job/${item.id}`);
-                                                        else navigate(`/workflows/editor/Enquiry/${item.id}`);
+                                                        else navigate(`/workflows/enquiry/${item.id}`);
                                                     }}
                                                     style={{ fontWeight: 700, color: 'var(--accent)', fontSize: '0.85rem', cursor: 'pointer', textDecoration: 'underline' }}
                                                 >
@@ -778,7 +782,7 @@ export default function EnquiryList() {
                                                         onClick={() => {
                                                             if (activeTab === 'enquiries') navigate(`/workflows/enquiry/${item.id}`);
                                                             else if (activeTab === 'jobs') navigate(`/workflows/job/${item.id}`);
-                                                            else navigate(`/workflows/editor/Enquiry/${item.id}`);
+                                                            else navigate(`/workflows/enquiry/${item.id}`);
                                                         }}
                                                         className="btn btn-sm btn-secondary"
                                                         style={{ gap: '6px' }}

@@ -178,13 +178,80 @@ export const getEnquiries = async (companyId) => {
 };
 
 export const getEnquiryById = async (companyId, enquiryId) => {
-    const { data, error } = await supabase
+    // 1. Try to find in customer_enquiries (V1)
+    const { data: v1Data, error: v1Error } = await supabase
         .from('customer_enquiries')
         .select(`*, customer:partners!customer_id(name), contact:contacts!contact_id(name)`)
         .eq('company_id', companyId)
         .eq('id', enquiryId)
-        .single();
-    return { data, error };
+        .maybeSingle();
+
+    if (v1Data) {
+        return { data: v1Data, error: null };
+    }
+
+    // 2. If not found, try to find in workflow_documents (V2)
+    const { data: v2Data, error: v2Error } = await supabase
+        .from('workflow_documents')
+        .select(`*, customer:partners!partner_id(name), contact:contacts!contact_id(name)`)
+        .eq('company_id', companyId)
+        .eq('id', enquiryId)
+        .eq('document_type', 'Enquiry')
+        .maybeSingle();
+
+    if (v2Data) {
+        // Fetch its line items from workflow_line_items
+        const { data: items } = await supabase
+            .from('workflow_line_items')
+            .select('*')
+            .eq('document_id', enquiryId)
+            .order('sort_order', { ascending: true });
+
+        // Map V2 data to V1 format
+        const mappedData = {
+            id: v2Data.id,
+            enquiry_no: v2Data.document_no,
+            company_id: v2Data.company_id,
+            customer_id: v2Data.partner_id,
+            contact_id: v2Data.contact_id,
+            vessel_id: v2Data.vessel_id,
+            work_location_id: v2Data.work_location_id,
+            enquiry_date: v2Data.issue_date,
+            due_date: v2Data.expiry_date,
+            source_type: 'Email', // fallback
+            description: v2Data.subject || '',
+            gdrive_file_id: null,
+            gdrive_file_link: null,
+            gdrive_folder_id: v2Data.gdrive_folder_id,
+            customer_ref: v2Data.customer_ref,
+            status: v2Data.status,
+            customer: v2Data.customer,
+            contact: v2Data.contact,
+            catalog_items: (items || []).map(item => ({
+                id: item.id,
+                catalog_id: item.item_id,
+                name: item.description,
+                description: item.description,
+                specification: item.details || '',
+                details: item.details || '',
+                qty: item.quantity,
+                quantity: item.quantity,
+                unit: item.uom,
+                uom: item.uom,
+                unit_price: item.unit_price,
+                amount: item.amount,
+                tax_rate: item.tax_rate,
+                tax_enabled: item.tax_enabled,
+                is_section: item.is_section,
+                is_note: item.is_note
+            })),
+            isV2: true
+        };
+
+        return { data: mappedData, error: null };
+    }
+
+    return { data: null, error: v1Error || v2Error };
 };
 
 export const createEnquiry = async (enquiryData) => {
@@ -193,6 +260,72 @@ export const createEnquiry = async (enquiryData) => {
 };
 
 export const updateEnquiry = async (id, updateData) => {
+    // 1. Check if ID exists in workflow_documents (V2)
+    const { data: v2Check } = await supabase
+        .from('workflow_documents')
+        .select('id')
+        .eq('id', id)
+        .maybeSingle();
+
+    if (v2Check) {
+        // Map V1 updates back to V2 columns
+        const v2Update = {};
+        if (updateData.customer_id !== undefined) v2Update.partner_id = updateData.customer_id;
+        if (updateData.contact_id !== undefined) v2Update.contact_id = updateData.contact_id;
+        if (updateData.vessel_id !== undefined) v2Update.vessel_id = updateData.vessel_id;
+        if (updateData.work_location_id !== undefined) v2Update.work_location_id = updateData.work_location_id;
+        if (updateData.enquiry_date !== undefined) v2Update.issue_date = updateData.enquiry_date;
+        if (updateData.due_date !== undefined) v2Update.expiry_date = updateData.due_date;
+        if (updateData.description !== undefined) v2Update.subject = updateData.description;
+        if (updateData.customer_ref !== undefined) v2Update.customer_ref = updateData.customer_ref;
+        if (updateData.status !== undefined) v2Update.status = updateData.status;
+        if (updateData.gdrive_folder_id !== undefined) v2Update.gdrive_folder_id = updateData.gdrive_folder_id;
+
+        let headerData = null, headerErr = null;
+        if (Object.keys(v2Update).length > 0) {
+            const { data, error } = await supabase
+                .from('workflow_documents')
+                .update(v2Update)
+                .eq('id', id)
+                .select()
+                .single();
+            headerData = data;
+            headerErr = error;
+        }
+
+        // Handle line items if catalog_items is provided
+        if (updateData.catalog_items !== undefined) {
+            // Delete old items
+            await supabase.from('workflow_line_items').delete().eq('document_id', id);
+            
+            // Insert new items
+            const itemsToInsert = updateData.catalog_items.map((item, index) => ({
+                document_id: id,
+                item_id: item.catalog_id || null,
+                description: item.name || item.description || '',
+                details: item.specification || item.details || '',
+                quantity: item.qty || item.quantity || 1,
+                uom: item.unit || item.uom || 'Units',
+                unit_price: item.unit_price || 0,
+                amount: item.amount || 0,
+                tax_rate: item.tax_rate || 9.0,
+                tax_enabled: item.tax_enabled !== undefined ? item.tax_enabled : true,
+                is_section: item.is_section || false,
+                is_note: item.is_note || false,
+                sort_order: index
+            }));
+
+            const { error: insertErr } = await supabase
+                .from('workflow_line_items')
+                .insert(itemsToInsert);
+
+            if (insertErr) headerErr = insertErr;
+        }
+
+        return { data: headerData, error: headerErr };
+    }
+
+    // 2. Otherwise, update customer_enquiries (V1)
     const { data, error } = await supabase.from('customer_enquiries').update(updateData).eq('id', id).select().single();
     return { data, error };
 };

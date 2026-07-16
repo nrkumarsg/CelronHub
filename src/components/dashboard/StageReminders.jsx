@@ -129,7 +129,7 @@ export default function StageReminders() {
                     {items.slice(0, 8).map((item, idx) => (
                         <Link 
                             key={item.id || idx}
-                            to={item.isLegacy ? `/workflows/enquiry/${item.id}` : `/workflows/editor/${item.document_type}/${item.id}`}
+                            to={(item.isLegacy || item.document_type === 'Enquiry') ? `/workflows/enquiry/${item.id}` : `/workflows/editor/${item.document_type}/${item.id}`}
                             className="mcd-item"
                             style={{
                                 background: bgColor,

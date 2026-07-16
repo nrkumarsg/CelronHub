@@ -339,7 +339,7 @@ export default function SystemReminders() {
                                     Date: <strong>{new Date(rem.targetDateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</strong>
                                 </div>
                                 <Link 
-                                    to={rem.isSoaReminder ? "/soa?tab=automated" : `/workflows/editor/${rem.document_type}/${rem.id}`} 
+                                    to={rem.isSoaReminder ? "/soa?tab=automated" : (rem.document_type === 'Enquiry' ? `/workflows/enquiry/${rem.id}` : `/workflows/editor/${rem.document_type}/${rem.id}`)} 
                                     style={{ 
                                         display: 'flex', 
                                         alignItems: 'center', 

@@ -513,22 +513,15 @@ export default function WorkflowV2Board() {
             }
             const { jobNo } = result;
             
-            // Handle PO File Upload if present
-            if (poFile) {
-                if (!isTokenValid()) {
-                    if (window.confirm('Your Google connection has expired or is not connected. Connect now to upload PO?')) {
-                        sessionStorage.setItem('google_auth_return_url', window.location.pathname + window.location.search);
-                        connectGoogleAPI();
-                        setConversionLoading(false);
-                        return;
-                    }
-                }
+            // Provision Drive folder and migrate files if Google API is connected
+            if (isTokenValid()) {
                 try {
                     const accessToken = localStorage.getItem('google_access_token');
                     if (accessToken) {
                         const { getDocumentSettings } = await import('../../lib/store');
-                        const { getOrCreateFolder, provisionFullProjectStructure, uploadFileToDrive } = await import('../../lib/driveService');
-                        
+                        const { provisionFullProjectStructure, uploadFileToDrive, migrateEnquiryFilesToJob } = await import('../../lib/driveService');
+                        const { supabase } = await import('../../lib/supabase');
+
                         const settings = await getDocumentSettings(profile.company_id);
                         let celronRootId = settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
                         if (celronRootId?.includes('drive.google.com')) {
@@ -539,21 +532,39 @@ export default function WorkflowV2Board() {
                         const currentYear = new Date().getFullYear().toString();
                         const projName = buildProjectFolderName(jobNo, conversionTarget);
                         const projectFolderId = await provisionFullProjectStructure(accessToken, celronRootId, currentYear, projName);
-                        // Option B: upload PO directly to the root project folder
-                        const targetFolderId = projectFolderId;
-                        
-                        const uploadResult = await uploadFileToDrive(accessToken, poFile, { folderId: targetFolderId });
-                        const poUrl = `https://drive.google.com/file/d/${uploadResult.id}/view`;
 
-                        // Update all documents associated with this job with the attachment URL
-                        const { supabase } = await import('../../lib/supabase');
+                        // Save folder ID to the newly created Job document
                         await supabase.from('workflow_documents').update({ 
-                            customer_po_attachment_url: poUrl,
-                            attachment_urls: [poUrl]
-                        }).eq('assigned_job_no', jobNo);
+                            drive_folder_id: projectFolderId
+                        }).eq('document_no', jobNo);
+
+                        // If PO file is uploaded, upload it to Drive
+                        if (poFile) {
+                            const uploadResult = await uploadFileToDrive(accessToken, poFile, { folderId: projectFolderId });
+                            const poUrl = `https://drive.google.com/file/d/${uploadResult.id}/view`;
+
+                            // Update all documents associated with this job with the attachment URL
+                            await supabase.from('workflow_documents').update({ 
+                                customer_po_attachment_url: poUrl,
+                                attachment_urls: [poUrl]
+                            }).eq('assigned_job_no', jobNo);
+                        }
+
+                        // Migrate Enquiry files if enquiry_id is linked
+                        if (conversionTarget?.enquiry_id) {
+                            const { data: enqData } = await supabase
+                                .from('customer_enquiries')
+                                .select('gdrive_folder_id')
+                                .eq('id', conversionTarget.enquiry_id)
+                                .maybeSingle();
+
+                            if (enqData?.gdrive_folder_id) {
+                                await migrateEnquiryFilesToJob(accessToken, enqData.gdrive_folder_id, projectFolderId);
+                            }
+                        }
                     }
-                } catch (uploadErr) {
-                    console.error("PO Upload to Drive failed:", uploadErr);
+                } catch (driveErr) {
+                    console.error("Google Drive setup/migration failed:", driveErr);
                     // Non-blocking error for main conversion
                 }
             }
@@ -851,7 +862,9 @@ export default function WorkflowV2Board() {
     };
 
     const handleOpenDocument = (type, id) => {
-        let url = `/workflows/editor/${type.toLowerCase().replace(/\s+/g, '-')}/${id}`;
+        let url = type.toLowerCase() === 'enquiry'
+            ? `/workflows/enquiry/${id}`
+            : `/workflows/editor/${type.toLowerCase().replace(/\s+/g, '-')}/${id}`;
         if (id === 'new' && jobId) {
             url += `?job_id=${jobId}`;
         }
@@ -1780,7 +1793,13 @@ export default function WorkflowV2Board() {
                                                     <button
                                                         type="button"
                                                         className="btn btn-sm btn-secondary"
-                                                        onClick={() => navigate(`/workflows/editor/${doc.document_type.toLowerCase().replace(/\s+/g, '-')}/${doc.id}`)}
+                                                        onClick={() => {
+                                                             if (doc.document_type === 'Enquiry') {
+                                                                 navigate(`/workflows/enquiry/${doc.id}`);
+                                                             } else {
+                                                                 navigate(`/workflows/editor/${doc.document_type.toLowerCase().replace(/\s+/g, '-')}/${doc.id}`);
+                                                             }
+                                                         }}
                                                     >
                                                         <Eye size={14} /> Open
                                                     </button>
@@ -1964,6 +1983,8 @@ export default function WorkflowV2Board() {
                                                             const isExternal = doc.notes?.includes('drive.google.com') || doc.notes?.startsWith('http');
                                                             if (isExternal) {
                                                                 window.open(doc.notes, '_blank');
+                                                            } else if (doc.document_type === 'Enquiry') {
+                                                                navigate(`/workflows/enquiry/${doc.id}`);
                                                             } else {
                                                                 navigate(`/workflows/editor/${doc.document_type.toLowerCase().replace(/\s+/g, '-')}/${doc.id}`);
                                                             }
@@ -2529,6 +2550,7 @@ export default function WorkflowV2Board() {
                                                         onClick={() => {
                                                             const isExternal = item.notes?.includes('drive.google.com') || item.notes?.startsWith('http');
                                                             if (isExternal) window.open(item.notes, '_blank');
+                                                            else if (item.document_type === 'Enquiry') navigate(`/workflows/enquiry/${item.id}`);
                                                             else navigate(`/workflows/editor/${item.document_type.toLowerCase().replace(/\s+/g, '-')}/${item.id}`);
                                                             setHistoryDoc(null);
                                                         }}
@@ -2623,12 +2645,18 @@ export default function WorkflowV2Board() {
                                                         {!isInvoice ? `- ${doc.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'}
                                                     </td>
                                                     <td style={{ textAlign: 'right' }}>
-                                                        <button 
-                                                            className="btn btn-sm btn-secondary"
-                                                            onClick={() => window.open(`/workflows/editor/${doc.document_type.toLowerCase().replace(/\s+/g, '-')}/${doc.id}`, '_blank')}
-                                                        >
-                                                            <Eye size={14} /> Open
-                                                        </button>
+                                                         <button 
+                                                             className="btn btn-sm btn-secondary"
+                                                             onClick={() => {
+                                                                 if (doc.document_type === 'Enquiry') {
+                                                                     window.open(`/workflows/enquiry/${doc.id}`, '_blank');
+                                                                 } else {
+                                                                     window.open(`/workflows/editor/${doc.document_type.toLowerCase().replace(/\s+/g, '-')}/${doc.id}`, '_blank');
+                                                                 }
+                                                             }}
+                                                         >
+                                                             <Eye size={14} /> Open
+                                                         </button>
                                                     </td>
                                                 </tr>
                                             );

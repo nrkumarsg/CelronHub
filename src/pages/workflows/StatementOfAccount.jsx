@@ -11,6 +11,7 @@ import {
     Mail, MessageSquare, X, ChevronDown, Plus, ExternalLink, CheckCircle, Clock
 } from 'lucide-react';
 import RichTextEditor from '../../components/common/RichTextEditor';
+import SearchableSelect from '../../components/common/SearchableSelect';
 import { WhatsAppShareModal } from '../../components/workflow/WhatsAppShareModal';
 import { getStoredToken } from '../../lib/googleAuthService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -379,6 +380,7 @@ export default function StatementOfAccount() {
     const [loading, setLoading] = useState(false);
     const [partners, setPartners] = useState([]);
     const [selectedPartner, setSelectedPartner] = useState('');
+    const [onlyOutstanding, setOnlyOutstanding] = useState(true);
     const [dateRange, setDateRange] = useState({
         start: new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0],
         end: new Date().toISOString().split('T')[0]
@@ -809,9 +811,14 @@ export default function StatementOfAccount() {
         }
     };
 
-    const handleQuickPaymentSuccess = () => {
+    const handleQuickPaymentSuccess = (partnerId) => {
         setPaymentModal({ isOpen: false, prefill: null });
-        handleGenerate();
+        if (partnerId) {
+            setSelectedPartner(partnerId);
+            handleGenerate(partnerId);
+        } else {
+            handleGenerate();
+        }
     };
 
     const handleShareFile = async (type = 'whatsapp', message = '', recipient = '', cc = '', bcc = '', subjectOverride = '', attachExcel = false) => {
@@ -1285,6 +1292,15 @@ export default function StatementOfAccount() {
         setShowWhatsAppModal(true);
     };
 
+    const selectOptions = partners
+        .filter(p => {
+            if (p.id === selectedPartner) return true;
+            if (!onlyOutstanding) return true;
+            const agingInfo = companyAging.find(c => c.id === p.id);
+            return agingInfo && agingInfo.outstanding > 0.01;
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+
     return (
         <div className="workflow-editor-theme" style={{ minHeight: '100vh', background: '#f8fafc' }}>
             <header className="editor-header">
@@ -1531,15 +1547,24 @@ export default function StatementOfAccount() {
                     <div className="input-grid" style={{ gridTemplateColumns: '1.5fr 1fr 1fr auto auto auto', alignItems: 'flex-end', gap: '16px' }}>
                         <div className="form-item" style={{ margin: 0 }}>
                             <label style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>Select Customer</label>
-                            <select 
-                                className="form-select"
+                            <SearchableSelect
+                                options={selectOptions}
                                 value={selectedPartner}
                                 onChange={(e) => setSelectedPartner(e.target.value)}
-                                style={{ height: '48px', fontSize: '1rem' }}
-                            >
-                                <option value="">-- Choose Customer --</option>
-                                {partners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                            </select>
+                                placeholder="-- Choose Customer --"
+                            />
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+                                <input 
+                                    type="checkbox" 
+                                    id="onlyOutstanding" 
+                                    checked={onlyOutstanding} 
+                                    onChange={(e) => setOnlyOutstanding(e.target.checked)} 
+                                    style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#6366f1' }}
+                                />
+                                <label htmlFor="onlyOutstanding" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', cursor: 'pointer', userSelect: 'none' }}>
+                                    Only Outstanding Payment Customers
+                                </label>
+                            </div>
                         </div>
 
                         <div className="form-item" style={{ margin: 0 }}>
@@ -3637,7 +3662,7 @@ function ReceivePaymentModal({ prefill, onClose, onSuccess, partners, company_id
 
             const { error } = await saveWorkflowDocument(payload, []);
             if (error) throw error;
-            onSuccess();
+            onSuccess(formData.partner_id);
         } catch (err) {
             console.error('Save Payment Error:', err);
             alert(`Failed to record payment: ${err.message || 'Unknown error'}`);

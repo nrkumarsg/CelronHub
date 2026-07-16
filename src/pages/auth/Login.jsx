@@ -14,7 +14,7 @@ const Login = () => {
                            !window.location.hostname.includes('celronhub') && 
                            !window.location.hostname.includes('celron-partners'));
     const [email, setEmail] = useState('nrkumarsg@gmail.com');
-    const [password, setPassword] = useState('201436227C');
+    const [password, setPassword] = useState('Mother1973');
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);

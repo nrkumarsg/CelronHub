@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Users, DollarSign, Activity, FileSpreadsheet, Ship, MapPin, Brain, MessageSquare, FileText, Briefcase, ShoppingCart, Truck, Receipt, Award, CheckCircle, List, ClipboardCheck, Package, Layers, RefreshCw, FileDigit, Clock, HardDrive, Sparkles, Wrench } from 'lucide-react';
+import { Search, Users, DollarSign, Activity, FileSpreadsheet, Ship, MapPin, Brain, MessageSquare, FileText, Briefcase, ShoppingCart, Truck, Receipt, Award, CheckCircle, List, ClipboardCheck, Package, Layers, RefreshCw, FileDigit, Clock, HardDrive, Sparkles, Wrench, Loader2, ExternalLink, ArrowRightLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getPartners, getContacts } from '../lib/store';
 import { supabase } from '../lib/supabase';
@@ -24,6 +24,17 @@ export default function Dashboard() {
 
     const [partners, setPartners] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [recentData, setRecentData] = useState({
+        partners: [],
+        contacts: [],
+        vessels: [],
+        locations: [],
+        enquiries: [],
+        quotations: [],
+        jobs: [],
+        dos: [],
+        invoices: []
+    });
 
     useEffect(() => {
         async function loadData() {
@@ -66,6 +77,60 @@ export default function Dashboard() {
                         awaitInvoice: allDocs.filter(d => d.document_type === 'Job' && d.status === 'Active').length
                     }
                 });
+
+                // Fetch recent tables data
+                const [
+                    rPartners,
+                    rContacts,
+                    rVessels,
+                    rLocations,
+                    rEnquiries,
+                    rQuotations,
+                    rJobs,
+                    rDOs,
+                    rInvoices
+                ] = await Promise.all([
+                    supabase.from('partners')
+                        .select('id, name, types, updated_at')
+                        .eq('company_id', profile.company_id)
+                        .or('status.neq.pending_approval,status.is.null')
+                        .order('updated_at', { ascending: false })
+                        .limit(5),
+                    supabase.from('contacts')
+                        .select('id, name, post, updated_at, partners!inner(name, status)')
+                        .eq('company_id', profile.company_id)
+                        .or('status.neq.pending_approval,status.is.null', { foreignTable: 'partners' })
+                        .order('updated_at', { ascending: false })
+                        .limit(5),
+                    supabase.from('vessels')
+                        .select('id, vessel_name, imo_number, vessel_type, updated_at')
+                        .neq('vessel_name', 'N.A')
+                        .not('vessel_name', 'is', null)
+                        .order('updated_at', { ascending: false })
+                        .limit(5),
+                    supabase.from('work_locations')
+                        .select('id, location_name, pincode, updated_at')
+                        .order('updated_at', { ascending: false })
+                        .limit(5),
+                    
+                    supabase.from('workflow_documents').select('id, document_no, status, created_at, partners(name)').eq('company_id', profile.company_id).eq('document_type', 'Enquiry').order('created_at', { ascending: false }).limit(5),
+                    supabase.from('workflow_documents').select('id, document_no, status, total_amount, created_at, partners(name)').eq('company_id', profile.company_id).eq('document_type', 'Quotation').order('created_at', { ascending: false }).limit(5),
+                    supabase.from('workflow_documents').select('id, document_no, status, created_at, partners(name)').eq('company_id', profile.company_id).eq('document_type', 'Job').order('created_at', { ascending: false }).limit(5),
+                    supabase.from('workflow_documents').select('id, document_no, status, created_at, partners(name)').eq('company_id', profile.company_id).eq('document_type', 'Delivery Order').order('created_at', { ascending: false }).limit(5),
+                    supabase.from('workflow_documents').select('id, document_no, status, total_amount, created_at, partners(name)').eq('company_id', profile.company_id).eq('document_type', 'Tax Invoice').order('created_at', { ascending: false }).limit(5)
+                ]);
+
+                setRecentData({
+                    partners: rPartners.data || [],
+                    contacts: rContacts.data || [],
+                    vessels: rVessels.data || [],
+                    locations: rLocations.data || [],
+                    enquiries: rEnquiries.data || [],
+                    quotations: rQuotations.data || [],
+                    jobs: rJobs.data || [],
+                    dos: rDOs.data || [],
+                    invoices: rInvoices.data || []
+                });
             } catch (err) {
                 console.error("Dashboard load error:", err);
             } finally {
@@ -74,6 +139,113 @@ export default function Dashboard() {
         }
         loadData();
     }, [profile]);
+
+    const formatTime = (dateStr) => {
+        if (!dateStr) return 'N/A';
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return dateStr;
+        const now = new Date();
+        const diffMs = now - d;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHrs = Math.floor(diffMins / 60);
+        const diffDays = Math.floor(diffHrs / 24);
+
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHrs < 24) return `${diffHrs}h ago`;
+        if (diffDays === 1) return 'Yesterday';
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    };
+
+    const renderActivityList = (title, icon, items, renderRow, path, color = '#6366f1') => {
+        const Icon = icon;
+        return (
+            <div className="glass-panel" style={{ 
+                background: '#fff', 
+                borderRadius: '24px', 
+                padding: '24px', 
+                border: '1px solid #e2e8f0', 
+                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                display: 'flex',
+                flexDirection: 'column',
+                height: '100%',
+                transition: 'all 0.2s',
+                position: 'relative',
+                overflow: 'hidden'
+            }}
+            onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+            onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}
+            >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ background: `${color}15`, padding: '6px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Icon size={18} color={color} />
+                        </div>
+                        <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>{title}</h4>
+                    </div>
+                    {path && (
+                        <button 
+                            onClick={() => navigate(path)}
+                            style={{ background: 'transparent', border: 'none', color: '#6366f1', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '2px' }}
+                        >
+                            View All <ExternalLink size={12} />
+                        </button>
+                    )}
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1 }}>
+                    {loading ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '120px', color: '#94a3b8', fontSize: '0.85rem' }}>
+                            <Loader2 size={20} className="animate-spin" style={{ marginRight: '6px' }} /> Loading...
+                        </div>
+                    ) : items.length === 0 ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '120px', color: '#94a3b8', fontSize: '0.85rem' }}>
+                            No recent updates
+                        </div>
+                    ) : (
+                        items.map((item, idx) => (
+                            <div 
+                                key={item.id || idx} 
+                                onClick={() => renderRow.onClick(item)}
+                                style={{ 
+                                    padding: '10px 12px', 
+                                    background: '#f8fafc', 
+                                    borderRadius: '12px', 
+                                    border: '1px solid #f1f5f9',
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.15s'
+                                }}
+                                onMouseOver={e => {
+                                    e.currentTarget.style.background = '#f1f5f9';
+                                    e.currentTarget.style.borderColor = '#e2e8f0';
+                                }}
+                                onMouseOut={e => {
+                                    e.currentTarget.style.background = '#f8fafc';
+                                    e.currentTarget.style.borderColor = '#f1f5f9';
+                                }}
+                            >
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', overflow: 'hidden', marginRight: '8px' }}>
+                                    <span style={{ fontWeight: 600, fontSize: '0.825rem', color: '#334155', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                        {renderRow.title(item)}
+                                    </span>
+                                    <span style={{ fontSize: '0.725rem', color: '#64748b', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                        {renderRow.subtitle(item)}
+                                    </span>
+                                </div>
+                                <span style={{ fontSize: '0.725rem', color: '#64748b', fontWeight: 600, whiteSpace: 'nowrap', background: '#f1f5f9', padding: '3px 8px', borderRadius: '20px' }}>
+                                    {renderRow.rightLabel(item)}
+                                </span>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
+        );
+    };
 
     const filteredPartners = partners.filter(p =>
         p.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -147,6 +319,25 @@ export default function Dashboard() {
                         }}
                     >
                         <HardDrive size={18} /> Storage Hub
+                    </button>
+                    <button
+                        onClick={() => navigate('/dashboard/job-workflow')}
+                        style={{
+                            background: '#eef2ff',
+                            border: '1.5px solid #c7d2fe',
+                            borderRadius: '8px',
+                            padding: '8px 12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            fontWeight: 700,
+                            fontSize: '0.9rem',
+                            cursor: 'pointer',
+                            color: '#4f46e5',
+                            boxShadow: '0 1px 2px rgba(99, 102, 241, 0.05)'
+                        }}
+                    >
+                        <ArrowRightLeft size={18} /> Job Workflow Board
                     </button>
                     <a
                         href="https://creatorapp.zoho.com/zoho_kumar191/quotations-and-invoices#Page:DashBoard_Invoices"
@@ -395,6 +586,85 @@ export default function Dashboard() {
                     ))}
                 </div>
             </div>
+
+            {!searchTerm && (
+                <div style={{ marginBottom: '32px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                        <Activity size={22} color="#6366f1" />
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0, color: '#1e293b' }}>Registry Activity</h3>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '24px', marginBottom: '32px' }}>
+                        {renderActivityList('Partners Updated', Users, recentData.partners, {
+                            title: p => p.name,
+                            subtitle: p => p.types?.join(', ') || 'Partner',
+                            rightLabel: p => formatTime(p.updated_at),
+                            onClick: p => navigate(`/partners/${p.id}`)
+                        }, '/partners', '#3b82f6')}
+
+                        {renderActivityList('Contacts Updated', FileSpreadsheet, recentData.contacts, {
+                            title: c => c.name,
+                            subtitle: c => `${c.post || 'Contact'} • ${c.partners?.name || 'No Company'}`,
+                            rightLabel: c => formatTime(c.updated_at),
+                            onClick: c => navigate(`/contacts`)
+                        }, '/contacts', '#8b5cf6')}
+
+                        {renderActivityList('Vessels Updated', Ship, recentData.vessels, {
+                            title: v => v.vessel_name,
+                            subtitle: v => `${v.vessel_type || 'Vessel'} ${v.imo_number ? `(IMO: ${v.imo_number})` : ''}`,
+                            rightLabel: v => formatTime(v.updated_at),
+                            onClick: v => navigate(`/vessels/${v.id}`)
+                        }, '/vessels', '#6366f1')}
+
+                        {renderActivityList('Locations Updated', MapPin, recentData.locations, {
+                            title: l => l.location_name,
+                            subtitle: l => `Pincode: ${l.pincode || 'N/A'}`,
+                            rightLabel: l => formatTime(l.updated_at),
+                            onClick: l => navigate(`/work-locations/${l.id}`)
+                        }, '/work-locations', '#f97316')}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                        <Layers size={22} color="#10b981" />
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0, color: '#1e293b' }}>Recent Documents</h3>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px', marginBottom: '32px' }}>
+                        {renderActivityList('Enquiries Received', MessageSquare, recentData.enquiries, {
+                            title: d => d.document_no,
+                            subtitle: d => d.partners?.name || 'Walk-in',
+                            rightLabel: d => d.status || 'Received',
+                            onClick: d => navigate(`/workflows/enquiry/${d.id}`)
+                        }, '/workflows?type=Enquiry', '#3b82f6')}
+
+                        {renderActivityList('Quotations Submitted', FileText, recentData.quotations, {
+                            title: d => d.document_no,
+                            subtitle: d => `${d.partners?.name || 'Walk-in'} • $${d.total_amount || 0}`,
+                            rightLabel: d => d.status || 'Draft',
+                            onClick: d => navigate(`/workflows/editor/Quotation/${d.id}`)
+                        }, '/workflows?type=Quotation', '#6366f1')}
+
+                        {renderActivityList('Orders Received', Briefcase, recentData.jobs, {
+                            title: d => d.document_no,
+                            subtitle: d => d.partners?.name || 'Walk-in',
+                            rightLabel: d => d.status || 'Active',
+                            onClick: d => navigate(`/workflows/job/${d.id}`)
+                        }, '/workflows?type=Jobs', '#10b981')}
+
+                        {renderActivityList('Deliveries Awaited', Truck, recentData.dos, {
+                            title: d => d.document_no,
+                            subtitle: d => d.partners?.name || 'Walk-in',
+                            rightLabel: d => d.status || 'Pending',
+                            onClick: d => navigate(`/workflows/editor/Delivery Order/${d.id}`)
+                        }, '/workflows?type=Delivery Order', '#f59e0b')}
+
+                        {renderActivityList('Invoices Sent', Receipt, recentData.invoices, {
+                            title: d => d.document_no,
+                            subtitle: d => `${d.partners?.name || 'Walk-in'} • $${d.total_amount || 0}`,
+                            rightLabel: d => d.status || 'Sent',
+                            onClick: d => navigate(`/workflows/editor/Tax Invoice/${d.id}`)
+                        }, '/workflows?type=Tax Invoice', '#ef4444')}
+                    </div>
+                </div>
+            )}
 
             {/* AI Workflow Action Reminders */}
             {!searchTerm && <SystemReminders />}

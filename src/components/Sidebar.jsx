@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, Link, NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, FolderOpen, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe, History, Plus, ExternalLink } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, FolderOpen, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe, History, Plus, ExternalLink, Mail } from 'lucide-react';
 
 import { useAuth } from '../contexts/AuthContext';
 import { getTodos } from '../lib/todoService';
@@ -150,6 +150,11 @@ export default function Sidebar() {
                             <span className="nav-text" style={{ fontWeight: 800, color: '#f59e0b' }}>Unified Supplier Hub</span>
                         </NavLink>
 
+                        <NavLink to="/dashboard/job-workflow" className={({ isActive }) => `nav-link nav-sub-link ${isActive ? 'active' : ''}`} title="Job Workflow">
+                            <ArrowRightLeft size={16} color="#6366f1" />
+                            <span className="nav-text" style={{ fontWeight: 600, color: location.pathname === '/dashboard/job-workflow' ? '#ffffff' : '#94a3b8' }}>Job Workflow</span>
+                        </NavLink>
+
                         <NavLink to="/unified-supplier-hub?tab=supplier_tools" className={() => `nav-link nav-sub-link ${isSupplierToolsActive ? 'active' : ''}`} title="Supplier Directory & Tools">
                             <Building2 size={16} color="#8b5cf6" />
                             <span className="nav-text" style={{ fontWeight: 600, color: isSupplierToolsActive ? '#ffffff' : '#94a3b8' }}>Supplier Directory &amp; Tools</span>
@@ -161,6 +166,11 @@ export default function Sidebar() {
                                 <span className="nav-text" style={{ fontWeight: 600, color: isCardScannerActive ? '#ffffff' : '#94a3b8' }}>AI Card Scanner</span>
                             </NavLink>
                         )}
+
+                        <NavLink to="/enquiries" className={({ isActive }) => `nav-link nav-sub-link ${isActive ? 'active' : ''}`} title="Enquiry2Supplier">
+                            <Mail size={16} color="#3b82f6" />
+                            <span className="nav-text" style={{ fontWeight: 600, color: location.pathname === '/enquiries' ? '#ffffff' : '#94a3b8' }}>Enquiry2Supplier</span>
+                        </NavLink>
 
                         <NavLink to="/quotations" className={({ isActive }) => `nav-link nav-sub-link ${isActive ? 'active' : ''}`} title="Quote2Customers">
                             <FileText size={16} color="#6366f1" />
@@ -190,6 +200,11 @@ export default function Sidebar() {
                         <NavLink to="/soa" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Statement of Account">
                             <ClipboardList size={20} color="#ec4899" />
                             <span className="nav-text" style={{ fontWeight: 800, color: '#ec4899' }}>Statement of Account</span>
+                        </NavLink>
+
+                        <NavLink to="/tools/email-composer" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Email Composer">
+                            <Mail size={20} color="#3b82f6" />
+                            <span className="nav-text" style={{ fontWeight: 800, color: '#3b82f6' }}>Email Composer</span>
                         </NavLink>
                         {(hasAccess('catalog') || hasAccess('forms') || hasAccess('manuals')) && (
                             <>

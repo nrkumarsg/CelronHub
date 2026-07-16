@@ -531,7 +531,7 @@ export default function GstReporting() {
                                                 </span>
                                             </td>
                                             <td className="font-bold">
-                                                <a href={activeTab === 'sales' ? `/workflows/editor/${d.document_type}/${d.id}` : d.link} 
+                                                <a href={activeTab === 'sales' ? (d.document_type === 'Enquiry' ? `/workflows/enquiry/${d.id}` : `/workflows/editor/${d.document_type}/${d.id}`) : d.link} 
                                                    className="doc-link">
                                                     {activeTab === 'sales' ? d.document_no : d.doc_no}
                                                     <ExternalLink size={12} style={{ marginLeft: '4px', opacity: 0.5 }} />

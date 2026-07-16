@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getStoredToken } from '../../lib/googleAuthService';
 import { listFolderContent, getOrCreateFolder } from '../../lib/driveService';
 import toast from 'react-hot-toast';
+import SmartAttachmentDropzone from '../common/SmartAttachmentDropzone';
 
 export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
     if (!isOpen) return null;
@@ -38,7 +39,9 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
     const [photosMediaFiles, setPhotosMediaFiles] = useState([]);
     const [quotationsReceivedFiles, setQuotationsReceivedFiles] = useState([]);
 
+    const [supplierUploadsFolderId, setSupplierUploadsFolderId] = useState(null);
     const [photosFolderId, setPhotosFolderId] = useState(null);
+    const [quotationsFolderId, setQuotationsFolderId] = useState(null);
     const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
 
     // Hardcoded office contact defaults
@@ -68,10 +71,13 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
 
             // 1. Get/create subfolder IDs inside data.enquiryFolderId
             const supplierUploadsId = await getOrCreateFolder(token, 'Supplier Enquiry uploads', data.enquiryFolderId);
+            setSupplierUploadsFolderId(supplierUploadsId);
+            
             const photosId = await getOrCreateFolder(token, 'Photos & Media', data.enquiryFolderId);
-            const quotationsId = await getOrCreateFolder(token, 'Quotations received', data.enquiryFolderId);
-
             setPhotosFolderId(photosId);
+
+            const quotationsId = await getOrCreateFolder(token, 'Quotations received', data.enquiryFolderId);
+            setQuotationsFolderId(quotationsId);
 
             // 2. Fetch file contents for each subfolder
             const supplierFiles = await listFolderContent(token, supplierUploadsId);
@@ -637,18 +643,28 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                             </div>
                         </div>
 
-                        {/* Local File Upload button */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: '12px', fontWeight: 600, color: '#475569' }}>Upload Local Files</span>
-                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', background: '#6366f1', color: '#fff', padding: '6px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, transition: 'all 0.2s', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
-                                <Upload size={13} /> + Add File
-                                <input
-                                    type="file"
-                                    multiple
-                                    onChange={handleFileChange}
-                                    style={{ display: 'none' }}
-                                />
-                            </label>
+                        <div style={{ marginTop: '12px' }}>
+                            <SmartAttachmentDropzone
+                                activeFolderId={
+                                    activeAttachmentTab === 'supplierEnquiry' ? supplierUploadsFolderId :
+                                    activeAttachmentTab === 'photosMedia' ? photosFolderId : quotationsFolderId
+                                }
+                                activeFolderName={
+                                    activeAttachmentTab === 'supplierEnquiry' ? 'Supplier Enquiry uploads' :
+                                    activeAttachmentTab === 'photosMedia' ? 'Photos & Media' : 'Quotations received'
+                                }
+                                onFileAdded={(file) => {
+                                    if (file.isGoogleDrive) {
+                                        attachDriveFile(file);
+                                    } else {
+                                        setAttachments(prev => [...prev, file]);
+                                    }
+                                }}
+                                isDriveConnected={driveConnected}
+                                onOpenAuth={() => {
+                                    toast.error("Please connect Google Drive first in settings.");
+                                }}
+                            />
                         </div>
 
                         {/* Attached list */}

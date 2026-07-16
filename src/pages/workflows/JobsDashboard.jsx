@@ -6,7 +6,7 @@ import {
     AlertCircle, CheckCircle2, Activity, FileText, Printer, Eye, 
     RefreshCcw, FolderOpen, Copy, Trash2, MoreVertical,
     Package, CreditCard, Calculator, Image, Info,
-    Briefcase, Truck, ClipboardList, Receipt, CheckSquare, Book, Ship, MapPin
+    Briefcase, Truck, ClipboardList, Receipt, CheckSquare, Book, Ship, MapPin, Building2
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -297,6 +297,25 @@ export default function JobsDashboard() {
             const masterId = job.masterJob?.id || job.allDocs[0]?.id;
             if (masterId) {
                 await supabase.from('workflow_documents').update({ drive_folder_id: projectFolderId }).eq('id', masterId);
+            }
+
+            // Migrate Enquiry files if enquiry_id is linked
+            const enquiryId = job.masterJob?.enquiry_id || job.allDocs.find(d => d.enquiry_id)?.enquiry_id;
+            if (enquiryId) {
+                const { data: enqData } = await supabase
+                    .from('customer_enquiries')
+                    .select('gdrive_folder_id')
+                    .eq('id', enquiryId)
+                    .maybeSingle();
+
+                if (enqData?.gdrive_folder_id) {
+                    const { migrateEnquiryFilesToJob } = await import('../../lib/driveService');
+                    try {
+                        await migrateEnquiryFilesToJob(accessToken, enqData.gdrive_folder_id, projectFolderId);
+                    } catch (migErr) {
+                        console.error('Enquiry files migration failed:', migErr);
+                    }
+                }
             }
 
             toast.success('Folder provisioned successfully!');
@@ -632,6 +651,13 @@ export default function JobsDashboard() {
                     <p style={{ color: 'var(--text-secondary)', marginTop: '4px', fontSize: '1.05rem' }}>Track project lifecycle, financials, files, and milestones.</p>
                 </div>
                 <div style={{ display: 'flex', gap: '12px' }}>
+                    <button 
+                        className="btn btn-secondary" 
+                        onClick={() => navigate('/unified-supplier-hub')}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, borderColor: '#f59e0b', color: '#b45309', background: '#fffbeb' }}
+                    >
+                        <Building2 size={18} /> Go to Supplier Hub
+                    </button>
                     <button 
                         className="btn btn-secondary" 
                         onClick={() => navigate('/workflows?type=Job')}
@@ -1282,6 +1308,13 @@ export default function JobsDashboard() {
                                             className="quick-link-btn gallery"
                                         >
                                             <Image size={13} /> Photos & Media
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(`/dashboard/job-workflow?job_id=${job.id}&job_no=${job.jobNo}`); }}
+                                            className="quick-link-btn workflow-board"
+                                            style={{ gridColumn: 'span 2', background: '#eef2ff', color: '#4f46e5', borderColor: '#c7d2fe' }}
+                                        >
+                                            <Activity size={13} /> Job Workflow Board
                                         </button>
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleNavigateToTab(job, 'explorer'); }}

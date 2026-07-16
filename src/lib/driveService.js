@@ -525,6 +525,30 @@ export const moveFile = async (accessToken, fileId, newParentId) => {
 export const moveFolder = moveFile; // Alias for backward compatibility
 
 /**
+ * Copies a file on Google Drive to a new parent folder.
+ */
+export const copyFile = async (accessToken, fileId, newParentId) => {
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/copy`, {
+        method: 'POST',
+        headers: {
+            'Authorization': 'Bearer ' + accessToken,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            parents: [newParentId]
+        })
+    });
+
+    if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error?.message || 'Failed to copy item');
+    }
+
+    return await response.json();
+};
+
+
+/**
  * Standardized Partner folder provisioning.
  * Path: [Parent]/Partners/[Partner Name]
  */
@@ -695,3 +719,54 @@ export const provisionSparepartFolderStructure = async (accessToken, spareNumber
         datasheetsWebViewLink:  `https://drive.google.com/drive/folders/${datasheetsFolderId}`
     };
 };
+
+/**
+ * Migrates files from an Enquiry's subfolders to a Job's subfolders.
+ * @param {string} accessToken - Google OAuth token
+ * @param {string} enquiryFolderId - GDrive folder ID of the Enquiry
+ * @param {string} jobFolderId - GDrive folder ID of the Job
+ */
+export const migrateEnquiryFilesToJob = async (accessToken, enquiryFolderId, jobFolderId) => {
+    if (!enquiryFolderId || !jobFolderId) return;
+
+    try {
+        // 1. Find or create target subfolders inside the Job folder to ensure they exist
+        const photosGalleryId = await getOrCreateFolder(accessToken, 'Photos & Gallery', jobFolderId);
+        const supportDocsId = await getOrCreateFolder(accessToken, 'SupportDocs', jobFolderId);
+
+        // 2. List all contents of the Enquiry folder
+        const enquiryContents = await listFolderContent(accessToken, enquiryFolderId);
+
+        for (const item of enquiryContents) {
+            if (item.mimeType === 'application/vnd.google-apps.folder') {
+                // If it's a standard subfolder, move its files to respective target folders
+                const filesInSub = await listFolderContent(accessToken, item.id);
+                
+                let targetSubfolderId;
+                if (item.name === 'Photos & Media') {
+                    targetSubfolderId = photosGalleryId;
+                } else if (item.name === 'Supplier Enquiry uploads' || item.name === 'Quotations received') {
+                    targetSubfolderId = supportDocsId;
+                } else {
+                    // Non-standard subfolder, move the folder itself to SupportDocs
+                    targetSubfolderId = supportDocsId;
+                    await moveFile(accessToken, item.id, targetSubfolderId);
+                    continue;
+                }
+
+                // Move all files inside the standard folder
+                for (const file of filesInSub) {
+                    await moveFile(accessToken, file.id, targetSubfolderId);
+                }
+            } else {
+                // Loose files in Enquiry root are moved to SupportDocs
+                await moveFile(accessToken, item.id, supportDocsId);
+            }
+        }
+        console.log(`Successfully migrated files from Enquiry folder (${enquiryFolderId}) to Job folder (${jobFolderId})`);
+    } catch (err) {
+        console.error('Failed to migrate Enquiry files to Job folder:', err);
+        throw err;
+    }
+};
+
