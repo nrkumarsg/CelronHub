@@ -57,6 +57,12 @@ export const AuthProvider = ({ children }) => {
                 const p = JSON.parse(cachedProfile);
                 let c = JSON.parse(cachedCompanies);
                 
+                // Correct company_id if it's the empty demo company
+                if (p && p.company_id === 'd0000000-0000-0000-0000-000000000001') {
+                    p.company_id = '8431cd0b-7449-44a5-8213-2a8680d09ebe';
+                    localStorage.setItem('auth_cached_profile', JSON.stringify(p));
+                }
+                
                 // Force update cached legacy names to the correct corporate name
                 if (p?.company?.name === 'CELRON HUB' || p?.company?.name === 'Cel-Ron Hub') {
                     p.company.name = 'CEL-RON ENTERPRISES PTE LTD';
@@ -94,7 +100,7 @@ export const AuthProvider = ({ children }) => {
                     ? storedCompany 
                     : (celron?.id || p.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe');
                 
-                if (p?.email?.toLowerCase() === 'nrkumarsg@gmail.com' && resolvedCompany === 'd0000000-0000-0000-0000-000000000001') {
+                if (resolvedCompany === 'd0000000-0000-0000-0000-000000000001') {
                     resolvedCompany = '8431cd0b-7449-44a5-8213-2a8680d09ebe';
                 }
                 
@@ -213,6 +219,9 @@ export const AuthProvider = ({ children }) => {
                 const existing = localStorage.getItem('auth_cached_profile');
                 profileData = existing ? JSON.parse(existing) : defaultDemoProfile(currUser);
             }
+            if (profileData && profileData.company_id === 'd0000000-0000-0000-0000-000000000001') {
+                profileData.company_id = '8431cd0b-7449-44a5-8213-2a8680d09ebe';
+            }
 
             // Filter companies if not superadmin (logic actually in service but to be safe)
             let allComps = companiesRes?.data || [];
@@ -271,7 +280,7 @@ export const AuthProvider = ({ children }) => {
                 ? storedCompany 
                 : (celronCompany?.id || myComps[0]?.id || profileData?.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe');
 
-            if (profileData?.email?.toLowerCase() === 'nrkumarsg@gmail.com' && defaultCompany === 'd0000000-0000-0000-0000-000000000001') {
+            if (defaultCompany === 'd0000000-0000-0000-0000-000000000001') {
                 defaultCompany = '8431cd0b-7449-44a5-8213-2a8680d09ebe';
             }
 
