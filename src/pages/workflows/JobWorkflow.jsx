@@ -23,7 +23,7 @@ import SmartUploadPanel from '../../components/upload/SmartUploadPanel';
 
 
 // Sub-component for Google Drive integration per stage
-function StageDriveManager({ accessToken, folderId, stageName, onRefresh, onProvision }) {
+function StageDriveManager({ accessToken, folderId, stageName, stageId, jobNo, onRefresh, onProvision }) {
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
     const [uploading, setUploading] = useState(false);
@@ -897,7 +897,9 @@ export default function JobWorkflow() {
                                     <StageDriveManager 
                                         accessToken={accessToken} 
                                         folderId={resolveFolderForStage(1)} 
-                                        stageName="Enquiry" 
+                                        stageName="Enquiry"
+                                        stageId={1}
+                                        jobNo={docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no || 'Job'}
                                         onRefresh={() => loadFullWorkflowSuite(enquiry?.id, docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no)} 
                                         onProvision={handleProvisionFolder}
                                     />
@@ -949,7 +951,9 @@ export default function JobWorkflow() {
                                     <StageDriveManager 
                                         accessToken={accessToken} 
                                         folderId={resolveFolderForStage(2)} 
-                                        stageName="RFQ" 
+                                        stageName="RFQ"
+                                        stageId={2}
+                                        jobNo={docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no || 'Job'}
                                         onRefresh={() => loadFullWorkflowSuite(enquiry?.id, docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no)} 
                                         onProvision={handleProvisionFolder}
                                     />
@@ -998,7 +1002,9 @@ export default function JobWorkflow() {
                                     <StageDriveManager 
                                         accessToken={accessToken} 
                                         folderId={resolveFolderForStage(3)} 
-                                        stageName="Quotation" 
+                                        stageName="Quotation"
+                                        stageId={3}
+                                        jobNo={docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no || 'Job'}
                                         onRefresh={() => loadFullWorkflowSuite(enquiry?.id, docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no)} 
                                         onProvision={handleProvisionFolder}
                                     />
@@ -1061,7 +1067,9 @@ export default function JobWorkflow() {
                                     <StageDriveManager 
                                         accessToken={accessToken} 
                                         folderId={resolveFolderForStage(4)} 
-                                        stageName="JobMaster" 
+                                        stageName="JobMaster"
+                                        stageId={4}
+                                        jobNo={docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no || 'Job'}
                                         onRefresh={() => loadFullWorkflowSuite(enquiry?.id, docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no)} 
                                         onProvision={handleProvisionFolder}
                                     />
@@ -1121,7 +1129,9 @@ export default function JobWorkflow() {
                                     <StageDriveManager 
                                         accessToken={accessToken} 
                                         folderId={resolveFolderForStage(5)} 
-                                        stageName="Logistics" 
+                                        stageName="Logistics"
+                                        stageId={5}
+                                        jobNo={docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no || 'Job'}
                                         onRefresh={() => loadFullWorkflowSuite(enquiry?.id, docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no)} 
                                         onProvision={handleProvisionFolder}
                                     />
@@ -1190,7 +1200,9 @@ export default function JobWorkflow() {
                                     <StageDriveManager 
                                         accessToken={accessToken} 
                                         folderId={resolveFolderForStage(6)} 
-                                        stageName="Invoicing" 
+                                        stageName="Invoicing"
+                                        stageId={6}
+                                        jobNo={docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no || 'Job'}
                                         onRefresh={() => loadFullWorkflowSuite(enquiry?.id, docs.find(d => d.document_type === 'Job')?.assigned_job_no || docs.find(d => d.document_type === 'Job')?.document_no)} 
                                         onProvision={handleProvisionFolder}
                                     />
