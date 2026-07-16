@@ -5,28 +5,28 @@ const STORAGE_KEYS_PREFIX = 'celron_ai_key_';
 
 const DEFAULT_PROVIDERS = [
     {
-        name: 'DeepSeek',
-        enabled: true,
-        priority: 1,
-        baseUrl: 'https://api.deepseek.com',
-        modelName: 'deepseek-chat',
-        timeout: 15000,
-        retryCount: 3,
-        temperature: 0.1,
-        maxTokens: 2048,
-        notes: 'Primary text-only provider (deepseek-chat).'
-    },
-    {
         name: 'Gemini',
         enabled: true,
-        priority: 2,
+        priority: 1,
         baseUrl: 'https://generativelanguage.googleapis.com',
         modelName: 'gemini-2.5-flash',
         timeout: 12000,
         retryCount: 3,
         temperature: 0.1,
         maxTokens: 2048,
-        notes: 'Best performing general and vision model.'
+        notes: 'Primary provider — best general and vision model.'
+    },
+    {
+        name: 'DeepSeek',
+        enabled: true,
+        priority: 2,
+        baseUrl: 'https://api.deepseek.com',
+        modelName: 'deepseek-chat',
+        timeout: 15000,
+        retryCount: 3,
+        temperature: 0.1,
+        maxTokens: 2048,
+        notes: 'Fallback text provider (deepseek-chat).'
     },
     {
         name: 'Groq',
@@ -54,7 +54,7 @@ const DEFAULT_PROVIDERS = [
     },
     {
         name: 'OpenAI',
-        enabled: true,
+        enabled: false,
         priority: 5,
         baseUrl: 'https://api.openai.com/v1',
         modelName: 'gpt-4o-mini',
@@ -62,7 +62,7 @@ const DEFAULT_PROVIDERS = [
         retryCount: 3,
         temperature: 0.1,
         maxTokens: 2048,
-        notes: 'Industry standard fallback.'
+        notes: 'Disabled — use Gemini as primary.'
     },
     {
         name: 'Claude',
