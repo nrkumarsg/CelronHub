@@ -1364,3 +1364,21 @@ export const getWorkflowCounts = async (companyId) => {
     }
 };
 
+/**
+ * Fetch all workflow documents that belong to the same job suite.
+ * Documents are linked by assigned_job_no.
+ * Returns them ordered by created_at ascending so sequence numbering
+ * (DO #1, DO #2, Invoice #1 …) is stable and predictable.
+ */
+export const fetchSuiteDocuments = async (jobNo, companyId) => {
+    if (!jobNo || !companyId) return { data: [], error: null };
+    const { data, error } = await supabase
+        .from('workflow_documents')
+        .select(
+            'id, document_no, document_type, status, total_amount, currency, issue_date, created_at, partner_id, tax_amount, attachment_urls'
+        )
+        .eq('assigned_job_no', jobNo)
+        .eq('company_id', companyId)
+        .order('created_at', { ascending: true });
+    return { data: data || [], error };
+};

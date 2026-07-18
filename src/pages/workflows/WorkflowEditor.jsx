@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
@@ -40,8 +40,10 @@ import {
     convertProformaToTaxInvoice,
     getGDriveFolderIdForStage,
     duplicateWorkflowDocument,
-    deleteWorkflowDocument
+    deleteWorkflowDocument,
+    fetchSuiteDocuments
 } from '../../lib/workflowV2Service';
+
 import { getPartners, getContacts, getDocumentSettings, getJobMajorCategories, saveJobMajorCategory } from '../../lib/store';
 import { getCatalogItems } from '../../lib/catalogService';
 import { supabase } from '../../lib/supabase';
@@ -194,7 +196,11 @@ export default function WorkflowEditor() {
     const [poFile, setPoFile] = useState(null);
     const [lineItems, setLineItems] = useState([]);
     const [workflowDocs, setWorkflowDocs] = useState([]); // Documents in the same job suite
+    const [suiteDocs, setSuiteDocs] = useState([]);          // For the Job Document Suite panel
+    const [loadingSuiteDocs, setLoadingSuiteDocs] = useState(false);
+    const [showCreateDocMenu, setShowCreateDocMenu] = useState(false);
     const [expenses, setExpenses] = useState([]);
+
     const [loadingExpenses, setLoadingExpenses] = useState(false);
     const [expenseModal, setExpenseModal] = useState({ isOpen: false, data: null });
     const [galleryFiles, setGalleryFiles] = useState([]);
@@ -1112,6 +1118,15 @@ export default function WorkflowEditor() {
         }
     }, [qrModal.isOpen, qrModal.folderName, galleryFolderId, qrModal.folderId]);
 
+    // Auto-fetch suite docs for the bottom "Job Document Suite" panel
+    useEffect(() => {
+        const jobNo = formData.assigned_job_no || (formData.document_type === 'Job' ? formData.document_no : '');
+        if (jobNo && profile?.company_id && !isNew) {
+            fetchSuiteDocsPanel(jobNo);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [formData.assigned_job_no, formData.document_no, formData.document_type, isNew]);
+
     // Auto-provision Google Drive folder if missing and connected
     useEffect(() => {
         const autoProvisionFolder = async () => {
@@ -1754,6 +1769,69 @@ export default function WorkflowEditor() {
 
         setLoadingPayments(false);
     };
+
+    // ─── Job Document Suite Panel helpers ──────────────────────────────────────
+    const fetchSuiteDocsPanel = async (jobNoOverride = null) => {
+        const jobNo = jobNoOverride
+            || formData.assigned_job_no
+            || (formData.document_type === 'Job' ? formData.document_no : '');
+        if (!jobNo || !profile?.company_id) return;
+        setLoadingSuiteDocs(true);
+        try {
+            const { data } = await fetchSuiteDocuments(jobNo, profile.company_id);
+            if (data) setSuiteDocs(data);
+        } catch (err) {
+            console.error('Error fetching suite docs panel:', err);
+        } finally {
+            setLoadingSuiteDocs(false);
+        }
+    };
+
+    const handleDeleteSuiteDoc = async (doc) => {
+        if (!window.confirm(
+            `Delete "${doc.document_type} — ${doc.document_no}"?\n\nThis action cannot be undone.`
+        )) return;
+        try {
+            const { error } = await deleteWorkflowDocument(doc.id);
+            if (error) throw error;
+            toast.success(`${doc.document_type} ${doc.document_no} deleted.`);
+            fetchSuiteDocsPanel();
+        } catch (err) {
+            console.error('Delete suite doc failed:', err);
+            toast.error('Delete failed: ' + err.message);
+        }
+    };
+
+    // Returns "Invoice #2", "DO #1" etc. for a given doc within suiteDocs
+    const getSuiteDocSequenceLabel = (doc, allDocs) => {
+        const sameType = allDocs.filter(d => d.document_type === doc.document_type);
+        const idx = sameType.findIndex(d => d.id === doc.id);
+        return `#${idx + 1}`;
+    };
+
+    const SUITE_DOC_TYPES = [
+        'Delivery Order',
+        'Tax Invoice',
+        'Proforma Invoice',
+        'Purchase Order',
+        'Packing List',
+        'Service Report',
+        'Order Acknowledgment',
+        'Quotation',
+    ];
+
+    const SUITE_DOC_COLORS = {
+        'Job':                  { bg: '#dcfce7', color: '#15803d', border: '#bbf7d0' },
+        'Quotation':            { bg: '#eef2ff', color: '#4f46e5', border: '#c7d2fe' },
+        'Purchase Order':       { bg: '#f3e8ff', color: '#7c3aed', border: '#ddd6fe' },
+        'Delivery Order':       { bg: '#fff7ed', color: '#c2410c', border: '#fed7aa' },
+        'Tax Invoice':          { bg: '#fef2f2', color: '#b91c1c', border: '#fecaca' },
+        'Proforma Invoice':     { bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
+        'Packing List':         { bg: '#f0fdfa', color: '#0f766e', border: '#99f6e4' },
+        'Service Report':       { bg: '#fdf2f8', color: '#be185d', border: '#fbcfe8' },
+        'Order Acknowledgment': { bg: '#f0f9ff', color: '#0369a1', border: '#bae6fd' },
+    };
+    // ──────────────────────────────────────────────────────────────────────────
 
     const handleSavePayment = async (type, paymentData) => {
         const saver = type === 'customer' ? saveCustomerPayment : saveSupplierPayment;
@@ -3877,6 +3955,7 @@ export default function WorkflowEditor() {
                                 <ExternalLink size={16} /> Open Drive Root
                             </button>
                         </div>
+
                     </div>
                 </div>
 
@@ -5183,7 +5262,110 @@ export default function WorkflowEditor() {
                             </div>
                         </div>
                     </div>
-                )}
+
+                    {/* ═══════════════ JOB DOCUMENT SUITE PANEL ═══════════════ */}
+                    {(() => {
+                        const jobNo = formData.assigned_job_no || (formData.document_type === 'Job' ? formData.document_no : '');
+                        if (!jobNo) return null;
+                        return (
+                            <div className="glass-panel" style={{ marginTop: '28px', borderRadius: '20px', border: '1.5px solid #e2e8f0', background: '#fff', overflow: 'hidden', boxShadow: '0 4px 24px rgba(0,0,0,0.04)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 24px', background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)', borderBottom: '1px solid #e2e8f0' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                        <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <FileCheck size={18} color="#fff" />
+                                        </div>
+                                        <div>
+                                            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#1e293b' }}>
+                                                Job Document Suite
+                                                {!loadingSuiteDocs && suiteDocs.length > 0 && (
+                                                    <span style={{ marginLeft: '10px', background: '#6366f1', color: '#fff', borderRadius: '20px', padding: '2px 10px', fontSize: '0.72rem', fontWeight: 700, verticalAlign: 'middle' }}>
+                                                        {suiteDocs.length} doc{suiteDocs.length !== 1 ? 's' : ''}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '2px' }}>
+                                                All documents linked to job <strong style={{ color: '#4f46e5' }}>{jobNo}</strong>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div style={{ position: 'relative' }}>
+                                        <button onClick={() => setShowCreateDocMenu(prev => !prev)} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: '#fff', border: 'none', borderRadius: '10px', padding: '8px 16px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 8px rgba(99,102,241,0.3)' }}>
+                                            <Plus size={16} /> Create Document <ChevronDown size={14} />
+                                        </button>
+                                        {showCreateDocMenu && (
+                                            <>
+                                                <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setShowCreateDocMenu(false)} />
+                                                <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, background: '#fff', border: '1.5px solid #e2e8f0', borderRadius: '14px', boxShadow: '0 12px 32px rgba(0,0,0,0.12)', zIndex: 100, minWidth: '220px', padding: '6px' }}>
+                                                    {SUITE_DOC_TYPES.map(docType => {
+                                                        const clr = SUITE_DOC_COLORS[docType] || { bg: '#f8fafc', color: '#475569', border: '#e2e8f0' };
+                                                        const urlSlug = docType.toLowerCase().replace(/\s+/g, '-');
+                                                        return (
+                                                            <button key={docType} onClick={() => { setShowCreateDocMenu(false); navigate(`/workflows/editor/${urlSlug}/new?assigned_job_no=${encodeURIComponent(jobNo)}&source_id=${id || ''}`); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '9px 12px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '0.87rem', fontWeight: 600, color: '#334155' }} onMouseOver={e => e.currentTarget.style.background = clr.bg} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                                                                <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: clr.color, flexShrink: 0 }} />
+                                                                {docType}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                                {loadingSuiteDocs ? (
+                                    <div style={{ padding: '32px', textAlign: 'center', color: '#94a3b8', fontSize: '0.88rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}><Loader2 size={18} className="animate-spin" /> Loading suite documents…</div>
+                                ) : suiteDocs.length === 0 ? (
+                                    <div style={{ padding: '40px', textAlign: 'center' }}>
+                                        <FileText size={36} color="#cbd5e1" style={{ margin: '0 auto 12px' }} />
+                                        <div style={{ color: '#64748b', fontWeight: 600, fontSize: '0.9rem' }}>No documents created yet for this job</div>
+                                        <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginTop: '4px' }}>Use "Create Document" above to add Delivery Orders, Invoices, and more.</div>
+                                    </div>
+                                ) : (
+                                    <div style={{ overflowX: 'auto' }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.87rem' }}>
+                                            <thead>
+                                                <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                                                    <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 700, color: '#475569', fontSize: '0.73rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Type</th>
+                                                    <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 700, color: '#475569', fontSize: '0.73rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>#</th>
+                                                    <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 700, color: '#475569', fontSize: '0.73rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Document No.</th>
+                                                    <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 700, color: '#475569', fontSize: '0.73rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Date</th>
+                                                    <th style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 700, color: '#475569', fontSize: '0.73rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Amount</th>
+                                                    <th style={{ padding: '10px 16px', textAlign: 'center', fontWeight: 700, color: '#475569', fontSize: '0.73rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Status</th>
+                                                    <th style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 700, color: '#475569', fontSize: '0.73rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {suiteDocs.map((doc) => {
+                                                    const clr = SUITE_DOC_COLORS[doc.document_type] || { bg: '#f8fafc', color: '#475569', border: '#e2e8f0' };
+                                                    const seqLabel = getSuiteDocSequenceLabel(doc, suiteDocs);
+                                                    const isCurrent = doc.id === id;
+                                                    const urlSlug = doc.document_type.toLowerCase().replace(/\s+/g, '-');
+                                                    return (
+                                                        <tr key={doc.id} style={{ borderBottom: '1px solid #f1f5f9', background: isCurrent ? '#f0f9ff' : 'transparent' }} onMouseOver={e => { if (!isCurrent) e.currentTarget.style.background = '#f8fafc'; }} onMouseOut={e => { if (!isCurrent) e.currentTarget.style.background = 'transparent'; }}>
+                                                            <td style={{ padding: '12px 16px' }}><span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700, background: clr.bg, color: clr.color, border: `1px solid ${clr.border}`, whiteSpace: 'nowrap' }}><span style={{ width: '7px', height: '7px', borderRadius: '50%', background: clr.color, flexShrink: 0 }} />{doc.document_type}</span></td>
+                                                            <td style={{ padding: '12px 16px', fontWeight: 800, color: clr.color, fontSize: '0.9rem' }}>{seqLabel}</td>
+                                                            <td style={{ padding: '12px 16px' }}><span style={{ fontWeight: 700, color: '#1e293b' }}>{doc.document_no}</span>{isCurrent && <span style={{ marginLeft: '8px', background: '#dbeafe', color: '#1d4ed8', borderRadius: '6px', padding: '1px 7px', fontSize: '0.7rem', fontWeight: 700 }}>Current</span>}</td>
+                                                            <td style={{ padding: '12px 16px', color: '#64748b' }}>{doc.issue_date ? new Date(doc.issue_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
+                                                            <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, color: '#1e293b' }}>{doc.total_amount != null && doc.total_amount > 0 ? `${doc.currency || 'SGD'} ${Number(doc.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : <span style={{ color: '#94a3b8' }}>—</span>}</td>
+                                                            <td style={{ padding: '12px 16px', textAlign: 'center' }}><span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '0.72rem', fontWeight: 700, background: doc.status === 'Draft' ? '#f1f5f9' : doc.status === 'Paid' ? '#dcfce7' : doc.status === 'Cancelled' ? '#fee2e2' : '#eff6ff', color: doc.status === 'Draft' ? '#64748b' : doc.status === 'Paid' ? '#15803d' : doc.status === 'Cancelled' ? '#b91c1c' : '#1d4ed8' }}>{doc.status || 'Draft'}</span></td>
+                                                            <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                                                                <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                                                    {!isCurrent ? (<button onClick={() => navigate(`/workflows/editor/${urlSlug}/${doc.id}`)} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }} onMouseOver={e => { e.currentTarget.style.background = clr.bg; e.currentTarget.style.color = clr.color; e.currentTarget.style.borderColor = clr.border; }} onMouseOut={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.color = '#475569'; e.currentTarget.style.borderColor = '#e2e8f0'; }}><Eye size={13} /> Open</button>) : (<span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', padding: '5px 8px' }}>Viewing</span>)}
+                                                                    <button onClick={() => handleDeleteSuiteDoc(doc)} title={`Delete ${doc.document_type} ${doc.document_no}`} style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 8px', borderRadius: '7px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', fontSize: '0.78rem', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.background = '#fee2e2'} onMouseOut={e => e.currentTarget.style.background = '#fef2f2'}><Trash2 size={13} /></button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })()}
+                    {/* ══════════════════════════════════════════════════════════ */}
+                    </div>
+                )
 
                 {activeTab === 'other' && (
                     <div className="glass-panel other-info animate-fade-in">
