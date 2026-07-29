@@ -4184,9 +4184,25 @@ export default function WorkflowEditor() {
                         <div className="col-right">
                             {(formData.is_job || ['Job', 'Order Acknowledgment', 'Delivery Order', 'Packing List', 'Proforma Invoice', 'Tax Invoice', 'Certificate', 'Service Report'].includes(formData.document_type) || formData.assigned_job_no) && (
                                 <div className="form-item" style={{ background: '#f0fdf4', padding: '12px', borderRadius: '8px', border: '1px solid #bbf7d0', marginBottom: '16px' }}>
-                                    <label style={{ color: '#166534', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
-                                        <Package size={14} /> Assigned Job Number
-                                    </label>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <label style={{ color: '#166534', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
+                                            <Package size={14} /> Assigned Job Number
+                                        </label>
+                                        {formData.assigned_job_no && formData.document_type === 'Quotation' && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    if (window.confirm(`Unlink this quotation from Job ${formData.assigned_job_no}? It will become a standalone quotation.`)) {
+                                                        setFormData(prev => ({ ...prev, assigned_job_no: '' }));
+                                                    }
+                                                }}
+                                                style={{ fontSize: '10px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontWeight: 700 }}
+                                                title="Unlink from this Job Suite"
+                                            >
+                                                Clear / Unlink Job
+                                            </button>
+                                        )}
+                                    </div>
                                     <input 
                                         type="text" 
                                         className="form-input" 
