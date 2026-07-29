@@ -394,21 +394,85 @@ export const getWorkflowDocumentsByEnquiry = async (enquiryId) => {
  * Fetch Single Document with All Line Items
  */
 export const getWorkflowDocumentById = async (id) => {
-    const { data: document, error: docError } = await supabase
+    if (!id) return { data: null, error: new Error('Document ID is required') };
+
+    // 1. Try fetching by primary key ID
+    let { data: document, error: docError } = await supabase
         .from('workflow_documents')
         .select(`*, partners(*), vessels(*), contacts!contact_id(*), work_locations(*)`)
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
-    if (docError) {
-        console.error("Error fetching document:", docError);
-        return { error: docError };
+    // 2. If not found by primary key ID, search by document_no or assigned_job_no
+    if (!document) {
+        const { data: docByNo } = await supabase
+            .from('workflow_documents')
+            .select(`*, partners(*), vessels(*), contacts!contact_id(*), work_locations(*)`)
+            .or(`document_no.eq.${id},assigned_job_no.eq.${id}`)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (docByNo) {
+            document = docByNo;
+            docError = null;
+        }
+    }
+
+    // 3. If still not found, check if it's a V1 Customer Enquiry ID
+    if (!document) {
+        const { data: enq } = await supabase
+            .from('customer_enquiries')
+            .select(`*, partners:customer_id(*), vessels(*), contacts:contact_id(*), work_locations(*)`)
+            .eq('id', id)
+            .maybeSingle();
+
+        if (enq) {
+            // Check if a V2 document converted from this enquiry exists
+            const { data: v2FromEnq } = await supabase
+                .from('workflow_documents')
+                .select(`*, partners(*), vessels(*), contacts!contact_id(*), work_locations(*)`)
+                .eq('enquiry_id', id)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (v2FromEnq) {
+                document = v2FromEnq;
+                docError = null;
+            } else {
+                document = {
+                    id: enq.id,
+                    company_id: enq.company_id,
+                    document_type: 'Quotation',
+                    document_no: enq.enquiry_no || 'Draft',
+                    partner_id: enq.customer_id,
+                    contact_id: enq.contact_id,
+                    vessel_id: enq.vessel_id,
+                    work_location_id: enq.work_location_id,
+                    subject: enq.subject || `Ref: ${enq.enquiry_no}`,
+                    customer_ref: enq.customer_ref,
+                    status: enq.status || 'Draft',
+                    currency: 'SGD',
+                    enquiry_id: enq.id,
+                    partners: enq.partners,
+                    vessels: enq.vessels,
+                    contacts: enq.contacts,
+                    work_locations: enq.work_locations
+                };
+                docError = null;
+            }
+        }
+    }
+
+    if (!document) {
+        return { data: null, error: docError || new Error(`Document with ID/No "${id}" not found or has been removed.`) };
     }
 
     const { data: items, error: itemsError } = await supabase
         .from('workflow_line_items')
         .select('*')
-        .eq('document_id', id)
+        .eq('document_id', document.id)
         .order('sort_order', { ascending: true });
 
     // Deduplicate items to fix legacy database repeats
