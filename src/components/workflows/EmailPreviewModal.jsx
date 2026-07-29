@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { X, Send, Mail, Search, Paperclip, Trash2, Plus, Eye, Edit2, Upload, AlertCircle, CheckCircle2, FolderOpen, RefreshCw, FileText, ImageIcon, Loader2, FileCheck, Smartphone, Info, UploadCloud } from 'lucide-react';
+import { X, Send, Mail, Search, Paperclip, Trash2, Plus, Eye, Edit2, Upload, AlertCircle, CheckCircle2, FolderOpen, RefreshCw, FileText, ImageIcon, Loader2, FileCheck, Smartphone, Info, UploadCloud, Sparkles } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { getStoredToken } from '../../lib/googleAuthService';
+import { getStoredToken, connectGoogleAPI } from '../../lib/googleAuthService';
 import { listFolderContent, getOrCreateFolder, uploadFileToDrive } from '../../lib/driveService';
 import toast from 'react-hot-toast';
 import SmartAttachmentDropzone from '../common/SmartAttachmentDropzone';
+import SmartUploadPanel from '../upload/SmartUploadPanel';
 
 export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
     if (!isOpen) return null;
@@ -95,18 +96,23 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
         }
     };
 
+    // Smart Upload Modal State
+    const [showSmartUpload, setShowSmartUpload] = useState(false);
+
     // Save copy of current attachments/document directly to Google Drive & refresh
     const [savingToDrive, setSavingToDrive] = useState(false);
 
     const handleSaveToDrive = async () => {
-        if (!data.enquiryFolderId) {
-            toast.error('No Google Drive folder linked to this project.');
+        let token = getStoredToken() || localStorage.getItem('google_access_token');
+        if (!token) {
+            if (window.confirm('Google Drive is not connected. Connect Google Drive now to save files to Drive?')) {
+                connectGoogleAPI();
+            }
             return;
         }
 
-        const token = getStoredToken();
-        if (!token) {
-            toast.error('Google Drive is not connected. Connect Google Drive first.');
+        if (!data.enquiryFolderId) {
+            toast.error('No Google Drive folder linked to this project. Save/provision folder first.');
             return;
         }
 
@@ -572,29 +578,25 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                                         Mobile Upload (QR)
                                     </button>
                                 )}
-                                {driveConnected && (
-                                    <button
-                                        type="button"
-                                        onClick={handleSaveToDrive}
-                                        disabled={savingToDrive || loadingDriveFiles}
-                                        style={{ display: 'flex', alignItems: 'center', gap: '5px', background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', border: '1px solid #93c5fd', borderRadius: '6px', padding: '6px 12px', fontSize: '11px', fontWeight: 700, color: '#1d4ed8', cursor: 'pointer' }}
-                                        title="Save a copy of documents into Google Drive & refresh list"
-                                    >
-                                        <UploadCloud size={13} className={savingToDrive ? 'animate-spin' : ''} />
-                                        {savingToDrive ? 'Saving Copy...' : '☁️ Save Copy to Drive'}
-                                    </button>
-                                )}
-                                {driveConnected && (
-                                    <button
-                                        type="button"
-                                        onClick={fetchDriveFiles}
-                                        disabled={loadingDriveFiles}
-                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
-                                    >
-                                        <RefreshCw size={12} className={loadingDriveFiles ? 'animate-spin' : ''} style={{ animation: loadingDriveFiles ? 'spin 1s linear infinite' : 'none' }} />
-                                        Refresh Drive
-                                    </button>
-                                )}
+                                <button
+                                    type="button"
+                                    onClick={handleSaveToDrive}
+                                    disabled={savingToDrive || loadingDriveFiles}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '5px', background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', border: '1px solid #93c5fd', borderRadius: '6px', padding: '6px 12px', fontSize: '11px', fontWeight: 700, color: '#1d4ed8', cursor: 'pointer' }}
+                                    title="Save a copy of documents into Google Drive & refresh list"
+                                >
+                                    <UploadCloud size={13} className={savingToDrive ? 'animate-spin' : ''} />
+                                    {savingToDrive ? 'Saving Copy...' : '☁️ Save Copy to Drive'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={fetchDriveFiles}
+                                    disabled={loadingDriveFiles}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
+                                >
+                                    <RefreshCw size={12} className={loadingDriveFiles ? 'animate-spin' : ''} style={{ animation: loadingDriveFiles ? 'spin 1s linear infinite' : 'none' }} />
+                                    Refresh Drive
+                                </button>
                             </div>
                         </div>
 
@@ -741,8 +743,9 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                                 }}
                                 isDriveConnected={driveConnected}
                                 onOpenAuth={() => {
-                                    toast.error("Please connect Google Drive first in settings.");
+                                    connectGoogleAPI();
                                 }}
+                                onOpenSmartUpload={() => setShowSmartUpload(true)}
                             />
                         </div>
 
@@ -874,6 +877,27 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                     </div>
                 </div>
             )}
+
+            {/* Smart Document Upload Full Panel */}
+            <SmartUploadPanel
+                isOpen={showSmartUpload}
+                onClose={() => setShowSmartUpload(false)}
+                onSelect={(selected) => {
+                    if (Array.isArray(selected)) {
+                        setAttachments(prev => [...prev, ...selected]);
+                    } else if (selected) {
+                        setAttachments(prev => [...prev, selected]);
+                    }
+                    setShowSmartUpload(false);
+                    toast.success("Attached document via Smart Upload Hub!");
+                }}
+                documentType="quotation"
+                activeFolderId={
+                    activeAttachmentTab === 'supplierEnquiry' ? supplierUploadsFolderId :
+                    activeAttachmentTab === 'photosMedia' ? photosFolderId : quotationsFolderId || data.enquiryFolderId
+                }
+                activeFolderName={data.jobNo || data.enquiryNo || 'Project Workspace'}
+            />
         </div>
     );
 }

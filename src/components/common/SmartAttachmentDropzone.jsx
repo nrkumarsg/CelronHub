@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { UploadCloud, QrCode, Plus, Smartphone, X, Info } from 'lucide-react';
+import { UploadCloud, QrCode, Plus, Smartphone, X, Info, Sparkles } from 'lucide-react';
 import { listFolderContent } from '../../lib/driveService';
 import { getStoredToken } from '../../lib/googleAuthService';
 import toast from 'react-hot-toast';
@@ -9,7 +9,8 @@ export default function SmartAttachmentDropzone({
     activeFolderName = 'Email Workspace', 
     onFileAdded,
     isDriveConnected = false,
-    onOpenAuth
+    onOpenAuth,
+    onOpenSmartUpload
 }) {
     const [isDragging, setIsDragging] = useState(false);
     const [qrModalOpen, setQrModalOpen] = useState(false);
@@ -155,7 +156,31 @@ export default function SmartAttachmentDropzone({
                     Upload a file from your computer or scan the QR code to capture directly with your mobile camera.
                 </p>
 
-                <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                    {onOpenSmartUpload && (
+                        <button 
+                            type="button" 
+                            onClick={onOpenSmartUpload}
+                            style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '6px', 
+                                cursor: 'pointer', 
+                                background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)', 
+                                border: 'none',
+                                color: '#fff', 
+                                padding: '6px 14px', 
+                                borderRadius: '6px', 
+                                fontSize: '11px', 
+                                fontWeight: 700, 
+                                transition: 'all 0.2s',
+                                boxShadow: '0 2px 6px rgba(99, 102, 241, 0.25)'
+                            }}
+                        >
+                            <Sparkles size={13} /> ✨ Open Smart Upload Hub
+                        </button>
+                    )}
+
                     <label 
                         htmlFor={fileInputId} 
                         style={{ 
