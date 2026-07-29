@@ -350,10 +350,28 @@ export const provisionFullProjectStructure = async (accessToken, celronRootId, y
  *   Subfolders: Enquiry_Detail | Quote2Cust | Order2Supplier | Photos & Docs
  */
 export const provisionEnquiryFolderStructure = async (accessToken, celronRootId, year, enqFolderName, forceCreate = false) => {
-    // Hardcoded Enquiries Folder ID
-    const enquiriesRootId = '1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij';
+    const rootId = celronRootId || '1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w';
+    const activeYear = year || new Date().getFullYear();
+
+    // 1. Ensure Year folder (e.g. 2026) exists under Celron Root
+    let yearFolderId;
+    try {
+        yearFolderId = await getOrCreateFolder(accessToken, activeYear.toString(), rootId);
+    } catch (e) {
+        console.warn('Failed creating year folder under root, using rootId:', e);
+        yearFolderId = rootId;
+    }
+
+    // 2. Ensure 'Enquiries' folder exists under Year folder
+    let enquiriesRootId;
+    try {
+        enquiriesRootId = await getOrCreateFolder(accessToken, 'Enquiries', yearFolderId);
+    } catch (e) {
+        console.warn('Failed creating Enquiries folder, using yearFolderId:', e);
+        enquiriesRootId = yearFolderId;
+    }
     
-    // Create/Find specific Enquiry folder (search by prefix/exact name inside enquiriesRootId)
+    // 3. Create/Find specific Enquiry folder (search by prefix/exact name inside enquiriesRootId)
     const enqNoPrefix = enqFolderName.split(' ')[0]; 
     let enqFolderId;
 
@@ -378,12 +396,13 @@ export const provisionEnquiryFolderStructure = async (accessToken, celronRootId,
         enqFolderId = await getOrCreateFolder(accessToken, enqFolderName, enquiriesRootId);
     }
 
-    // Provision the 3 default subfolders inside the Enquiry folder
+    // Provision the 3 default subfolders inside the specific Enquiry folder
     const supplierEnquiryUploadsId = await getOrCreateFolder(accessToken, 'Supplier Enquiry uploads', enqFolderId);
     const photosMediaId = await getOrCreateFolder(accessToken, 'Photos & Media', enqFolderId);
     const quotationsReceivedId = await getOrCreateFolder(accessToken, 'Quotations received', enqFolderId);
 
     return {
+        enquiriesRootId,
         enqFolderId,
         supplierEnquiryUploadsId,
         photosMediaId,

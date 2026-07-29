@@ -71,7 +71,17 @@ const getCompanyPrefixAndJobPrefix = async (companyId) => {
     return { docPrefix, jobPrefix };
 };
 
-export const generateDocNumber = async (companyId, type, isRevision = false, originalNo = null) => {
+export const getLetterSuffix = (index) => {
+    let suffix = '';
+    let i = index;
+    while (i >= 0) {
+        suffix = String.fromCharCode(65 + (i % 26)) + suffix;
+        i = Math.floor(i / 26) - 1;
+    }
+    return suffix;
+};
+
+export const generateDocNumber = async (companyId, type, isRevision = false, originalNo = null, assignedJobNo = null) => {
     if (isRevision && originalNo) {
         // Pattern: [ORIGINAL]-R[REV_NO]
         const { data: latestRev } = await supabase
@@ -111,6 +121,53 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
         case 'Statement of Account': prefix = 'SOA'; break;
         case 'Job': prefix = 'CEL'; break; // v3 Requirement
         case 'Order Acknowledgment': prefix = 'ORA'; break;
+    }
+
+    // Handle Job-assigned documents with dynamic letter suffixing (A, B, C ... Z, AA...)
+    if (assignedJobNo && type !== 'Job') {
+        const jobParts = assignedJobNo.split('-');
+        const jobNumPart = jobParts.length > 1 ? jobParts.slice(1).join('-') : assignedJobNo;
+        const baseDocNo = `${prefix}-${jobNumPart}`;
+
+        let existingCount = 0;
+        try {
+            const { data: existingDocs } = await supabase
+                .from('workflow_documents')
+                .select('id, document_no')
+                .eq('company_id', companyId)
+                .eq('document_type', type)
+                .eq('assigned_job_no', assignedJobNo)
+                .not('document_no', 'ilike', '%-R%');
+
+            if (existingDocs) {
+                existingCount = existingDocs.length;
+            }
+        } catch (e) {
+            console.warn('Error fetching existing job suite docs for suffix:', e);
+        }
+
+        let letterIdx = existingCount;
+        let candidateNo = `${baseDocNo}${getLetterSuffix(letterIdx)}`;
+        let isUnique = false;
+        let attempts = 0;
+
+        while (!isUnique && attempts < 100) {
+            const { data: check } = await supabase
+                .from('workflow_documents')
+                .select('id')
+                .eq('document_no', candidateNo)
+                .maybeSingle();
+
+            if (!check) {
+                isUnique = true;
+            } else {
+                letterIdx++;
+                candidateNo = `${baseDocNo}${getLetterSuffix(letterIdx)}`;
+                attempts++;
+            }
+        }
+
+        return candidateNo;
     }
 
     let finalPrefix = prefix;
@@ -619,13 +676,35 @@ export const saveWorkflowDocument = async (docData, lineItems) => {
             throw new Error("Document number is required for saving.");
         }
 
-        const { data, error } = await supabase
+        let insertRes = await supabase
             .from('workflow_documents')
             .insert([sanitizedHeader])
             .select()
             .single();
-        if (error) throw error;
-        savedDoc = data;
+
+        // If duplicate key error occurs, re-generate number and retry once
+        if (insertRes.error && (insertRes.error.code === '23505' || insertRes.error.message?.includes('workflow_documents_document_no_key'))) {
+            console.warn(`Duplicate key violation on ${sanitizedHeader.document_no}. Re-generating document number...`);
+            const retryNo = await generateDocNumber(
+                sanitizedHeader.company_id, 
+                sanitizedHeader.document_type, 
+                false, 
+                null, 
+                sanitizedHeader.assigned_job_no
+            );
+            sanitizedHeader.document_no = retryNo;
+            if (sanitizedHeader.document_type === 'Job') {
+                sanitizedHeader.assigned_job_no = retryNo;
+            }
+            insertRes = await supabase
+                .from('workflow_documents')
+                .insert([sanitizedHeader])
+                .select()
+                .single();
+        }
+
+        if (insertRes.error) throw insertRes.error;
+        savedDoc = insertRes.data;
     } else {
         const { data, error } = await supabase
             .from('workflow_documents')
@@ -1012,16 +1091,28 @@ export const duplicateWorkflowDocument = async (docId, overrides = {}) => {
 
     const { items, id, created_at, updated_at, original_document_id, revision_no, document_no, ...cleanHeader } = original;
 
-    // Generate new Document Number
+    // Determine target assigned_job_no (if duplicated within a Job suite)
+    // For non-Job documents without explicit overrides, reset assigned_job_no to null
+    // so it generates a fresh standard running number (e.g. QTN-YYMM-XXXX) instead of inheriting the old job number and letter suffix (e.g. QTN-2604-6057B)
     const targetType = overrides.document_type || original.document_type;
-    const newNo = await generateDocNumber(original.company_id, targetType);
+    let targetAssignedJobNo = null;
+    if (overrides.assigned_job_no !== undefined) {
+        targetAssignedJobNo = overrides.assigned_job_no;
+    } else if (targetType === 'Job') {
+        targetAssignedJobNo = null; // Will be assigned to new Job number during save
+    } else {
+        targetAssignedJobNo = null;
+    }
+
+    // Generate new Document Number
+    const newNo = await generateDocNumber(original.company_id, targetType, false, null, targetAssignedJobNo);
 
     const newDocData = {
         ...cleanHeader,
         document_no: newNo,
         status: 'Draft', // Reset status for the duplicated document
         is_job: false,
-        assigned_job_no: null,
+        assigned_job_no: targetAssignedJobNo || null,
         customer_po_no: null,
         customer_po_date: null,
         customer_po_by_id: null,
@@ -1382,3 +1473,173 @@ export const fetchSuiteDocuments = async (jobNo, companyId) => {
         .order('created_at', { ascending: true });
     return { data: data || [], error };
 };
+
+/**
+ * Fetch Quotations for Workflow Wizard Select Modal (Quote2Customers)
+ */
+export const fetchQuotationsForWizard = async (companyId) => {
+    if (!companyId) return [];
+    try {
+        const { data, error } = await supabase
+            .from('workflow_documents')
+            .select(`
+                *,
+                partners!partner_id(id, name),
+                vessels!vessel_id(id, vessel_name),
+                work_locations!work_location_id(id, location_name),
+                contacts!contact_id(id, name, email)
+            `)
+            .eq('company_id', companyId)
+            .in('document_type', ['Quotation', 'Quote', 'Customer Quotation'])
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        return data || [];
+    } catch (err) {
+        console.error('Error fetching quotations for wizard:', err);
+        return [];
+    }
+};
+
+/**
+ * Fetch full quotation details including line items for importing into wizard
+ */
+export const getFullQuotationDetails = async (quotationId) => {
+    if (!quotationId) return null;
+    try {
+        const { data: doc, error: docErr } = await supabase
+            .from('workflow_documents')
+            .select('*')
+            .eq('id', quotationId)
+            .single();
+
+        if (docErr || !doc) return null;
+
+        const { data: items } = await supabase
+            .from('workflow_line_items')
+            .select('*')
+            .eq('document_id', quotationId)
+            .order('created_at', { ascending: true });
+
+        return {
+            ...doc,
+            items: items || []
+        };
+    } catch (err) {
+        console.error('Error fetching full quotation details:', err);
+        return null;
+    }
+};
+
+/**
+ * Fetch Supplier Purchase Orders for Workflow Wizard Select Modal (PO 2 Suppliers)
+ */
+export const fetchSupplierPosForWizard = async (companyId) => {
+    if (!companyId) return [];
+    try {
+        const { data, error } = await supabase
+            .from('workflow_documents')
+            .select(`
+                *,
+                partners!partner_id(id, name),
+                vessels!vessel_id(id, vessel_name),
+                contacts!contact_id(id, name, email)
+            `)
+            .eq('company_id', companyId)
+            .in('document_type', ['Purchase Order', 'Supplier PO', 'PO', 'P.O. 2 Suppliers'])
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        return data || [];
+    } catch (err) {
+        console.error('Error fetching supplier POs for wizard:', err);
+        return [];
+    }
+};
+
+/**
+ * Fetch full Supplier PO details including items
+ */
+export const getFullSupplierPoDetails = async (poId) => {
+    if (!poId) return null;
+    try {
+        const { data: doc, error: docErr } = await supabase
+            .from('workflow_documents')
+            .select('*')
+            .eq('id', poId)
+            .single();
+
+        if (docErr || !doc) return null;
+
+        const { data: items } = await supabase
+            .from('workflow_line_items')
+            .select('*')
+            .eq('document_id', poId)
+            .order('created_at', { ascending: true });
+
+        return {
+            ...doc,
+            items: items || []
+        };
+    } catch (err) {
+        console.error('Error fetching supplier PO details:', err);
+        return null;
+    }
+};
+
+/**
+ * Fetch all active jobs and enquiries for Whiteboard
+ */
+export const fetchWhiteboardJobs = async (companyId) => {
+    try {
+        let query = supabase
+            .from('workflow_documents')
+            .select(`
+                *,
+                partners!partner_id(id, name, email),
+                vessels!vessel_id(id, vessel_name),
+                contacts!contact_id(id, name, email)
+            `)
+            .order('created_at', { ascending: false });
+
+        if (companyId) {
+            query = query.eq('company_id', companyId);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+        return data || [];
+    } catch (err) {
+        console.error('Error fetching whiteboard jobs:', err);
+        return [];
+    }
+};
+
+/**
+ * Update Pipeline Stage for Whiteboard Drag-and-Drop or Manual Status Override
+ */
+export const updateJobPipelineStage = async (docId, newStage, isManual = true, notes = '') => {
+    if (!docId || !newStage) return { success: false, error: 'Missing parameters' };
+    try {
+        const updateData = {
+            doc_status: newStage,
+            updated_at: new Date().toISOString()
+        };
+
+        const { data, error } = await supabase
+            .from('workflow_documents')
+            .update(updateData)
+            .eq('id', docId)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return { success: true, data };
+    } catch (err) {
+        console.error('Error updating job pipeline stage:', err);
+        return { success: false, error: err.message };
+    }
+};
+
+
+

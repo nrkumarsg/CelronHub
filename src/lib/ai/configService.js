@@ -26,55 +26,55 @@ const DEFAULT_PROVIDERS = [
         retryCount: 3,
         temperature: 0.1,
         maxTokens: 2048,
-        notes: 'Fallback text provider (deepseek-chat).'
+        notes: 'Fallback text provider (deepseek-chat) — cheap, already funded.'
+    },
+    {
+        name: 'Claude',
+        enabled: false,
+        priority: 3,
+        baseUrl: 'https://api.anthropic.com',
+        modelName: 'claude-sonnet-5',
+        timeout: 15000,
+        retryCount: 3,
+        temperature: 0.1,
+        maxTokens: 2048,
+        notes: 'Optional — disabled until Anthropic API credits are added.'
     },
     {
         name: 'Groq',
-        enabled: true,
-        priority: 3,
+        enabled: false,
+        priority: 4,
         baseUrl: 'https://api.groq.com/openai/v1',
         modelName: 'llama-3.3-70b-versatile',
         timeout: 8000,
         retryCount: 2,
         temperature: 0.1,
         maxTokens: 2048,
-        notes: 'High-speed text model fallback.'
+        notes: 'Optional high-speed text model fallback.'
     },
     {
         name: 'Ollama',
         enabled: false,
-        priority: 4,
+        priority: 5,
         baseUrl: 'http://localhost:11434',
         modelName: 'llama3',
         timeout: 30000,
         retryCount: 1,
         temperature: 0.1,
         maxTokens: 2048,
-        notes: 'Local host configuration.'
+        notes: 'Optional local host configuration.'
     },
     {
         name: 'OpenAI',
         enabled: false,
-        priority: 5,
+        priority: 6,
         baseUrl: 'https://api.openai.com/v1',
         modelName: 'gpt-4o-mini',
         timeout: 15000,
         retryCount: 3,
         temperature: 0.1,
         maxTokens: 2048,
-        notes: 'Disabled — use Gemini as primary.'
-    },
-    {
-        name: 'Claude',
-        enabled: false,
-        priority: 6,
-        baseUrl: 'https://api.anthropic.com',
-        modelName: 'claude-3-5-sonnet-latest',
-        timeout: 15000,
-        retryCount: 3,
-        temperature: 0.1,
-        maxTokens: 2048,
-        notes: 'Anthropic text API.'
+        notes: 'Optional — disabled, Gemini/Claude are primary.'
     },
     {
         name: 'OpenRouter',
@@ -144,25 +144,13 @@ export function getEncryptedApiKey(providerName) {
     return localStorage.getItem(`${STORAGE_KEYS_PREFIX}${providerName.toLowerCase()}`) || '';
 }
 
-// Decrypt and return key on-the-fly
+// Decrypt and return the user's personally-configured key, if any.
+// There is deliberately no fallback to an operator-owned key here — when the
+// user hasn't set their own key, the AI engine routes the request through the
+// backend proxy instead, which holds the operator's keys server-side only.
 export async function getDecryptedApiKey(providerName) {
     const encrypted = getEncryptedApiKey(providerName);
-    if (!encrypted) {
-        // Fallback checks for legacy browser settings
-        if (providerName.toLowerCase() === 'openai') {
-            return localStorage.getItem('custom_openai_key') || import.meta.env.VITE_OPENAI_API_KEY || '';
-        }
-        if (providerName.toLowerCase() === 'deepseek') {
-            return import.meta.env.VITE_DEEPSEEK_API_KEY || '';
-        }
-        if (providerName.toLowerCase() === 'groq') {
-            return import.meta.env.VITE_GROQ_API_KEY || '';
-        }
-        if (providerName.toLowerCase() === 'gemini') {
-            return import.meta.env.VITE_GEMINI_API_KEY || '';
-        }
-        return '';
-    }
+    if (!encrypted) return '';
     return await decryptKey(encrypted);
 }
 

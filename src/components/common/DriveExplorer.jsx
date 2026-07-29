@@ -12,20 +12,37 @@ import { useAuth } from '../../contexts/AuthContext';
 /**
  * DriveExplorer - A mobile-optimized file browser for the CELRONHUB structure.
  */
-export default function DriveExplorer() {
+export default function DriveExplorer({ initialFolderId = null, folderName = null }) {
     const { profile } = useAuth();
     const [loading, setLoading] = useState(false);
     const [path, setPath] = useState([]); // Array of { id, name }
     const [items, setItems] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
-    const [viewMode, setViewMode] = useState('list'); // 'grid' or 'list'
+    const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'list'
     const [error, setError] = useState(null);
 
     useEffect(() => {
         if (profile) {
-            setupExplorer();
+            const rootIds = [
+                '1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w',
+                '1kCdb5celO1Ubo3SQZWCYj96eEmc1VAeJ',
+                profile.gdrive_celron_root_id,
+                profile.google_drive_folder_id
+            ].filter(Boolean);
+
+            const isRoot = !initialFolderId || rootIds.includes(initialFolderId);
+
+            if (initialFolderId && !isRoot) {
+                setPath([
+                    { id: 'CELRON_ROOT', name: 'CELRON ROOT' },
+                    { id: initialFolderId, name: folderName || 'Enquiry Folder' }
+                ]);
+                fetchFolderItems(initialFolderId);
+            } else {
+                setupExplorer();
+            }
         }
-    }, [profile]);
+    }, [profile, initialFolderId, folderName]);
 
     const setupExplorer = async () => {
         setLoading(true);
@@ -130,7 +147,7 @@ export default function DriveExplorer() {
     const currentFolder = path[path.length - 1];
 
     return (
-        <div style={{ background: '#fff', borderRadius: '20px', border: '1px solid #e2e8f0', overflow: 'hidden', height: 'calc(100vh - 250px)', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', overflow: 'hidden', height: '100%', minHeight: '480px', display: 'flex', flexDirection: 'column' }}>
             {/* Header / Search */}
             <div style={{ padding: '16px', borderBottom: '1px solid #f1f5f9' }}>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>

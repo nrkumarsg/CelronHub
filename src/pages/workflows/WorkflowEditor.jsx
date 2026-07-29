@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
@@ -996,7 +996,9 @@ export default function WorkflowEditor() {
     };
 
     const getProjectFolderName = () => {
-        const jobNo = formData.assigned_job_no || formData.document_no || formData.enquiry_no || 'Job Folder';
+        const jobNo = (formData.is_job || formData.document_type === 'Job' || formData.assigned_job_no)
+            ? (formData.assigned_job_no || formData.document_no)
+            : (formData.document_no || formData.assigned_job_no || formData.enquiry_no || 'Document Folder');
         const p = partners.find(part => part.id === formData.partner_id)?.name || 'Walk-in';
         const v = vessels.find(ves => ves.id === formData.vessel_id)?.vessel_name || '';
         const l = workLocations.find(wl => wl.id === formData.work_location_id)?.location_name || '';
@@ -2566,14 +2568,15 @@ export default function WorkflowEditor() {
                             const driveGetRes = await fetch(`https://www.googleapis.com/drive/v3/files/${formData.drive_folder_id}?fields=name`, {
                                 headers: { 'Authorization': 'Bearer ' + token }
                             });
-                            let newFolderName = formData.assigned_job_no;
+                            const targetNo = formData.assigned_job_no || formData.document_no;
+                            let newFolderName = targetNo;
                             if (driveGetRes.ok) {
                                 const folderData = await driveGetRes.json();
                                 const currentName = folderData.name;
-                                if (currentName.includes(originalJobNo)) {
-                                    newFolderName = currentName.replace(originalJobNo, formData.assigned_job_no);
+                                if (originalJobNo && currentName.includes(originalJobNo)) {
+                                    newFolderName = currentName.replace(originalJobNo, targetNo);
                                 } else {
-                                    newFolderName = currentName.replace(/(CEL|ARKIS|AIS)-\d{4}-\d{4}/, formData.assigned_job_no);
+                                    newFolderName = currentName.replace(/(CEL|ARKIS|AIS|QTN|ENQ)-\d{4}-\d{4}[A-Z]?/, targetNo);
                                 }
                             }
                             
@@ -3230,8 +3233,29 @@ export default function WorkflowEditor() {
         setShowCompanyDropdown(false);
         setShowOfficeDropdown(false);
 
+        // --- Auto-generate Quotation/Document PDF file for Email Attachment ---
+        console.log(`Auto-generating PDF attachment for ${formData.document_no || 'Quotation'}...`);
+        let docPdfFile = null;
+        try {
+            const pdfBlob = await generateSleekPDF({
+                ...formData,
+                items: lineItems,
+                partners: partners.find(p => p.id === formData.partner_id),
+                vessels: vessels.find(v => v.id === formData.vessel_id),
+                work_locations: workLocations.find(wl => wl.id === formData.work_location_id),
+                contacts: contacts.find(c => c.id === formData.contact_id)
+            }, settings, 'blob');
+
+            if (pdfBlob) {
+                const docName = `${(formData.document_type || 'Quotation').replace(/\s+/g, '_')}_${formData.document_no || 'Draft'}.pdf`;
+                docPdfFile = new File([pdfBlob], docName, { type: 'application/pdf' });
+            }
+        } catch (pdfErr) {
+            console.error('[handleEmail] PDF auto-generation error:', pdfErr);
+        }
+
         setEmailPreview({ 
-            to: '', 
+            to: recipient, 
             cc: 'accounts@celron.net; acct.celron.sg@gmail.com', 
             bcc: 'celron.simlim0305@gmail.com', 
             subject: subjectLine, 
@@ -4470,356 +4494,11 @@ export default function WorkflowEditor() {
                     <button className={`tab tab-other ${activeTab === 'other' ? 'active' : ''}`} onClick={() => setActiveTab('other')}>
                         <CreditCard size={16} /> PO & Reference Info
                     </button>
-                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && (
-                        <button className={`tab tab-workflow ${activeTab === 'workflow' ? 'active' : ''}`} onClick={() => setActiveTab('workflow')}>
-                            <FileText size={16} /> Workflow Suite
-                        </button>
-                    )}
-                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && (
-                        <button className={`tab tab-payments ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}>
-                            <DollarSign size={16} /> Payments & GST
-                        </button>
-                    )}
-                    {(formData.assigned_job_no || formData.is_job || formData.document_type === 'Job') && (
-                        <button className={`tab tab-costing ${activeTab === 'costing' ? 'active' : ''}`} onClick={() => setActiveTab('costing')}>
-                            <Calculator size={16} /> Project Costing
-                        </button>
-                    )}
-                    <button className={`tab tab-gallery ${activeTab === 'gallery' ? 'active' : ''}`} onClick={() => setActiveTab('gallery')}>
-                        <Image size={16} /> Photos & Media
-                    </button>
-                    <button className={`tab tab-explorer ${activeTab === 'explorer' ? 'active' : ''}`} onClick={() => setActiveTab('explorer')}>
-                        <FolderOpen size={16} /> Explorer
-                    </button>
-                    {!isNew && (
-                        <button className={`tab tab-delivery-proof ${activeTab === 'delivery_proof' ? 'active' : ''}`} onClick={() => setActiveTab('delivery_proof')}>
-                            <FileCheck size={16} /> Delivery Proof
-                        </button>
-                    )}
                 </div>
 
-                {activeTab === 'gallery' && (
-                    <div 
-                        className="glass-panel job-gallery animate-fade-in"
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
-                        style={{ position: 'relative' }}
-                    >
-                        {isDragging && (
-                            <div style={{
-                                position: 'absolute',
-                                inset: 0,
-                                background: 'rgba(99, 102, 241, 0.95)',
-                                backdropFilter: 'blur(4px)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '16px',
-                                zIndex: 50,
-                                borderRadius: '16px',
-                                color: '#fff',
-                                border: '3px dashed #fff',
-                                margin: '8px'
-                            }}>
-                                <UploadCloud size={48} className="animate-bounce" />
-                                <span style={{ fontSize: '1.25rem', fontWeight: 800 }}>Drop Photos Here to Upload</span>
-                            </div>
-                        )}
-                        <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <Ship size={20} className="text-accent" />
-                                <h3 style={{ margin: 0 }}>Project Photos & Media</h3>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                                {loadingGallery && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                        <div style={{ width: '120px', height: '6px', background: '#e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
-                                            <div style={{ width: `${galleryUploadProgress}%`, height: '100%', background: 'var(--accent)', transition: 'width 0.3s ease' }} />
-                                        </div>
-                                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent)' }}>{galleryUploadProgress}%</span>
-                                    </div>
-                                )}
-                                {galleryUploadSuccess && (
-                                    <div className="animate-bounce" style={{ color: '#22c55e', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', fontWeight: 600 }}>
-                                        <FileCheck size={18} /> Upload Success!
-                                    </div>
-                                )}
-                                {(formData.drive_folder_id || formData.gdrive_folder_id) && (
-                                    <a 
-                                        href={`https://drive.google.com/drive/folders/${formData.drive_folder_id || formData.gdrive_folder_id}`} 
-                                        target="_blank" 
-                                        rel="noreferrer"
-                                        className="btn btn-secondary"
-                                        style={{ 
-                                            background: 'linear-gradient(135deg, #ecfeff 0%, #cffafe 100%)', 
-                                            border: '1px solid #a5f3fc', 
-                                            color: '#0891b2', 
-                                            display: 'inline-flex', 
-                                            alignItems: 'center', 
-                                            gap: '8px', 
-                                            textDecoration: 'none',
-                                            fontWeight: 600,
-                                            fontSize: '0.9rem'
-                                        }}
-                                    >
-                                        <FolderOpen size={16} /> Explorer (Drive)
-                                    </a>
-                                )}
-                                <button 
-                                    className="btn btn-secondary" 
-                                    onClick={async () => {
-                                        let targetId = galleryFolderId;
-                                        if (!targetId) {
-                                            const token = getStoredToken();
-                                            const rootId = await ensureJobFolder();
-                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
-                                            setGalleryFolderId(targetId);
-                                        }
-                                        openSmartUpload(async (file) => {
-                                            if (file) await handleGalleryUpload(file);
-                                        }, 'image/*', targetId, 'Photos & Gallery', 'ocr');
-                                    }}
-                                    style={{ background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)', border: '1px solid #ddd6fe', color: '#7c3aed' }}
-                                >
-                                    <Sparkles size={16} /> Smart OCR
-                                </button>
-                                <button 
-                                    className="btn btn-secondary" 
-                                    onClick={async () => {
-                                        let targetId = galleryFolderId;
-                                        if (!targetId) {
-                                            const token = getStoredToken();
-                                            const rootId = await ensureJobFolder();
-                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
-                                            setGalleryFolderId(targetId);
-                                        }
-                                        openSmartUpload(async (file) => {
-                                            if (file) await handleGalleryUpload(file);
-                                        }, 'image/*', targetId, 'Photos & Gallery', 'mobile_qr');
-                                    }}
-                                    style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid #bbf7d0', color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}
-                                >
-                                    <Smartphone size={16} /> Mobile Upload (QR)
-                                </button>
-                                <button 
-                                    className="btn btn-secondary" 
-                                    onClick={() => fetchGallery()}
-                                    title="Synchronize photos with Google Drive"
-                                    style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-                                >
-                                    <RefreshCw size={16} className={loadingGallery ? 'animate-spin' : ''} />
-                                    Synchronize
-                                </button>
-                                <button 
-                                    type="button"
-                                    onClick={async () => {
-                                        let targetId = galleryFolderId;
-                                        if (!targetId) {
-                                            const token = getStoredToken();
-                                            const rootId = await ensureJobFolder();
-                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
-                                            setGalleryFolderId(targetId);
-                                        }
-                                        openSmartUpload(async (file) => {
-                                            if (file) await handleGalleryUpload(file);
-                                        }, 'image/*', targetId, 'Photos & Gallery', 'recent');
-                                    }}
-                                    className="btn btn-primary" 
-                                    style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden', display: 'inline-flex', alignItems: 'center', gap: '6px', border: 'none' }}
-                                >
-                                    <Upload size={16} /> Upload Photo
-                                    {loadingGallery && <div className="btn-loading-overlay" />}
-                                </button>
-                            </div>
-                        </div>
-
-                        <SmartOCRModal 
-                            isOpen={showOCRModal}
-                            onClose={() => setShowOCRModal(false)}
-                            title="Job Gallery OCR Assistant"
-                            onApply={(res) => {
-                                if (res.rawText) {
-                                    setFormData(prev => ({
-                                        ...prev,
-                                        notes: (prev.notes || '') + '\n\n[OCR DATA FROM GALLERY]:\n' + res.rawText
-                                    }));
-                                    alert('Extracted text has been appended to the Document Notes.');
-                                }
-                            }}
-                        />
-
-                        {loadingGallery && galleryFiles.length === 0 ? (
-                            <div style={{ padding: '80px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                                <div className="upload-animation-ring">
-                                    <div />
-                                    <div />
-                                    <div />
-                                    <div />
-                                </div>
-                                <p style={{ marginTop: '24px', fontWeight: 600 }}>Uploading to Drive...</p>
-                                <style>{`
-                                    .upload-animation-ring { display: inline-block; position: relative; width: 80px; height: 80px; }
-                                    .upload-animation-ring div { box-sizing: border-box; display: block; position: absolute; width: 64px; height: 64px; margin: 8px; border: 8px solid var(--accent); border-radius: 50%; animation: upload-ring 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite; border-color: var(--accent) transparent transparent transparent; }
-                                    .upload-animation-ring div:nth-child(1) { animation-delay: -0.45s; }
-                                    .upload-animation-ring div:nth-child(2) { animation-delay: -0.3s; }
-                                    .upload-animation-ring div:nth-child(3) { animation-delay: -0.15s; }
-                                    @keyframes upload-ring { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-                                `}</style>
-                            </div>
-                        ) : galleryFiles.length === 0 ? (
-                            <div style={{ padding: '80px', textAlign: 'center', background: '#f8fafc', borderRadius: '16px', border: '2px dashed #cbd5e1' }}>
-                                <Ship size={48} color="#cbd5e1" style={{ marginBottom: '16px' }} />
-                                <p style={{ color: '#64748b', fontSize: '1.1rem' }}>No photos uploaded yet for this job.</p>
-                                <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: '4px' }}>Capture and upload job progress photos directly here.</p>
-                            </div>
-                        ) : (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '20px' }}>
-                                {galleryFiles.map(file => (
-                                    <div key={file.id} className="gallery-item" style={{ position: 'relative', borderRadius: '12px', overflow: 'hidden', background: '#fff', border: '1px solid #e2e8f0', aspectRatio: '4/3', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', transition: 'transform 0.2s' }}>
-                                        <img 
-                                            src={file.thumbnailLink?.replace('=s220', '=s600')} 
-                                            alt={file.name} 
-                                            style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                                        />
-                                        <div className="gallery-overlay" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', opacity: 0, transition: 'opacity 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
-                                            <a href={file.webViewLink} target="_blank" rel="noreferrer" style={{ color: '#fff', padding: '8px', background: 'rgba(255,255,255,0.2)', borderRadius: '50%' }}><ExternalLink size={20} /></a>
-                                        </div>
-                                        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '8px', background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', color: '#fff', fontSize: '0.7rem', fontWeight: 600 }}>
-                                            {file.name}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                        <style>{`
-                            .gallery-item:hover .gallery-overlay { opacity: 1; } 
-                            .gallery-item:hover { transform: translateY(-4px); }
-                            .btn-loading-overlay { position: absolute; inset: 0; background: rgba(255,255,255,0.3); animation: pulse 1.5s infinite; }
-                            @keyframes pulse { 0% { opacity: 0.2; } 50% { opacity: 0.5; } 100% { opacity: 0.2; } }
-                        `}</style>
-                    </div>
-                )}
-
-                {activeTab === 'costing' && (
-                    <div className="glass-panel project-costing">
-                        <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <Calculator size={20} className="text-accent" />
-                                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#1e293b' }}>Project Costing & Profit Summary</h3>
-                            </div>
-                        </div>
-
-                        {/* Summary Cards */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px', marginBottom: '16px' }}>
-                            {/* Card 1: Total Revenue */}
-                            <div style={{ 
-                                background: 'linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%)', 
-                                padding: '28px 24px', 
-                                borderRadius: '24px', 
-                                border: '1.5px solid #dbeafe', 
-                                boxShadow: '0 10px 25px rgba(59, 130, 246, 0.05)',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                transition: 'all 0.3s ease'
-                            }}>
-                                <div>
-                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Revenue</div>
-                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#1e3a8a' }}>
-                                        {formData.currency} {formData.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                    </div>
-                                </div>
-                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
-                                    <TrendingUp size={24} />
-                                </div>
-                            </div>
-
-                            {/* Card 2: Total Expenses */}
-                            <div style={{ 
-                                background: 'linear-gradient(135deg, #ffffff 0%, #fff1f2 100%)', 
-                                padding: '28px 24px', 
-                                borderRadius: '24px', 
-                                border: '1.5px solid #fecdd3', 
-                                boxShadow: '0 10px 25px rgba(244, 63, 94, 0.05)',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                transition: 'all 0.3s ease'
-                            }}>
-                                <div>
-                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Expenses</div>
-                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#9f1239' }}>
-                                        {formData.currency} {expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                    </div>
-                                </div>
-                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e' }}>
-                                    <TrendingDown size={24} />
-                                </div>
-                            </div>
-
-                            {(() => {
-                                const totalRevenue = parseFloat(formData.total_amount) || 0;
-                                const totalExpenses = expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0);
-                                const profit = totalRevenue - totalExpenses;
-                                const margin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
-                                return (
-                                    <>
-                                        {/* Card 3: Gross Profit */}
-                                        <div style={{ 
-                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdf4' : '#fff1f2'} 100%)`, 
-                                            padding: '28px 24px', 
-                                            borderRadius: '24px', 
-                                            border: `1.5px solid ${profit >= 0 ? '#bbf7d0' : '#fecdd3'}`, 
-                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(34, 197, 94, 0.05)' : 'rgba(244, 63, 94, 0.05)'}`,
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            transition: 'all 0.3s ease'
-                                        }}>
-                                            <div>
-                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#10b981' : '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Gross Profit</div>
-                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#14532d' : '#9f1239' }}>
-                                                    {formData.currency} {profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                </div>
-                                            </div>
-                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdf4' : '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#10b981' : '#f43f5e' }}>
-                                                <Calculator size={24} />
-                                            </div>
-                                        </div>
-
-                                        {/* Card 4: Profit Margin */}
-                                        <div style={{ 
-                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdfa' : '#fff7ed'} 100%)`, 
-                                            padding: '28px 24px', 
-                                            borderRadius: '24px', 
-                                            border: `1.5px solid ${profit >= 0 ? '#ccfbf1' : '#ffedd5'}`, 
-                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(20, 184, 166, 0.05)' : 'rgba(249, 115, 22, 0.05)'}`,
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            transition: 'all 0.3s ease'
-                                        }}>
-                                            <div>
-                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#14b8a6' : '#f97316', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Profit Margin</div>
-                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#0f766e' : '#9a3412' }}>
-                                                    {margin.toFixed(1)}%
-                                                </div>
-                                            </div>
-                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdfa' : '#fff7ed', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#14b8a6' : '#f97316' }}>
-                                                <Percent size={24} />
-                                            </div>
-                                        </div>
-                                    </>
-                                );
-                            })()}
-                        </div>
-                    </div>
-                )}
-
                 {activeTab === 'items' && (
-                    <div className="items-editor">
+                    <div className="items-editor" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                        <div className="items-editor">
                         <table className="editor-table">
                             <thead>
                                 <tr>
@@ -5261,7 +4940,6 @@ export default function WorkflowEditor() {
                                 </div>
                             </div>
                         </div>
-                    </div>
 
                     {/* ═══════════════ JOB DOCUMENT SUITE PANEL ═══════════════ */}
                     {(() => {
@@ -5365,7 +5043,1252 @@ export default function WorkflowEditor() {
                     })()}
                     {/* ══════════════════════════════════════════════════════════ */}
                     </div>
-                )
+
+                        {/* ═══════════════ EMBEDDED VERTICAL STACK SECTIONS ═══════════════ */}
+                        {/* 1. Workflow Suite */}
+                        <div id="section-workflow" style={{ marginTop: '12px' }}>
+                            <div className="glass-panel workflow-suite">
+                        <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <FileCheck size={20} className="text-accent" />
+                            <h3 style={{ margin: 0 }}>Documents Linked to Job: <span style={{ color: 'var(--accent)' }}>{formData.assigned_job_no}</span></h3>
+                        </div>
+                        
+                        <div className="table-container">
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead style={{ background: '#f8fafc' }}>
+                                    <tr>
+                                        <th style={{ padding: '12px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Type</th>
+                                        <th style={{ padding: '12px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Document No</th>
+                                        <th style={{ padding: '12px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Issue Date</th>
+                                        <th style={{ padding: '12px', textAlign: 'right', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Amount</th>
+                                        <th style={{ padding: '12px', textAlign: 'center', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Status</th>
+                                        <th style={{ padding: '12px', textAlign: 'right', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {linkedEnquiry && (
+                                        <tr style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
+                                            <td style={{ padding: '12px', fontSize: '0.85rem', fontWeight: 600 }}>Customer Enquiry</td>
+                                            <td style={{ padding: '12px', fontSize: '0.85rem', color: '#b45309', fontWeight: 600 }}>{linkedEnquiry.enquiry_no}</td>
+                                            <td style={{ padding: '12px', fontSize: '0.85rem' }}>{new Date(linkedEnquiry.issue_date).toLocaleDateString('en-GB')}</td>
+                                            <td style={{ padding: '12px', textAlign: 'right', fontSize: '0.85rem', color: '#94a3b8' }}>-</td>
+                                            <td style={{ padding: '12px', textAlign: 'center' }}>
+                                                <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 600, background: '#fffbeb', color: '#b45309' }}>
+                                                    {linkedEnquiry.status || 'Active'}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '12px', textAlign: 'right' }}>
+                                                <button 
+                                                    className="btn btn-sm btn-secondary" 
+                                                    type="button"
+                                                    onClick={() => navigate(`/workflows/enquiry/${linkedEnquiry.id}`)}
+                                                >
+                                                    Open
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    )}
+                                    {workflowDocs.map(doc => (
+                                        <tr key={doc.id} style={{ borderBottom: '1px solid #f1f5f9', background: doc.id === id ? '#f0f9ff' : 'transparent' }}>
+                                            <td style={{ padding: '12px', fontSize: '0.85rem', fontWeight: 600 }}>{doc.document_type}</td>
+                                            <td style={{ padding: '12px', fontSize: '0.85rem', color: 'var(--accent)' }}>{doc.document_no}</td>
+                                            <td style={{ padding: '12px', fontSize: '0.85rem' }}>{new Date(doc.issue_date).toLocaleDateString('en-GB')}</td>
+                                            <td style={{ padding: '12px', textAlign: 'right', fontSize: '0.85rem' }}>{doc.currency} {doc.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                            <td style={{ padding: '12px', textAlign: 'center' }}>
+                                                <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 600, background: doc.status === 'Draft' ? '#f1f5f9' : '#dcfce7', color: doc.status === 'Draft' ? '#64748b' : '#15803d' }}>
+                                                    {doc.status}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '12px', textAlign: 'right' }}>
+                                                {doc.id !== id ? (
+                                                    <button 
+                                                        className="btn btn-sm btn-secondary" 
+                                                onClick={() => {
+                                                             const targetType = doc.document_type.toLowerCase().replace(/\s+/g, '-');
+                                                             if (doc.document_type === 'Enquiry') {
+                                                                 navigate(`/workflows/enquiry/${doc.id}`);
+                                                             } else {
+                                                                 navigate(`/workflows/editor/${targetType}/${doc.id}`);
+                                                             }
+                                                         }}
+                                                    >
+                                                        Open
+                                                    </button>
+                                                ) : (
+                                                    <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic' }}>Current</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                        </div>
+
+                        {/* 2. Payments & GST */}
+                        <div id="section-payments" style={{ marginTop: '12px' }}>
+                            <div className="glass-panel job-payments">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#1e293b' }}>Payments & GST Dashboard</h2>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748b' }}>Reporting Period:</label>
+                                <select 
+                                    className="form-select" 
+                                    value={paymentQuarter} 
+                                    onChange={(e) => setPaymentQuarter(e.target.value)}
+                                    style={{ width: '150px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                                >
+                                    <option value="All">Full Project</option>
+                                    <option value="Q1">Q1 (Jan - Mar)</option>
+                                    <option value="Q2">Q2 (Apr - Jun)</option>
+                                    <option value="Q3">Q3 (Jul - Sep)</option>
+                                    <option value="Q4">Q4 (Oct - Dec)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        {/* GST & Financial Summary */}
+                        {(() => {
+                            const getQuarter = (dateStr) => {
+                                if (!dateStr) return 'Q1';
+                                const month = new Date(dateStr).getMonth();
+                                if (isNaN(month)) return 'Q1';
+                                if (month <= 2) return 'Q1';
+                                if (month <= 5) return 'Q2';
+                                if (month <= 8) return 'Q3';
+                                return 'Q4';
+                            };
+
+                            const fCust = paymentQuarter === 'All' ? customerPayments : customerPayments.filter(p => getQuarter(p.payment_date) === paymentQuarter);
+                            const fSupp = paymentQuarter === 'All' ? expenses : expenses.filter(p => getQuarter(p.invoice_date) === paymentQuarter);
+                            
+                            const fInvoices = workflowDocs.filter(d => 
+                                (d.document_type === 'Tax Invoice' || d.document_type === 'Proforma Invoice') &&
+                                (paymentQuarter === 'All' || getQuarter(d.issue_date) === paymentQuarter)
+                            );
+
+                            const ledgerItems = [
+                                ...fInvoices.map(inv => ({
+                                    ...inv,
+                                    isSuiteInvoice: true,
+                                    invoice_no: inv.document_no,
+                                    payment_date: inv.issue_date,
+                                    gst_amount: inv.tax_amount || 0,
+                                    amount: inv.total_amount || 0,
+                                    proof_url: inv.attachment_urls?.[0] || null
+                                })),
+                                ...fCust.map(p => ({
+                                    ...p,
+                                    isSuiteInvoice: false,
+                                    invoice_no: p.invoice_no,
+                                    payment_date: p.payment_date,
+                                    gst_amount: p.gst_amount || 0,
+                                    amount: p.amount || 0,
+                                    proof_url: p.proof_url
+                                }))
+                            ].sort((a, b) => new Date(b.payment_date) - new Date(a.payment_date));
+
+                            const outGst = fInvoices.length > 0 
+                                ? fInvoices.reduce((acc, inv) => acc + (parseFloat(inv.tax_amount) || 0), 0)
+                                : fCust.reduce((acc, p) => acc + (parseFloat(p.gst_amount) || 0), 0);
+                                
+                            const inGst = fSupp.reduce((acc, p) => acc + (parseFloat(p.gst_amount) || 0), 0);
+                            const netGst = outGst - inGst;
+
+                            return (
+                                <>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '32px' }}>
+                                    <div className="summary-card" style={{ background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', padding: '20px', borderRadius: '16px', border: '1px solid #bfdbfe' }}>
+                                        <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#1e40af', textTransform: 'uppercase', marginBottom: '8px' }}>Output GST (Collected)</div>
+                                        <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#1e3a8a' }}>
+                                            {formData.currency} {outGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </div>
+                                        <div style={{ fontSize: '0.7rem', color: '#60a5fa', marginTop: '4px' }}>
+                                            {fInvoices.length > 0 ? `From ${fInvoices.length} invoices` : `From ${fCust.length} receipts`}
+                                        </div>
+                                    </div>
+                                    <div className="summary-card" style={{ background: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)', padding: '20px', borderRadius: '16px', border: '1px solid #fed7aa' }}>
+                                        <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#9a3412', textTransform: 'uppercase', marginBottom: '8px' }}>Input GST (Paid)</div>
+                                        <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#7c2d12' }}>
+                                            {formData.currency} {inGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </div>
+                                        <div style={{ fontSize: '0.7rem', color: '#fb923c', marginTop: '4px' }}>From {fSupp.length} bills</div>
+                                    </div>
+                                    <div className="summary-card" style={{ background: `linear-gradient(135deg, ${netGst >= 0 ? '#f0fdf4 0%, #dcfce7 100%' : '#fef2f2 0%, #fee2e2 100%'})`, padding: '20px', borderRadius: '16px', border: `1px solid ${netGst >= 0 ? '#bbf7d0' : '#fecaca'}` }}>
+                                        <div style={{ fontSize: '0.75rem', fontWeight: 800, color: netGst >= 0 ? '#166534' : '#991b1b', textTransform: 'uppercase', marginBottom: '8px' }}>Net GST Position</div>
+                                        <div style={{ fontSize: '1.75rem', fontWeight: 900, color: netGst >= 0 ? '#14532d' : '#7f1d1d' }}>
+                                            {formData.currency} {netGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </div>
+                                        <div style={{ fontSize: '0.7rem', color: netGst >= 0 ? '#4ade80' : '#f87171', marginTop: '4px' }}>{netGst >= 0 ? 'Payable to Govt' : 'Claimable Refund'}</div>
+                                    </div>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '32px' }}>
+                                    {/* Customer Payments (Incoming) */}
+                                    <div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}><CreditCard size={20} className="text-accent" /> Customer Ledger</h3>
+                                        </div>
+                                        <div className="table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                                <thead style={{ background: '#f8fafc' }}>
+                                                    <tr>
+                                                        <th style={{ padding: '12px', textAlign: 'left' }}>Inv No</th>
+                                                        <th style={{ padding: '12px', textAlign: 'left' }}>Date</th>
+                                                        <th style={{ padding: '12px', textAlign: 'right' }}>GST</th>
+                                                        <th style={{ padding: '12px', textAlign: 'right' }}>Total</th>
+                                                        <th style={{ padding: '12px', textAlign: 'center' }}>Proof</th>
+                                                        <th style={{ padding: '12px', textAlign: 'right' }}>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {ledgerItems.length === 0 ? (
+                                                        <tr><td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>No {paymentQuarter === 'All' ? '' : paymentQuarter} payments or invoices recorded.</td></tr>
+                                                    ) : (
+                                                        ledgerItems.map(item => (
+                                                            <tr key={item.id} style={{ borderTop: '1px solid #f1f5f9' }}>
+                                                                <td style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', minHeight: '44px' }}>
+                                                                    <span>{item.invoice_no}</span>
+                                                                    {item.isSuiteInvoice ? (
+                                                                        <span style={{ 
+                                                                            padding: '2px 6px', 
+                                                                            borderRadius: '4px', 
+                                                                            fontSize: '0.7rem', 
+                                                                            fontWeight: 700, 
+                                                                            background: '#eff6ff', 
+                                                                            color: '#1e40af',
+                                                                            border: '1px solid #bfdbfe'
+                                                                        }}>
+                                                                            Invoice
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span style={{ 
+                                                                            padding: '2px 6px', 
+                                                                            borderRadius: '4px', 
+                                                                            fontSize: '0.7rem', 
+                                                                            fontWeight: 700, 
+                                                                            background: '#f0fdf4', 
+                                                                            color: '#166534',
+                                                                            border: '1px solid #bbf7d0'
+                                                                        }}>
+                                                                            Payment
+                                                                        </span>
+                                                                    )}
+                                                                </td>
+                                                                <td style={{ padding: '12px' }}>{item.payment_date ? new Date(item.payment_date).toLocaleDateString() : '-'}</td>
+                                                                <td style={{ padding: '12px', textAlign: 'right', color: '#64748b' }}>{item.gst_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>{item.amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                                <td style={{ padding: '12px', textAlign: 'center' }}>
+                                                                    {item.isSuiteInvoice ? (
+                                                                        <button 
+                                                                            onClick={() => viewInvoicePDF(item.id)}
+                                                                            style={{ color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'inline-flex', alignItems: 'center' }}
+                                                                            title="Preview Suite Invoice PDF"
+                                                                        >
+                                                                            <Eye size={16} />
+                                                                        </button>
+                                                                    ) : item.proof_url ? (
+                                                                        <a href={item.proof_url} target="_blank" rel="noreferrer" style={{ color: '#10b981', display: 'inline-flex', alignItems: 'center' }}><FileCheck size={16} /></a>
+                                                                    ) : (
+                                                                        <label style={{ cursor: 'pointer', color: '#94a3b8', display: 'inline-flex', alignItems: 'center' }}>
+                                                                            <Upload size={16} />
+                                                                            <input type="file" hidden onChange={(e) => handlePaymentProofUpload('customer', item.id, e.target.files[0])} />
+                                                                        </label>
+                                                                    )}
+                                                                </td>
+                                                                <td style={{ padding: '12px', textAlign: 'right' }}>
+                                                                    {item.isSuiteInvoice ? (
+                                                                        <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic' }}>Managed in Suite</span>
+                                                                    ) : (
+                                                                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                                                            <button onClick={() => setPaymentModal({ isOpen: true, type: 'customer', data: item })} style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}><FileText size={14} /></button>
+                                                                            <button onClick={() => handleDeletePayment('customer', item.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' }}><Trash2 size={14} /></button>
+                                                                        </div>
+                                                                    )}
+                                                                </td>
+                                                            </tr>
+                                                        ))
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+
+                                    {/* Supplier Payments (Outgoing) */}
+                                    <div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}><Users size={20} className="text-accent" /> Supplier Ledger</h3>
+                                            <button className="btn btn-sm btn-primary" onClick={addExpenseRow}>+ Add Record</button>
+                                        </div>
+                                        <div className="table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                                <thead style={{ background: '#f8fafc' }}>
+                                                    <tr>
+                                                        <th style={{ padding: '12px', textAlign: 'left' }}>Supplier / Inv No</th>
+                                                        <th style={{ padding: '12px', textAlign: 'left' }}>Date</th>
+                                                        <th style={{ padding: '12px', textAlign: 'right' }}>GST</th>
+                                                        <th style={{ padding: '12px', textAlign: 'right' }}>Total</th>
+                                                        <th style={{ padding: '12px', textAlign: 'center' }}>Proof</th>
+                                                        <th style={{ padding: '12px', textAlign: 'right' }}>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {fSupp.length === 0 ? (
+                                                        <tr><td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>No {paymentQuarter === 'All' ? '' : paymentQuarter} records found.</td></tr>
+                                                    ) : (
+                                                        fSupp.map(p => (
+                                                            <tr key={p.id} style={{ borderTop: '1px solid #f1f5f9' }}>
+                                                                <td style={{ padding: '12px' }}>
+                                                                    <div style={{ fontWeight: 600 }}>{partners.find(part => part.id === p.supplier_id)?.name || 'Unknown'}</div>
+                                                                    <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{p.invoice_no || '-'}</div>
+                                                                </td>
+                                                                <td style={{ padding: '12px' }}>{p.invoice_date ? new Date(p.invoice_date).toLocaleDateString() : '-'}</td>
+                                                                <td style={{ padding: '12px', textAlign: 'right', color: '#64748b' }}>{p.gst_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>{p.grand_total?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                                <td style={{ padding: '12px', textAlign: 'center' }}>
+                                                                    {p.bill_url ? (
+                                                                        <a href={p.bill_url} target="_blank" rel="noreferrer" style={{ color: '#10b981' }}><FileCheck size={16} /></a>
+                                                                    ) : (
+                                                                        <label style={{ cursor: 'pointer', color: '#94a3b8' }}>
+                                                                            <Upload size={16} />
+                                                                            <input type="file" hidden onChange={(e) => handlePaymentProofUpload('supplier', p.id, e.target.files[0])} />
+                                                                        </label>
+                                                                    )}
+                                                                </td>
+                                                                <td style={{ padding: '12px', textAlign: 'right' }}>
+                                                                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                                                        <button onClick={() => setExpenseModal({ isOpen: true, data: p })} style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}><FileText size={14} /></button>
+                                                                        <button onClick={() => handleDeleteExpenseById(p.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' }}><Trash2 size={14} /></button>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        ))
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                                </>
+                            );
+                        })()}
+                    </div>
+                        </div>
+
+                        {/* 3. Project Costing */}
+                        <div id="section-costing" style={{ marginTop: '12px' }}>
+                            <div className="glass-panel project-costing">
+                        <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <Calculator size={20} className="text-accent" />
+                                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#1e293b' }}>Project Costing & Profit Summary</h3>
+                            </div>
+                        </div>
+
+                        {/* Summary Cards */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px', marginBottom: '16px' }}>
+                            {/* Card 1: Total Revenue */}
+                            <div style={{ 
+                                background: 'linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%)', 
+                                padding: '28px 24px', 
+                                borderRadius: '24px', 
+                                border: '1.5px solid #dbeafe', 
+                                boxShadow: '0 10px 25px rgba(59, 130, 246, 0.05)',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                transition: 'all 0.3s ease'
+                            }}>
+                                <div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Revenue</div>
+                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#1e3a8a' }}>
+                                        {formData.currency} {formData.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </div>
+                                </div>
+                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
+                                    <TrendingUp size={24} />
+                                </div>
+                            </div>
+
+                            {/* Card 2: Total Expenses */}
+                            <div style={{ 
+                                background: 'linear-gradient(135deg, #ffffff 0%, #fff1f2 100%)', 
+                                padding: '28px 24px', 
+                                borderRadius: '24px', 
+                                border: '1.5px solid #fecdd3', 
+                                boxShadow: '0 10px 25px rgba(244, 63, 94, 0.05)',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                transition: 'all 0.3s ease'
+                            }}>
+                                <div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Expenses</div>
+                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#9f1239' }}>
+                                        {formData.currency} {expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </div>
+                                </div>
+                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e' }}>
+                                    <TrendingDown size={24} />
+                                </div>
+                            </div>
+
+                            {(() => {
+                                const totalRevenue = parseFloat(formData.total_amount) || 0;
+                                const totalExpenses = expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0);
+                                const profit = totalRevenue - totalExpenses;
+                                const margin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
+                                return (
+                                    <>
+                                        {/* Card 3: Gross Profit */}
+                                        <div style={{ 
+                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdf4' : '#fff1f2'} 100%)`, 
+                                            padding: '28px 24px', 
+                                            borderRadius: '24px', 
+                                            border: `1.5px solid ${profit >= 0 ? '#bbf7d0' : '#fecdd3'}`, 
+                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(34, 197, 94, 0.05)' : 'rgba(244, 63, 94, 0.05)'}`,
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            transition: 'all 0.3s ease'
+                                        }}>
+                                            <div>
+                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#10b981' : '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Gross Profit</div>
+                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#14532d' : '#9f1239' }}>
+                                                    {formData.currency} {profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </div>
+                                            </div>
+                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdf4' : '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#10b981' : '#f43f5e' }}>
+                                                <Calculator size={24} />
+                                            </div>
+                                        </div>
+
+                                        {/* Card 4: Profit Margin */}
+                                        <div style={{ 
+                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdfa' : '#fff7ed'} 100%)`, 
+                                            padding: '28px 24px', 
+                                            borderRadius: '24px', 
+                                            border: `1.5px solid ${profit >= 0 ? '#ccfbf1' : '#ffedd5'}`, 
+                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(20, 184, 166, 0.05)' : 'rgba(249, 115, 22, 0.05)'}`,
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            transition: 'all 0.3s ease'
+                                        }}>
+                                            <div>
+                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#14b8a6' : '#f97316', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Profit Margin</div>
+                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#0f766e' : '#9a3412' }}>
+                                                    {margin.toFixed(1)}%
+                                                </div>
+                                            </div>
+                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdfa' : '#fff7ed', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#14b8a6' : '#f97316' }}>
+                                                <Percent size={24} />
+                                            </div>
+                                        </div>
+                                    </>
+                                );
+                            })()}
+                        </div>
+                    </div>
+                        </div>
+
+                        {/* 4. Photos & Media */}
+                        <div id="section-gallery" style={{ marginTop: '12px' }}>
+                            <div 
+                        className="glass-panel job-gallery animate-fade-in"
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        style={{ position: 'relative' }}
+                    >
+                        {isDragging && (
+                            <div style={{
+                                position: 'absolute',
+                                inset: 0,
+                                background: 'rgba(99, 102, 241, 0.95)',
+                                backdropFilter: 'blur(4px)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '16px',
+                                zIndex: 50,
+                                borderRadius: '16px',
+                                color: '#fff',
+                                border: '3px dashed #fff',
+                                margin: '8px'
+                            }}>
+                                <UploadCloud size={48} className="animate-bounce" />
+                                <span style={{ fontSize: '1.25rem', fontWeight: 800 }}>Drop Photos & Videos Here to Upload</span>
+                            </div>
+                        )}
+                        <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'linear-gradient(135deg, #f43f5e, #e11d48)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(225,29,72,0.3)' }}>
+                                    <Image size={20} color="#fff" />
+                                </div>
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#1e293b' }}>Project Photos, Media & Videos</h3>
+                                    <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '2px' }}>
+                                        Upload, view, and organize job site photos, inspection videos, and media files
+                                    </div>
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                                {loadingGallery && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                        <div style={{ width: '120px', height: '6px', background: '#e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                                            <div style={{ width: `${galleryUploadProgress}%`, height: '100%', background: 'var(--accent)', transition: 'width 0.3s ease' }} />
+                                        </div>
+                                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent)' }}>{galleryUploadProgress}%</span>
+                                    </div>
+                                )}
+                                {galleryUploadSuccess && (
+                                    <div className="animate-bounce" style={{ color: '#22c55e', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', fontWeight: 600 }}>
+                                        <FileCheck size={18} /> Upload Success!
+                                    </div>
+                                )}
+                                {(formData.drive_folder_id || formData.gdrive_folder_id) && (
+                                    <a 
+                                        href={`https://drive.google.com/drive/folders/${formData.drive_folder_id || formData.gdrive_folder_id}`} 
+                                        target="_blank" 
+                                        rel="noreferrer"
+                                        className="btn btn-secondary"
+                                        style={{ 
+                                            background: 'linear-gradient(135deg, #ecfeff 0%, #cffafe 100%)', 
+                                            border: '1px solid #a5f3fc', 
+                                            color: '#0891b2', 
+                                            display: 'inline-flex', 
+                                            alignItems: 'center', 
+                                            gap: '8px', 
+                                            textDecoration: 'none',
+                                            fontWeight: 600,
+                                            fontSize: '0.88rem'
+                                        }}
+                                    >
+                                        <FolderOpen size={16} /> Explorer (Drive)
+                                    </a>
+                                )}
+                                <button 
+                                    className="btn btn-secondary" 
+                                    onClick={async () => {
+                                        let targetId = galleryFolderId;
+                                        if (!targetId) {
+                                            const token = getStoredToken();
+                                            const rootId = await ensureJobFolder();
+                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+                                            setGalleryFolderId(targetId);
+                                        }
+                                        openSmartUpload(async (file) => {
+                                            if (file) await handleGalleryUpload(file);
+                                        }, 'image/*,video/*', targetId, 'Photos & Gallery', 'ocr');
+                                    }}
+                                    style={{ background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)', border: '1px solid #ddd6fe', color: '#7c3aed' }}
+                                >
+                                    <Sparkles size={16} /> Smart OCR
+                                </button>
+                                <button 
+                                    className="btn btn-secondary" 
+                                    onClick={async () => {
+                                        let targetId = galleryFolderId;
+                                        if (!targetId) {
+                                            const token = getStoredToken();
+                                            const rootId = await ensureJobFolder();
+                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+                                            setGalleryFolderId(targetId);
+                                        }
+                                        openSmartUpload(async (file) => {
+                                            if (file) await handleGalleryUpload(file);
+                                        }, 'image/*,video/*', targetId, 'Photos & Gallery', 'mobile_qr');
+                                    }}
+                                    style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid #bbf7d0', color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}
+                                >
+                                    <Smartphone size={16} /> Mobile Upload (QR)
+                                </button>
+                                <button 
+                                    className="btn btn-secondary" 
+                                    onClick={() => fetchGallery()}
+                                    title="Synchronize photos & videos with Google Drive"
+                                    style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                                >
+                                    <RefreshCw size={16} className={loadingGallery ? 'animate-spin' : ''} />
+                                    Synchronize
+                                </button>
+                                <button 
+                                    type="button"
+                                    onClick={async () => {
+                                        let targetId = galleryFolderId;
+                                        if (!targetId) {
+                                            const token = getStoredToken();
+                                            const rootId = await ensureJobFolder();
+                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+                                            setGalleryFolderId(targetId);
+                                        }
+                                        openSmartUpload(async (file) => {
+                                            if (file) await handleGalleryUpload(file);
+                                        }, 'image/*,video/*', targetId, 'Photos & Gallery', 'recent');
+                                    }}
+                                    className="btn btn-primary" 
+                                    style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden', display: 'inline-flex', alignItems: 'center', gap: '6px', border: 'none', background: 'linear-gradient(135deg, #e11d48, #be123c)' }}
+                                >
+                                    <Upload size={16} /> Upload Photo / Video
+                                    {loadingGallery && <div className="btn-loading-overlay" />}
+                                </button>
+                            </div>
+                        </div>
+
+                        <SmartOCRModal 
+                            isOpen={showOCRModal}
+                            onClose={() => setShowOCRModal(false)}
+                            title="Job Gallery OCR Assistant"
+                            onApply={(res) => {
+                                if (res.rawText) {
+                                    setFormData(prev => ({
+                                        ...prev,
+                                        notes: (prev.notes || '') + '\n\n[OCR DATA FROM GALLERY]:\n' + res.rawText
+                                    }));
+                                    alert('Extracted text has been appended to the Document Notes.');
+                                }
+                            }}
+                        />
+
+                        {loadingGallery && galleryFiles.length === 0 ? (
+                            <div style={{ padding: '80px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                <div className="upload-animation-ring">
+                                    <div />
+                                    <div />
+                                    <div />
+                                    <div />
+                                </div>
+                                <p style={{ marginTop: '24px', fontWeight: 600 }}>Syncing media with Drive...</p>
+                                <style>{`
+                                    .upload-animation-ring { display: inline-block; position: relative; width: 80px; height: 80px; }
+                                    .upload-animation-ring div { box-sizing: border-box; display: block; position: absolute; width: 64px; height: 64px; margin: 8px; border: 8px solid var(--accent); border-radius: 50%; animation: upload-ring 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite; border-color: var(--accent) transparent transparent transparent; }
+                                    .upload-animation-ring div:nth-child(1) { animation-delay: -0.45s; }
+                                    .upload-animation-ring div:nth-child(2) { animation-delay: -0.3s; }
+                                    .upload-animation-ring div:nth-child(3) { animation-delay: -0.15s; }
+                                    @keyframes upload-ring { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                                `}</style>
+                            </div>
+                        ) : galleryFiles.length === 0 ? (
+                            <div style={{ padding: '80px', textAlign: 'center', background: '#f8fafc', borderRadius: '16px', border: '2px dashed #cbd5e1' }}>
+                                <Image size={48} color="#cbd5e1" style={{ marginBottom: '16px' }} />
+                                <p style={{ color: '#64748b', fontSize: '1.1rem', fontWeight: 700 }}>No photos or videos uploaded yet for this job.</p>
+                                <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: '4px' }}>Capture and upload site photos, equipment inspection videos, or media recordings directly here.</p>
+                            </div>
+                        ) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '20px' }}>
+                                {galleryFiles.map(file => {
+                                    const isVideo = file.mimeType?.includes('video') || file.name?.match(/\.(mp4|webm|mov|mkv|avi)$/i);
+                                    return (
+                                        <div key={file.id} className="gallery-item" style={{ position: 'relative', borderRadius: '14px', overflow: 'hidden', background: '#0f172a', border: '1px solid #e2e8f0', aspectRatio: '4/3', boxShadow: '0 4px 16px rgba(0,0,0,0.08)', transition: 'transform 0.2s, box-shadow 0.2s' }}>
+                                            {isVideo ? (
+                                                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#090d16', position: 'relative' }}>
+                                                    <video 
+                                                        src={file.webContentLink || file.thumbnailLink?.replace('=s220', '')} 
+                                                        poster={file.thumbnailLink?.replace('=s220', '=s600')}
+                                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                                        controls
+                                                        preload="metadata"
+                                                    />
+                                                    <div style={{ position: 'absolute', top: '10px', left: '10px', background: 'rgba(225,29,72,0.9)', color: '#fff', padding: '3px 8px', borderRadius: '12px', fontSize: '0.68rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '4px', zIndex: 10 }}>
+                                                        <Video size={12} /> Video
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <img 
+                                                    src={file.thumbnailLink?.replace('=s220', '=s600') || file.webContentLink} 
+                                                    alt={file.name} 
+                                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                                                />
+                                            )}
+                                            <div className="gallery-overlay" style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(2px)', opacity: 0, transition: 'opacity 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', zIndex: 20 }}>
+                                                <a href={file.webViewLink} target="_blank" rel="noreferrer" title="Open in Google Drive" style={{ color: '#fff', padding: '10px', background: 'rgba(255,255,255,0.25)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                    <ExternalLink size={20} />
+                                                </a>
+                                            </div>
+                                            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '10px 12px', background: 'linear-gradient(transparent, rgba(15,23,42,0.88))', color: '#fff', fontSize: '0.74rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 15 }}>
+                                                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '85%' }} title={file.name}>
+                                                    {file.name}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                        <style>{`
+                            .gallery-item:hover .gallery-overlay { opacity: 1; } 
+                            .gallery-item:hover { transform: translateY(-4px); boxShadow: 0 8px 24px rgba(0,0,0,0.15); }
+                            .btn-loading-overlay { position: absolute; inset: 0; background: rgba(255,255,255,0.3); animation: pulse 1.5s infinite; }
+                            @keyframes pulse { 0% { opacity: 0.2; } 50% { opacity: 0.5; } 100% { opacity: 0.2; } }
+                        `}</style>
+                    </div>
+                        </div>
+
+                        {/* 5. Explorer */}
+                        <div id="section-explorer" style={{ marginTop: '12px' }}>
+                            <div className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
+                        {/* Auth Status Bar */}
+                        <div style={{ 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center', 
+                            background: authStatus === 'connected' ? '#f0fdf4' : '#fef2f2', 
+                            padding: '12px 20px', 
+                            borderRadius: '12px', 
+                            marginBottom: '24px',
+                            border: `1px solid ${authStatus === 'connected' ? '#bbf7d0' : '#fecaca'}`
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: authStatus === 'connected' ? '#22c55e' : '#ef4444' }} />
+                                <span style={{ fontSize: '0.9rem', fontWeight: 600, color: authStatus === 'connected' ? '#166534' : '#991b1b' }}>
+                                    Google Drive: {authStatus === 'connected' ? 'Connected' : authStatus === 'expired' ? 'Session Expired' : 'Disconnected'}
+                                </span>
+                            </div>
+                            {authStatus !== 'connected' && (
+                                <button onClick={handleExplorerReconnect} className="btn btn-sm btn-primary" style={{ fontSize: '0.8rem', padding: '6px 16px' }}>
+                                    <RefreshCw size={14} style={{ marginRight: '6px' }} /> Reconnect Now
+                                </button>
+                            )}
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <button 
+                                    onClick={() => handleExplorerBack(explorerPath.length - 2)} 
+                                    disabled={explorerPath.length <= 1}
+                                    style={{ background: 'none', border: 'none', cursor: explorerPath.length > 1 ? 'pointer' : 'default', color: explorerPath.length > 1 ? 'var(--accent)' : '#cbd5e1' }}
+                                >
+                                    <ArrowLeft size={20} />
+                                </button>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '1rem', fontWeight: 600 }}>
+                                    {explorerPath.map((segment, idx) => (
+                                        <React.Fragment key={segment.id}>
+                                            <span 
+                                                onClick={() => handleExplorerBack(idx)}
+                                                style={{ cursor: 'pointer', color: idx === explorerPath.length - 1 ? '#1e293b' : '#64748b' }}
+                                            >
+                                                {segment.name}
+                                            </span>
+                                            {idx < explorerPath.length - 1 && <span style={{ color: '#cbd5e1' }}>/</span>}
+                                        </React.Fragment>
+                                    ))}
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                <button onClick={() => fetchExplorerFiles()} className="btn btn-secondary" title="Refresh list" style={{ height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <RefreshCw size={18} className={loadingExplorer ? 'animate-spin' : ''} />
+                                </button>
+                                <button 
+                                    type="button"
+                                    onClick={async () => {
+                                        if (authStatus !== 'connected') {
+                                            toast.error('Google Drive is not connected. Please connect/reconnect at the status bar or Settings first.');
+                                            return;
+                                        }
+                                        const rootId = await ensureJobFolder();
+                                        setQrModal({ isOpen: true, folderId: rootId, folderName: 'Job Root Folder' });
+                                    }} 
+                                    className="btn btn-secondary" 
+                                    title="Mobile Upload via QR Code"
+                                    style={{ 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        gap: '8px',
+                                        background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', 
+                                        border: '1px solid #bbf7d0', 
+                                        color: '#166534',
+                                        height: '42px',
+                                        padding: '0 16px',
+                                        borderRadius: '10px',
+                                        fontWeight: 600,
+                                        fontSize: '0.85rem'
+                                    }}
+                                >
+                                    <Smartphone size={16} /> Mobile Scan
+                                </button>
+                                <div
+                                    onDragOver={(e) => { e.preventDefault(); setIsDraggingExplorer(true); }}
+                                    onDragLeave={(e) => { e.preventDefault(); setIsDraggingExplorer(false); }}
+                                    onDrop={async (e) => {
+                                        e.preventDefault();
+                                        setIsDraggingExplorer(false);
+                                        const files = Array.from(e.dataTransfer.files);
+                                        if (files.length > 0) {
+                                            setUploadingExplorer(true);
+                                            setUploadProgress(0);
+                                            try {
+                                                const token = getStoredToken();
+                                                const rootId = await ensureJobFolder();
+                                                for (let i = 0; i < files.length; i++) {
+                                                    await uploadFileToDrive(token, files[i], { folderId: rootId });
+                                                    setUploadProgress(((i + 1) / files.length) * 100);
+                                                }
+                                                fetchExplorerFiles();
+                                            } catch (err) {
+                                                console.error('Upload error:', err);
+                                                alert('Failed to upload files.');
+                                            } finally {
+                                                setUploadingExplorer(false);
+                                                setUploadProgress(0);
+                                            }
+                                        }
+                                    }}
+                                    onClick={() => handleTriggerSmartUpload(async (file) => {
+                                        if (!file) return;
+                                        setUploadingExplorer(true);
+                                        setUploadProgress(0);
+                                        try {
+                                            const token = getStoredToken();
+                                            const rootId = await ensureJobFolder();
+                                            if (file.isGoogleDrive) {
+                                                await copyFile(token, file.id, rootId);
+                                            } else {
+                                                await uploadFileToDrive(token, file, { folderId: rootId });
+                                            }
+                                            fetchExplorerFiles();
+                                            toast.success("File added successfully!");
+                                        } catch (err) {
+                                            console.error('Upload error:', err);
+                                            toast.error('Failed to add file: ' + err.message);
+                                        } finally {
+                                            setUploadingExplorer(false);
+                                            setUploadProgress(0);
+                                        }
+                                    }, '*', 'Explorer', 'recent')}
+                                    style={{
+                                        border: isDraggingExplorer ? '2px dashed var(--accent)' : '2px dashed #cbd5e1',
+                                        background: isDraggingExplorer ? '#eff6ff' : '#f8fafc',
+                                        padding: '0 20px',
+                                        borderRadius: '10px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px',
+                                        cursor: 'pointer',
+                                        color: 'var(--accent)',
+                                        fontWeight: 600,
+                                        fontSize: '0.85rem',
+                                        transition: 'all 0.2s ease',
+                                        height: '42px',
+                                        justifyContent: 'center',
+                                        position: 'relative',
+                                        overflow: 'hidden'
+                                    }}
+                                >
+                                    <Upload size={18} />
+                                    <span>{isDraggingExplorer ? 'Drop Files Here' : 'Drop Files to Upload'}</span>
+                                    {uploadingExplorer && (
+                                        <div style={{ 
+                                            position: 'absolute', 
+                                            left: 0, 
+                                            top: 0, 
+                                            bottom: 0, 
+                                            width: `${uploadProgress}%`, 
+                                            background: 'rgba(99, 102, 241, 0.15)', 
+                                            transition: 'width 0.2s ease',
+                                            pointerEvents: 'none'
+                                        }} />
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {explorerError && (
+                            <div style={{ color: '#ef4444', background: '#fef2f2', padding: '12px', borderRadius: '8px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <AlertCircle size={18} /> {explorerError}
+                            </div>
+                        )}
+
+                        {loadingExplorer && explorerFiles.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '60px', color: '#94a3b8' }}>
+                                <Loader2 size={32} className="animate-spin" style={{ margin: '0 auto 16px' }} />
+                                <p>Syncing with Google Drive...</p>
+                            </div>
+                        ) : explorerFiles.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '80px', color: '#94a3b8', background: '#f8fafc', borderRadius: '16px', border: '2px dashed #e2e8f0' }}>
+                                <Folder size={48} style={{ margin: '0 auto 16px', opacity: 0.2 }} />
+                                <p style={{ fontSize: '1.1rem' }}>This folder is empty.</p>
+                                <p style={{ fontSize: '0.9rem', marginTop: '4px' }}>Upload drawings, photos, or documents to keep them with this job.</p>
+                            </div>
+                        ) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' }}>
+                                {explorerFiles.map(file => (
+                                    <div key={file.id} className="glass-panel" style={{ padding: '16px', borderRadius: '12px', background: '#fff', border: '1px solid #e2e8f0', transition: 'transform 0.2s' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                                            <div 
+                                                style={{ display: 'flex', gap: '10px', alignItems: 'center', cursor: file.mimeType.includes('folder') ? 'pointer' : 'default', flex: 1, overflow: 'hidden' }}
+                                                onClick={() => file.mimeType.includes('folder') && handleExplorerNavigate(file)}
+                                            >
+                                                {getExplorerFileIcon(file.mimeType)}
+                                                <div style={{ overflow: 'hidden' }}>
+                                                    <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={file.name}>
+                                                        {file.name}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{file.size ? `${(file.size / 1024).toFixed(1)} KB` : 'Folder'}</div>
+                                                </div>
+                                            </div>
+                                            <button 
+                                                onClick={() => handleExplorerDelete(file.id, file.name)}
+                                                style={{ background: 'none', border: 'none', color: '#cbd5e1', padding: '4px', cursor: 'pointer' }}
+                                                onMouseOver={(e) => e.currentTarget.style.color = '#ef4444'}
+                                                onMouseOut={(e) => e.currentTarget.style.color = '#cbd5e1'}
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                            <a href={file.webViewLink} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ flex: 1, padding: '6px', fontSize: '0.75rem', gap: '4px' }}>
+                                                <ExternalLink size={12} /> View
+                                            </a>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Partner Vault Shortcut */}
+                        <div style={{ marginTop: '32px', paddingTop: '20px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div style={{ width: '40px', height: '40px', background: '#e0e7ff', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <Users size={20} color="#4338ca" />
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>Partner Vault Bridge</div>
+                                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Quick access to {formData.partners?.name || 'Customer'}'s master documents</div>
+                                </div>
+                            </div>
+                            <button 
+                                className="btn btn-secondary" 
+                                style={{ fontSize: '0.8rem', gap: '8px' }}
+                                onClick={handleOpenPartnerVault}
+                            >
+                                <ExternalLink size={14} /> Open Partner Folder
+                            </button>
+                        </div>
+                    </div>
+                        </div>
+
+                        {/* 6. Delivery Proof */}
+                        <div id="section-delivery-proof" style={{ marginTop: '12px' }}>
+                            <div className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
+                        {/* Digital Delivery Proofs & Signatures Component */}
+                        <div style={{ marginBottom: '32px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                                <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <FileCheck size={22} color="#1a3c63" /> Digital Delivery Proofs & Signatures
+                                </h2>
+                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                    <button 
+                                        type="button" 
+                                        onClick={handleOpenJobDrive} 
+                                        className="btn btn-secondary" 
+                                        style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                                    >
+                                        <FolderOpen size={16} /> Open Job Folder
+                                    </button>
+                                    <button 
+                                        type="button" 
+                                        onClick={handleOpenSupportDocsDrive} 
+                                        className="btn btn-secondary" 
+                                        style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                                    >
+                                        <FolderOpen size={16} /> Open SupportDocs Folder
+                                    </button>
+                                    <button 
+                                        type="button" 
+                                        onClick={syncDeliveryProofs} 
+                                        className="btn btn-primary" 
+                                        style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#1a3c63', borderColor: '#1a3c63' }}
+                                        disabled={loadingDeliveryProofs}
+                                    >
+                                        <RefreshCw size={16} className={loadingDeliveryProofs ? 'animate-spin' : ''} />
+                                        Sync Proofs with Google Drive
+                                    </button>
+                                </div>
+                            </div>
+
+                            {loadingDeliveryProofs && deliveryProofs.length === 0 ? (
+                                <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
+                                    <RefreshCw className="animate-spin" size={32} style={{ margin: '0 auto 16px' }} />
+                                    Loading delivery proofs...
+                                </div>
+                            ) : deliveryProofs.length === 0 ? (
+                                <div style={{ padding: '60px 40px', textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: '16px', border: '1px dashed #cbd5e1' }}>
+                                    <FileCheck size={48} style={{ color: '#94a3b8', margin: '0 auto 16px' }} />
+                                    <h3 style={{ margin: '0 0 8px', fontSize: '1rem', color: '#334155', fontWeight: 600 }}>No Signed Proofs Recorded</h3>
+                                    <p style={{ margin: 0, fontSize: '0.85rem' }}>Record signatures in the mobile digiPOD app or upload a signed copy below.</p>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
+                                    {deliveryProofs.map(proof => (
+                                        <div key={proof.id} style={{
+                                            background: '#fff',
+                                            border: '1px solid #e2e8f0',
+                                            borderRadius: '16px',
+                                            padding: '20px',
+                                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '12px'
+                                        }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                                <div>
+                                                    <h4 style={{ margin: '0 0 4px', fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>{proof.recipient_name}</h4>
+                                                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(proof.delivered_at || proof.created_at).toLocaleString()}</span>
+                                                </div>
+                                                {proof.location_name && (
+                                                    <span style={{ fontSize: '0.75rem', background: '#f1f5f9', padding: '4px 8px', borderRadius: '20px', fontWeight: 600, color: '#475569' }}>
+                                                        {proof.location_name}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            {proof.gps_latitude && proof.gps_longitude && (
+                                                <a 
+                                                    href={`https://www.google.com/maps/search/?api=1&query=${proof.gps_latitude},${proof.gps_longitude}`}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    style={{ fontSize: '0.8rem', color: '#3b82f6', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                                                >
+                                                    📍 Location: {proof.gps_latitude.toFixed(4)}, {proof.gps_longitude.toFixed(4)} (Open Map)
+                                                </a>
+                                            )}
+
+                                            {proof.signature_drive_id && (
+                                                <div style={{ marginTop: '8px' }}>
+                                                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Signature / Proof</div>
+                                                    <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px', background: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '120px' }}>
+                                                        {proof.signature_drive_id.startsWith('http') || proof.signature_drive_id.length > 25 ? (
+                                                            <a 
+                                                                href={proof.signature_drive_id.startsWith('http') ? proof.signature_drive_id : `https://drive.google.com/file/d/${proof.signature_drive_id}/view`}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                style={{ fontSize: '0.8rem', color: '#4f46e5', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}
+                                                            >
+                                                                Open Attached Document ↗
+                                                            </a>
+                                                        ) : (
+                                                            <>
+                                                                <img 
+                                                                    src={`https://lh3.googleusercontent.com/d/${proof.signature_drive_id}`}
+                                                                    alt="Recipient Signature"
+                                                                    style={{ maxHeight: '100px', maxWidth: '100%', objectFit: 'contain' }}
+                                                                    onError={(e) => {
+                                                                        e.target.style.display = 'none';
+                                                                        e.target.nextSibling.style.display = 'block';
+                                                                    }}
+                                                                />
+                                                                <a 
+                                                                    href={`https://drive.google.com/file/d/${proof.signature_drive_id}/view`}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    style={{ display: 'none', fontSize: '0.8rem', color: '#4f46e5', fontWeight: 600 }}
+                                                                >
+                                                                    View Proof Document ↗
+                                                                </a>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Signed Proofs Section (Moved from Explorer tab) */}
+                        <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.1rem', fontWeight: 700, color: '#1e293b' }}>
+                                    <FileCheck size={22} color="#059669" /> Signed Proofs of Delivery / Service Files
+                                </h3>
+                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                    <button 
+                                        type="button"
+                                        onClick={() => fetchSignedProofs()} 
+                                        className="btn btn-secondary btn-sm" 
+                                        title="Refresh signed proofs from Google Drive" 
+                                        style={{ 
+                                            height: '36px', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center',
+                                            padding: '6px 12px',
+                                            borderRadius: '8px'
+                                        }}
+                                    >
+                                        <RefreshCw size={14} className={loadingSignedProofs ? 'animate-spin' : ''} />
+                                    </button>
+                                    <button 
+                                        type="button"
+                                        onClick={async () => {
+                                            if (authStatus !== 'connected') {
+                                                toast.error('Google Drive is not connected. Please connect/reconnect at the status bar or Settings first.');
+                                                return;
+                                            }
+                                            const token = getStoredToken();
+                                            const rootId = await ensureJobFolder();
+                                            const supportDocsFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+                                            setQrModal({ isOpen: true, folderId: supportDocsFolderId, folderName: 'SupportDocs' });
+                                        }} 
+                                        className="btn btn-secondary btn-sm" 
+                                        title="Mobile Upload to SupportDocs via QR Code"
+                                        style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            gap: '6px',
+                                            background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', 
+                                            border: '1px solid #bbf7d0', 
+                                            color: '#166534',
+                                            height: '36px',
+                                            padding: '6px 12px',
+                                            borderRadius: '8px',
+                                            fontWeight: 600,
+                                            fontSize: '0.85rem'
+                                        }}
+                                    >
+                                        <Smartphone size={14} /> Mobile Scan
+                                    </button>
+                                    <div
+                                        onDragOver={(e) => { e.preventDefault(); setIsDraggingSigned(true); }}
+                                        onDragLeave={(e) => { e.preventDefault(); setIsDraggingSigned(false); }}
+                                        onDrop={async (e) => {
+                                            e.preventDefault();
+                                            setIsDraggingSigned(false);
+                                            const files = Array.from(e.dataTransfer.files);
+                                            if (files.length > 0) {
+                                                setLoadingSignedProofs(true);
+                                                try {
+                                                    const token = getStoredToken();
+                                                    const rootId = await ensureJobFolder();
+                                                    const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+                                                    for (const file of files) {
+                                                        const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
+                                                        const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
+                                                        setFormData(prev => {
+                                                            const newAttachments = [...(prev.attachment_urls || []), proofUrl];
+                                                            return { ...prev, attachment_urls: newAttachments };
+                                                        });
+                                                        
+                                                        // Sync to Supabase delivery_proofs table immediately
+                                                        await supabase.from('delivery_proofs').insert({
+                                                            document_id: formData.id,
+                                                            recipient_name: 'Uploaded Copy (' + file.name.substring(0, 15) + ')',
+                                                            signature_drive_id: result.id,
+                                                            location_name: 'Web Upload'
+                                                        });
+                                                    }
+                                                    alert('Signed proof(s) uploaded successfully to Google Drive & Supabase database!');
+                                                    fetchSignedProofs();
+                                                    fetchDeliveryProofs();
+                                                } catch (err) {
+                                                    console.error('Proof upload failed:', err);
+                                                    alert('Upload failed: ' + err.message);
+                                                } finally {
+                                                    setLoadingSignedProofs(false);
+                                                }
+                                            }
+                                        }}
+                                        onClick={() => document.getElementById('signed-proof-upload').click()}
+                                        style={{
+                                            border: isDraggingSigned ? '2px dashed #059669' : '2px dashed #cbd5e1',
+                                            background: isDraggingSigned ? '#ecfdf5' : '#f8fafc',
+                                            padding: '6px 16px',
+                                            borderRadius: '8px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            cursor: 'pointer',
+                                            color: '#059669',
+                                            fontWeight: 600,
+                                            fontSize: '0.85rem',
+                                            transition: 'all 0.2s ease',
+                                            height: '36px',
+                                            justifyContent: 'center'
+                                        }}
+                                    >
+                                        <Upload size={14} />
+                                        <span>{isDraggingSigned ? 'Drop Signed Copy Here' : 'Drop Signed Copy'}</span>
+                                    </div>
+                                    <input id="signed-proof-upload" type="file" multiple hidden onChange={(e) => {
+                                        const files = Array.from(e.target.files);
+                                        const uploadSequence = async () => {
+                                            setLoadingSignedProofs(true);
+                                            try {
+                                                const token = getStoredToken();
+                                                const rootId = await ensureJobFolder();
+                                                const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+                                                for (const file of files) {
+                                                    const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
+                                                    const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
+                                                    setFormData(prev => {
+                                                        const newAttachments = [...(prev.attachment_urls || []), proofUrl];
+                                                        return { ...prev, attachment_urls: newAttachments };
+                                                    });
+                                                    
+                                                    // Sync to Supabase delivery_proofs table immediately
+                                                    await supabase.from('delivery_proofs').insert({
+                                                        document_id: formData.id,
+                                                        recipient_name: 'Uploaded Copy (' + file.name.substring(0, 15) + ')',
+                                                        signature_drive_id: result.id,
+                                                        location_name: 'Web Upload'
+                                                    });
+                                                }
+                                                alert('Signed proof(s) uploaded successfully to Google Drive & Supabase database!');
+                                                fetchSignedProofs();
+                                                fetchDeliveryProofs();
+                                            } catch (err) {
+                                                console.error('Proof upload failed:', err);
+                                                alert('Upload failed: ' + err.message);
+                                            } finally {
+                                                setLoadingSignedProofs(false);
+                                            }
+                                        };
+                                        uploadSequence();
+                                    }} />
+                                </div>
+                            </div>
+                            {loadingSignedProofs ? (
+                                <div style={{ textAlign: 'center', padding: '20px' }}><Loader2 size={24} className="animate-spin" /></div>
+                            ) : signedProofs.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '0.9rem' }}>
+                                    No signed proofs found in Job Folder. Use the Scanner App or upload here.
+                                </div>
+                            ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
+                                    {signedProofs.map(proof => (
+                                        <div key={proof.id} style={{ background: '#fff', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                            <FileCheck size={18} color="#059669" />
+                                            <div style={{ flex: 1, overflow: 'hidden' }}>
+                                                <div style={{ fontSize: '0.8rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{proof.name}</div>
+                                            </div>
+                                            <a href={proof.webViewLink} target="_blank" rel="noreferrer" style={{ color: '#64748b' }}><ExternalLink size={14} /></a>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {formData.document_type === 'Tax Invoice' && (
+                                <div style={{ marginTop: '24px', padding: '16px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '12px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                                        <AlertCircle size={18} color="#d97706" />
+                                        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#92400e' }}>Invoice Compliance Check</span>
+                                    </div>
+                                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#b45309' }}>
+                                        {signedProofs.length > 0 
+                                            ? `Found ${signedProofs.length} signed proof(s) in Job Folder. Ensure they are attached when emailing the customer.`
+                                            : "Warning: No signed Proof of Delivery found in Job Folder. It is highly recommended to upload a signed copy before sending the invoice."}
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                        </div>
+                    </div>
+                )}
 
                 {activeTab === 'other' && (
                     <div className="glass-panel other-info animate-fade-in">
@@ -5748,894 +6671,6 @@ export default function WorkflowEditor() {
                                 </div>
                             </div>
                         </div>
-                    </div>
-                )}
-                
-                {activeTab === 'workflow' && (
-                    <div className="glass-panel workflow-suite">
-                        <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <FileCheck size={20} className="text-accent" />
-                            <h3 style={{ margin: 0 }}>Documents Linked to Job: <span style={{ color: 'var(--accent)' }}>{formData.assigned_job_no}</span></h3>
-                        </div>
-                        
-                        <div className="table-container">
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead style={{ background: '#f8fafc' }}>
-                                    <tr>
-                                        <th style={{ padding: '12px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Type</th>
-                                        <th style={{ padding: '12px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Document No</th>
-                                        <th style={{ padding: '12px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Issue Date</th>
-                                        <th style={{ padding: '12px', textAlign: 'right', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Amount</th>
-                                        <th style={{ padding: '12px', textAlign: 'center', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Status</th>
-                                        <th style={{ padding: '12px', textAlign: 'right', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {linkedEnquiry && (
-                                        <tr style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem', fontWeight: 600 }}>Customer Enquiry</td>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem', color: '#b45309', fontWeight: 600 }}>{linkedEnquiry.enquiry_no}</td>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem' }}>{new Date(linkedEnquiry.issue_date).toLocaleDateString('en-GB')}</td>
-                                            <td style={{ padding: '12px', textAlign: 'right', fontSize: '0.85rem', color: '#94a3b8' }}>-</td>
-                                            <td style={{ padding: '12px', textAlign: 'center' }}>
-                                                <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 600, background: '#fffbeb', color: '#b45309' }}>
-                                                    {linkedEnquiry.status || 'Active'}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '12px', textAlign: 'right' }}>
-                                                <button 
-                                                    className="btn btn-sm btn-secondary" 
-                                                    type="button"
-                                                    onClick={() => navigate(`/workflows/enquiry/${linkedEnquiry.id}`)}
-                                                >
-                                                    Open
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    )}
-                                    {workflowDocs.map(doc => (
-                                        <tr key={doc.id} style={{ borderBottom: '1px solid #f1f5f9', background: doc.id === id ? '#f0f9ff' : 'transparent' }}>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem', fontWeight: 600 }}>{doc.document_type}</td>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem', color: 'var(--accent)' }}>{doc.document_no}</td>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem' }}>{new Date(doc.issue_date).toLocaleDateString('en-GB')}</td>
-                                            <td style={{ padding: '12px', textAlign: 'right', fontSize: '0.85rem' }}>{doc.currency} {doc.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                            <td style={{ padding: '12px', textAlign: 'center' }}>
-                                                <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 600, background: doc.status === 'Draft' ? '#f1f5f9' : '#dcfce7', color: doc.status === 'Draft' ? '#64748b' : '#15803d' }}>
-                                                    {doc.status}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '12px', textAlign: 'right' }}>
-                                                {doc.id !== id ? (
-                                                    <button 
-                                                        className="btn btn-sm btn-secondary" 
-                                                onClick={() => {
-                                                             const targetType = doc.document_type.toLowerCase().replace(/\s+/g, '-');
-                                                             if (doc.document_type === 'Enquiry') {
-                                                                 navigate(`/workflows/enquiry/${doc.id}`);
-                                                             } else {
-                                                                 navigate(`/workflows/editor/${targetType}/${doc.id}`);
-                                                             }
-                                                         }}
-                                                    >
-                                                        Open
-                                                    </button>
-                                                ) : (
-                                                    <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic' }}>Current</span>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                )}
-                
-                {activeTab === 'explorer' && (
-                    <div className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
-                        {/* Auth Status Bar */}
-                        <div style={{ 
-                            display: 'flex', 
-                            justifyContent: 'space-between', 
-                            alignItems: 'center', 
-                            background: authStatus === 'connected' ? '#f0fdf4' : '#fef2f2', 
-                            padding: '12px 20px', 
-                            borderRadius: '12px', 
-                            marginBottom: '24px',
-                            border: `1px solid ${authStatus === 'connected' ? '#bbf7d0' : '#fecaca'}`
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: authStatus === 'connected' ? '#22c55e' : '#ef4444' }} />
-                                <span style={{ fontSize: '0.9rem', fontWeight: 600, color: authStatus === 'connected' ? '#166534' : '#991b1b' }}>
-                                    Google Drive: {authStatus === 'connected' ? 'Connected' : authStatus === 'expired' ? 'Session Expired' : 'Disconnected'}
-                                </span>
-                            </div>
-                            {authStatus !== 'connected' && (
-                                <button onClick={handleExplorerReconnect} className="btn btn-sm btn-primary" style={{ fontSize: '0.8rem', padding: '6px 16px' }}>
-                                    <RefreshCw size={14} style={{ marginRight: '6px' }} /> Reconnect Now
-                                </button>
-                            )}
-                        </div>
-
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <button 
-                                    onClick={() => handleExplorerBack(explorerPath.length - 2)} 
-                                    disabled={explorerPath.length <= 1}
-                                    style={{ background: 'none', border: 'none', cursor: explorerPath.length > 1 ? 'pointer' : 'default', color: explorerPath.length > 1 ? 'var(--accent)' : '#cbd5e1' }}
-                                >
-                                    <ArrowLeft size={20} />
-                                </button>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '1rem', fontWeight: 600 }}>
-                                    {explorerPath.map((segment, idx) => (
-                                        <React.Fragment key={segment.id}>
-                                            <span 
-                                                onClick={() => handleExplorerBack(idx)}
-                                                style={{ cursor: 'pointer', color: idx === explorerPath.length - 1 ? '#1e293b' : '#64748b' }}
-                                            >
-                                                {segment.name}
-                                            </span>
-                                            {idx < explorerPath.length - 1 && <span style={{ color: '#cbd5e1' }}>/</span>}
-                                        </React.Fragment>
-                                    ))}
-                                </div>
-                            </div>
-                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                                <button onClick={() => fetchExplorerFiles()} className="btn btn-secondary" title="Refresh list" style={{ height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <RefreshCw size={18} className={loadingExplorer ? 'animate-spin' : ''} />
-                                </button>
-                                <button 
-                                    type="button"
-                                    onClick={async () => {
-                                        if (authStatus !== 'connected') {
-                                            toast.error('Google Drive is not connected. Please connect/reconnect at the status bar or Settings first.');
-                                            return;
-                                        }
-                                        const rootId = await ensureJobFolder();
-                                        setQrModal({ isOpen: true, folderId: rootId, folderName: 'Job Root Folder' });
-                                    }} 
-                                    className="btn btn-secondary" 
-                                    title="Mobile Upload via QR Code"
-                                    style={{ 
-                                        display: 'flex', 
-                                        alignItems: 'center', 
-                                        gap: '8px',
-                                        background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', 
-                                        border: '1px solid #bbf7d0', 
-                                        color: '#166534',
-                                        height: '42px',
-                                        padding: '0 16px',
-                                        borderRadius: '10px',
-                                        fontWeight: 600,
-                                        fontSize: '0.85rem'
-                                    }}
-                                >
-                                    <Smartphone size={16} /> Mobile Scan
-                                </button>
-                                <div
-                                    onDragOver={(e) => { e.preventDefault(); setIsDraggingExplorer(true); }}
-                                    onDragLeave={(e) => { e.preventDefault(); setIsDraggingExplorer(false); }}
-                                    onDrop={async (e) => {
-                                        e.preventDefault();
-                                        setIsDraggingExplorer(false);
-                                        const files = Array.from(e.dataTransfer.files);
-                                        if (files.length > 0) {
-                                            setUploadingExplorer(true);
-                                            setUploadProgress(0);
-                                            try {
-                                                const token = getStoredToken();
-                                                const rootId = await ensureJobFolder();
-                                                for (let i = 0; i < files.length; i++) {
-                                                    await uploadFileToDrive(token, files[i], { folderId: rootId });
-                                                    setUploadProgress(((i + 1) / files.length) * 100);
-                                                }
-                                                fetchExplorerFiles();
-                                            } catch (err) {
-                                                console.error('Upload error:', err);
-                                                alert('Failed to upload files.');
-                                            } finally {
-                                                setUploadingExplorer(false);
-                                                setUploadProgress(0);
-                                            }
-                                        }
-                                    }}
-                                    onClick={() => handleTriggerSmartUpload(async (file) => {
-                                        if (!file) return;
-                                        setUploadingExplorer(true);
-                                        setUploadProgress(0);
-                                        try {
-                                            const token = getStoredToken();
-                                            const rootId = await ensureJobFolder();
-                                            if (file.isGoogleDrive) {
-                                                await copyFile(token, file.id, rootId);
-                                            } else {
-                                                await uploadFileToDrive(token, file, { folderId: rootId });
-                                            }
-                                            fetchExplorerFiles();
-                                            toast.success("File added successfully!");
-                                        } catch (err) {
-                                            console.error('Upload error:', err);
-                                            toast.error('Failed to add file: ' + err.message);
-                                        } finally {
-                                            setUploadingExplorer(false);
-                                            setUploadProgress(0);
-                                        }
-                                    }, '*', 'Explorer', 'recent')}
-                                    style={{
-                                        border: isDraggingExplorer ? '2px dashed var(--accent)' : '2px dashed #cbd5e1',
-                                        background: isDraggingExplorer ? '#eff6ff' : '#f8fafc',
-                                        padding: '0 20px',
-                                        borderRadius: '10px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '8px',
-                                        cursor: 'pointer',
-                                        color: 'var(--accent)',
-                                        fontWeight: 600,
-                                        fontSize: '0.85rem',
-                                        transition: 'all 0.2s ease',
-                                        height: '42px',
-                                        justifyContent: 'center',
-                                        position: 'relative',
-                                        overflow: 'hidden'
-                                    }}
-                                >
-                                    <Upload size={18} />
-                                    <span>{isDraggingExplorer ? 'Drop Files Here' : 'Drop Files to Upload'}</span>
-                                    {uploadingExplorer && (
-                                        <div style={{ 
-                                            position: 'absolute', 
-                                            left: 0, 
-                                            top: 0, 
-                                            bottom: 0, 
-                                            width: `${uploadProgress}%`, 
-                                            background: 'rgba(99, 102, 241, 0.15)', 
-                                            transition: 'width 0.2s ease',
-                                            pointerEvents: 'none'
-                                        }} />
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        {explorerError && (
-                            <div style={{ color: '#ef4444', background: '#fef2f2', padding: '12px', borderRadius: '8px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <AlertCircle size={18} /> {explorerError}
-                            </div>
-                        )}
-
-                        {loadingExplorer && explorerFiles.length === 0 ? (
-                            <div style={{ textAlign: 'center', padding: '60px', color: '#94a3b8' }}>
-                                <Loader2 size={32} className="animate-spin" style={{ margin: '0 auto 16px' }} />
-                                <p>Syncing with Google Drive...</p>
-                            </div>
-                        ) : explorerFiles.length === 0 ? (
-                            <div style={{ textAlign: 'center', padding: '80px', color: '#94a3b8', background: '#f8fafc', borderRadius: '16px', border: '2px dashed #e2e8f0' }}>
-                                <Folder size={48} style={{ margin: '0 auto 16px', opacity: 0.2 }} />
-                                <p style={{ fontSize: '1.1rem' }}>This folder is empty.</p>
-                                <p style={{ fontSize: '0.9rem', marginTop: '4px' }}>Upload drawings, photos, or documents to keep them with this job.</p>
-                            </div>
-                        ) : (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' }}>
-                                {explorerFiles.map(file => (
-                                    <div key={file.id} className="glass-panel" style={{ padding: '16px', borderRadius: '12px', background: '#fff', border: '1px solid #e2e8f0', transition: 'transform 0.2s' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                                            <div 
-                                                style={{ display: 'flex', gap: '10px', alignItems: 'center', cursor: file.mimeType.includes('folder') ? 'pointer' : 'default', flex: 1, overflow: 'hidden' }}
-                                                onClick={() => file.mimeType.includes('folder') && handleExplorerNavigate(file)}
-                                            >
-                                                {getExplorerFileIcon(file.mimeType)}
-                                                <div style={{ overflow: 'hidden' }}>
-                                                    <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={file.name}>
-                                                        {file.name}
-                                                    </div>
-                                                    <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{file.size ? `${(file.size / 1024).toFixed(1)} KB` : 'Folder'}</div>
-                                                </div>
-                                            </div>
-                                            <button 
-                                                onClick={() => handleExplorerDelete(file.id, file.name)}
-                                                style={{ background: 'none', border: 'none', color: '#cbd5e1', padding: '4px', cursor: 'pointer' }}
-                                                onMouseOver={(e) => e.currentTarget.style.color = '#ef4444'}
-                                                onMouseOut={(e) => e.currentTarget.style.color = '#cbd5e1'}
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
-                                        <div style={{ display: 'flex', gap: '8px' }}>
-                                            <a href={file.webViewLink} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ flex: 1, padding: '6px', fontSize: '0.75rem', gap: '4px' }}>
-                                                <ExternalLink size={12} /> View
-                                            </a>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Partner Vault Shortcut */}
-                        <div style={{ marginTop: '32px', paddingTop: '20px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <div style={{ width: '40px', height: '40px', background: '#e0e7ff', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <Users size={20} color="#4338ca" />
-                                </div>
-                                <div>
-                                    <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>Partner Vault Bridge</div>
-                                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Quick access to {formData.partners?.name || 'Customer'}'s master documents</div>
-                                </div>
-                            </div>
-                            <button 
-                                className="btn btn-secondary" 
-                                style={{ fontSize: '0.8rem', gap: '8px' }}
-                                onClick={handleOpenPartnerVault}
-                            >
-                                <ExternalLink size={14} /> Open Partner Folder
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {activeTab === 'delivery_proof' && (
-                    <div className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
-                        {/* Digital Delivery Proofs & Signatures Component */}
-                        <div style={{ marginBottom: '32px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                                <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <FileCheck size={22} color="#1a3c63" /> Digital Delivery Proofs & Signatures
-                                </h2>
-                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                                    <button 
-                                        type="button" 
-                                        onClick={handleOpenJobDrive} 
-                                        className="btn btn-secondary" 
-                                        style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-                                    >
-                                        <FolderOpen size={16} /> Open Job Folder
-                                    </button>
-                                    <button 
-                                        type="button" 
-                                        onClick={handleOpenSupportDocsDrive} 
-                                        className="btn btn-secondary" 
-                                        style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-                                    >
-                                        <FolderOpen size={16} /> Open SupportDocs Folder
-                                    </button>
-                                    <button 
-                                        type="button" 
-                                        onClick={syncDeliveryProofs} 
-                                        className="btn btn-primary" 
-                                        style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#1a3c63', borderColor: '#1a3c63' }}
-                                        disabled={loadingDeliveryProofs}
-                                    >
-                                        <RefreshCw size={16} className={loadingDeliveryProofs ? 'animate-spin' : ''} />
-                                        Sync Proofs with Google Drive
-                                    </button>
-                                </div>
-                            </div>
-
-                            {loadingDeliveryProofs && deliveryProofs.length === 0 ? (
-                                <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
-                                    <RefreshCw className="animate-spin" size={32} style={{ margin: '0 auto 16px' }} />
-                                    Loading delivery proofs...
-                                </div>
-                            ) : deliveryProofs.length === 0 ? (
-                                <div style={{ padding: '60px 40px', textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: '16px', border: '1px dashed #cbd5e1' }}>
-                                    <FileCheck size={48} style={{ color: '#94a3b8', margin: '0 auto 16px' }} />
-                                    <h3 style={{ margin: '0 0 8px', fontSize: '1rem', color: '#334155', fontWeight: 600 }}>No Signed Proofs Recorded</h3>
-                                    <p style={{ margin: 0, fontSize: '0.85rem' }}>Record signatures in the mobile digiPOD app or upload a signed copy below.</p>
-                                </div>
-                            ) : (
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
-                                    {deliveryProofs.map(proof => (
-                                        <div key={proof.id} style={{
-                                            background: '#fff',
-                                            border: '1px solid #e2e8f0',
-                                            borderRadius: '16px',
-                                            padding: '20px',
-                                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            gap: '12px'
-                                        }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                                <div>
-                                                    <h4 style={{ margin: '0 0 4px', fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>{proof.recipient_name}</h4>
-                                                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(proof.delivered_at || proof.created_at).toLocaleString()}</span>
-                                                </div>
-                                                {proof.location_name && (
-                                                    <span style={{ fontSize: '0.75rem', background: '#f1f5f9', padding: '4px 8px', borderRadius: '20px', fontWeight: 600, color: '#475569' }}>
-                                                        {proof.location_name}
-                                                    </span>
-                                                )}
-                                            </div>
-
-                                            {proof.gps_latitude && proof.gps_longitude && (
-                                                <a 
-                                                    href={`https://www.google.com/maps/search/?api=1&query=${proof.gps_latitude},${proof.gps_longitude}`}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    style={{ fontSize: '0.8rem', color: '#3b82f6', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
-                                                >
-                                                    📍 Location: {proof.gps_latitude.toFixed(4)}, {proof.gps_longitude.toFixed(4)} (Open Map)
-                                                </a>
-                                            )}
-
-                                            {proof.signature_drive_id && (
-                                                <div style={{ marginTop: '8px' }}>
-                                                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Signature / Proof</div>
-                                                    <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px', background: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '120px' }}>
-                                                        {proof.signature_drive_id.startsWith('http') || proof.signature_drive_id.length > 25 ? (
-                                                            <a 
-                                                                href={proof.signature_drive_id.startsWith('http') ? proof.signature_drive_id : `https://drive.google.com/file/d/${proof.signature_drive_id}/view`}
-                                                                target="_blank"
-                                                                rel="noreferrer"
-                                                                style={{ fontSize: '0.8rem', color: '#4f46e5', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}
-                                                            >
-                                                                Open Attached Document ↗
-                                                            </a>
-                                                        ) : (
-                                                            <>
-                                                                <img 
-                                                                    src={`https://lh3.googleusercontent.com/d/${proof.signature_drive_id}`}
-                                                                    alt="Recipient Signature"
-                                                                    style={{ maxHeight: '100px', maxWidth: '100%', objectFit: 'contain' }}
-                                                                    onError={(e) => {
-                                                                        e.target.style.display = 'none';
-                                                                        e.target.nextSibling.style.display = 'block';
-                                                                    }}
-                                                                />
-                                                                <a 
-                                                                    href={`https://drive.google.com/file/d/${proof.signature_drive_id}/view`}
-                                                                    target="_blank"
-                                                                    rel="noreferrer"
-                                                                    style={{ display: 'none', fontSize: '0.8rem', color: '#4f46e5', fontWeight: 600 }}
-                                                                >
-                                                                    View Proof Document ↗
-                                                                </a>
-                                                            </>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Signed Proofs Section (Moved from Explorer tab) */}
-                        <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.1rem', fontWeight: 700, color: '#1e293b' }}>
-                                    <FileCheck size={22} color="#059669" /> Signed Proofs of Delivery / Service Files
-                                </h3>
-                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                                    <button 
-                                        type="button"
-                                        onClick={() => fetchSignedProofs()} 
-                                        className="btn btn-secondary btn-sm" 
-                                        title="Refresh signed proofs from Google Drive" 
-                                        style={{ 
-                                            height: '36px', 
-                                            display: 'flex', 
-                                            alignItems: 'center', 
-                                            justifyContent: 'center',
-                                            padding: '6px 12px',
-                                            borderRadius: '8px'
-                                        }}
-                                    >
-                                        <RefreshCw size={14} className={loadingSignedProofs ? 'animate-spin' : ''} />
-                                    </button>
-                                    <button 
-                                        type="button"
-                                        onClick={async () => {
-                                            if (authStatus !== 'connected') {
-                                                toast.error('Google Drive is not connected. Please connect/reconnect at the status bar or Settings first.');
-                                                return;
-                                            }
-                                            const token = getStoredToken();
-                                            const rootId = await ensureJobFolder();
-                                            const supportDocsFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
-                                            setQrModal({ isOpen: true, folderId: supportDocsFolderId, folderName: 'SupportDocs' });
-                                        }} 
-                                        className="btn btn-secondary btn-sm" 
-                                        title="Mobile Upload to SupportDocs via QR Code"
-                                        style={{ 
-                                            display: 'flex', 
-                                            alignItems: 'center', 
-                                            gap: '6px',
-                                            background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', 
-                                            border: '1px solid #bbf7d0', 
-                                            color: '#166534',
-                                            height: '36px',
-                                            padding: '6px 12px',
-                                            borderRadius: '8px',
-                                            fontWeight: 600,
-                                            fontSize: '0.85rem'
-                                        }}
-                                    >
-                                        <Smartphone size={14} /> Mobile Scan
-                                    </button>
-                                    <div
-                                        onDragOver={(e) => { e.preventDefault(); setIsDraggingSigned(true); }}
-                                        onDragLeave={(e) => { e.preventDefault(); setIsDraggingSigned(false); }}
-                                        onDrop={async (e) => {
-                                            e.preventDefault();
-                                            setIsDraggingSigned(false);
-                                            const files = Array.from(e.dataTransfer.files);
-                                            if (files.length > 0) {
-                                                setLoadingSignedProofs(true);
-                                                try {
-                                                    const token = getStoredToken();
-                                                    const rootId = await ensureJobFolder();
-                                                    const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
-                                                    for (const file of files) {
-                                                        const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
-                                                        const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
-                                                        setFormData(prev => {
-                                                            const newAttachments = [...(prev.attachment_urls || []), proofUrl];
-                                                            return { ...prev, attachment_urls: newAttachments };
-                                                        });
-                                                        
-                                                        // Sync to Supabase delivery_proofs table immediately
-                                                        await supabase.from('delivery_proofs').insert({
-                                                            document_id: formData.id,
-                                                            recipient_name: 'Uploaded Copy (' + file.name.substring(0, 15) + ')',
-                                                            signature_drive_id: result.id,
-                                                            location_name: 'Web Upload'
-                                                        });
-                                                    }
-                                                    alert('Signed proof(s) uploaded successfully to Google Drive & Supabase database!');
-                                                    fetchSignedProofs();
-                                                    fetchDeliveryProofs();
-                                                } catch (err) {
-                                                    console.error('Proof upload failed:', err);
-                                                    alert('Upload failed: ' + err.message);
-                                                } finally {
-                                                    setLoadingSignedProofs(false);
-                                                }
-                                            }
-                                        }}
-                                        onClick={() => document.getElementById('signed-proof-upload').click()}
-                                        style={{
-                                            border: isDraggingSigned ? '2px dashed #059669' : '2px dashed #cbd5e1',
-                                            background: isDraggingSigned ? '#ecfdf5' : '#f8fafc',
-                                            padding: '6px 16px',
-                                            borderRadius: '8px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '8px',
-                                            cursor: 'pointer',
-                                            color: '#059669',
-                                            fontWeight: 600,
-                                            fontSize: '0.85rem',
-                                            transition: 'all 0.2s ease',
-                                            height: '36px',
-                                            justifyContent: 'center'
-                                        }}
-                                    >
-                                        <Upload size={14} />
-                                        <span>{isDraggingSigned ? 'Drop Signed Copy Here' : 'Drop Signed Copy'}</span>
-                                    </div>
-                                    <input id="signed-proof-upload" type="file" multiple hidden onChange={(e) => {
-                                        const files = Array.from(e.target.files);
-                                        const uploadSequence = async () => {
-                                            setLoadingSignedProofs(true);
-                                            try {
-                                                const token = getStoredToken();
-                                                const rootId = await ensureJobFolder();
-                                                const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
-                                                for (const file of files) {
-                                                    const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
-                                                    const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
-                                                    setFormData(prev => {
-                                                        const newAttachments = [...(prev.attachment_urls || []), proofUrl];
-                                                        return { ...prev, attachment_urls: newAttachments };
-                                                    });
-                                                    
-                                                    // Sync to Supabase delivery_proofs table immediately
-                                                    await supabase.from('delivery_proofs').insert({
-                                                        document_id: formData.id,
-                                                        recipient_name: 'Uploaded Copy (' + file.name.substring(0, 15) + ')',
-                                                        signature_drive_id: result.id,
-                                                        location_name: 'Web Upload'
-                                                    });
-                                                }
-                                                alert('Signed proof(s) uploaded successfully to Google Drive & Supabase database!');
-                                                fetchSignedProofs();
-                                                fetchDeliveryProofs();
-                                            } catch (err) {
-                                                console.error('Proof upload failed:', err);
-                                                alert('Upload failed: ' + err.message);
-                                            } finally {
-                                                setLoadingSignedProofs(false);
-                                            }
-                                        };
-                                        uploadSequence();
-                                    }} />
-                                </div>
-                            </div>
-                            {loadingSignedProofs ? (
-                                <div style={{ textAlign: 'center', padding: '20px' }}><Loader2 size={24} className="animate-spin" /></div>
-                            ) : signedProofs.length === 0 ? (
-                                <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '0.9rem' }}>
-                                    No signed proofs found in Job Folder. Use the Scanner App or upload here.
-                                </div>
-                            ) : (
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
-                                    {signedProofs.map(proof => (
-                                        <div key={proof.id} style={{ background: '#fff', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                            <FileCheck size={18} color="#059669" />
-                                            <div style={{ flex: 1, overflow: 'hidden' }}>
-                                                <div style={{ fontSize: '0.8rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{proof.name}</div>
-                                            </div>
-                                            <a href={proof.webViewLink} target="_blank" rel="noreferrer" style={{ color: '#64748b' }}><ExternalLink size={14} /></a>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            {formData.document_type === 'Tax Invoice' && (
-                                <div style={{ marginTop: '24px', padding: '16px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '12px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                                        <AlertCircle size={18} color="#d97706" />
-                                        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#92400e' }}>Invoice Compliance Check</span>
-                                    </div>
-                                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#b45309' }}>
-                                        {signedProofs.length > 0 
-                                            ? `Found ${signedProofs.length} signed proof(s) in Job Folder. Ensure they are attached when emailing the customer.`
-                                            : "Warning: No signed Proof of Delivery found in Job Folder. It is highly recommended to upload a signed copy before sending the invoice."}
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                )}
-
-                {activeTab === 'payments' && (
-                    <div className="glass-panel job-payments">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#1e293b' }}>Payments & GST Dashboard</h2>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748b' }}>Reporting Period:</label>
-                                <select 
-                                    className="form-select" 
-                                    value={paymentQuarter} 
-                                    onChange={(e) => setPaymentQuarter(e.target.value)}
-                                    style={{ width: '150px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                                >
-                                    <option value="All">Full Project</option>
-                                    <option value="Q1">Q1 (Jan - Mar)</option>
-                                    <option value="Q2">Q2 (Apr - Jun)</option>
-                                    <option value="Q3">Q3 (Jul - Sep)</option>
-                                    <option value="Q4">Q4 (Oct - Dec)</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        {/* GST & Financial Summary */}
-                        {(() => {
-                            const getQuarter = (dateStr) => {
-                                if (!dateStr) return 'Q1';
-                                const month = new Date(dateStr).getMonth();
-                                if (isNaN(month)) return 'Q1';
-                                if (month <= 2) return 'Q1';
-                                if (month <= 5) return 'Q2';
-                                if (month <= 8) return 'Q3';
-                                return 'Q4';
-                            };
-
-                            const fCust = paymentQuarter === 'All' ? customerPayments : customerPayments.filter(p => getQuarter(p.payment_date) === paymentQuarter);
-                            const fSupp = paymentQuarter === 'All' ? expenses : expenses.filter(p => getQuarter(p.invoice_date) === paymentQuarter);
-                            
-                            const fInvoices = workflowDocs.filter(d => 
-                                (d.document_type === 'Tax Invoice' || d.document_type === 'Proforma Invoice') &&
-                                (paymentQuarter === 'All' || getQuarter(d.issue_date) === paymentQuarter)
-                            );
-
-                            const ledgerItems = [
-                                ...fInvoices.map(inv => ({
-                                    ...inv,
-                                    isSuiteInvoice: true,
-                                    invoice_no: inv.document_no,
-                                    payment_date: inv.issue_date,
-                                    gst_amount: inv.tax_amount || 0,
-                                    amount: inv.total_amount || 0,
-                                    proof_url: inv.attachment_urls?.[0] || null
-                                })),
-                                ...fCust.map(p => ({
-                                    ...p,
-                                    isSuiteInvoice: false,
-                                    invoice_no: p.invoice_no,
-                                    payment_date: p.payment_date,
-                                    gst_amount: p.gst_amount || 0,
-                                    amount: p.amount || 0,
-                                    proof_url: p.proof_url
-                                }))
-                            ].sort((a, b) => new Date(b.payment_date) - new Date(a.payment_date));
-
-                            const outGst = fInvoices.length > 0 
-                                ? fInvoices.reduce((acc, inv) => acc + (parseFloat(inv.tax_amount) || 0), 0)
-                                : fCust.reduce((acc, p) => acc + (parseFloat(p.gst_amount) || 0), 0);
-                                
-                            const inGst = fSupp.reduce((acc, p) => acc + (parseFloat(p.gst_amount) || 0), 0);
-                            const netGst = outGst - inGst;
-
-                            return (
-                                <>
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '32px' }}>
-                                    <div className="summary-card" style={{ background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', padding: '20px', borderRadius: '16px', border: '1px solid #bfdbfe' }}>
-                                        <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#1e40af', textTransform: 'uppercase', marginBottom: '8px' }}>Output GST (Collected)</div>
-                                        <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#1e3a8a' }}>
-                                            {formData.currency} {outGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                        </div>
-                                        <div style={{ fontSize: '0.7rem', color: '#60a5fa', marginTop: '4px' }}>
-                                            {fInvoices.length > 0 ? `From ${fInvoices.length} invoices` : `From ${fCust.length} receipts`}
-                                        </div>
-                                    </div>
-                                    <div className="summary-card" style={{ background: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)', padding: '20px', borderRadius: '16px', border: '1px solid #fed7aa' }}>
-                                        <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#9a3412', textTransform: 'uppercase', marginBottom: '8px' }}>Input GST (Paid)</div>
-                                        <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#7c2d12' }}>
-                                            {formData.currency} {inGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                        </div>
-                                        <div style={{ fontSize: '0.7rem', color: '#fb923c', marginTop: '4px' }}>From {fSupp.length} bills</div>
-                                    </div>
-                                    <div className="summary-card" style={{ background: `linear-gradient(135deg, ${netGst >= 0 ? '#f0fdf4 0%, #dcfce7 100%' : '#fef2f2 0%, #fee2e2 100%'})`, padding: '20px', borderRadius: '16px', border: `1px solid ${netGst >= 0 ? '#bbf7d0' : '#fecaca'}` }}>
-                                        <div style={{ fontSize: '0.75rem', fontWeight: 800, color: netGst >= 0 ? '#166534' : '#991b1b', textTransform: 'uppercase', marginBottom: '8px' }}>Net GST Position</div>
-                                        <div style={{ fontSize: '1.75rem', fontWeight: 900, color: netGst >= 0 ? '#14532d' : '#7f1d1d' }}>
-                                            {formData.currency} {netGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                        </div>
-                                        <div style={{ fontSize: '0.7rem', color: netGst >= 0 ? '#4ade80' : '#f87171', marginTop: '4px' }}>{netGst >= 0 ? 'Payable to Govt' : 'Claimable Refund'}</div>
-                                    </div>
-                                </div>
-
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '32px' }}>
-                                    {/* Customer Payments (Incoming) */}
-                                    <div>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}><CreditCard size={20} className="text-accent" /> Customer Ledger</h3>
-                                        </div>
-                                        <div className="table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
-                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                                                <thead style={{ background: '#f8fafc' }}>
-                                                    <tr>
-                                                        <th style={{ padding: '12px', textAlign: 'left' }}>Inv No</th>
-                                                        <th style={{ padding: '12px', textAlign: 'left' }}>Date</th>
-                                                        <th style={{ padding: '12px', textAlign: 'right' }}>GST</th>
-                                                        <th style={{ padding: '12px', textAlign: 'right' }}>Total</th>
-                                                        <th style={{ padding: '12px', textAlign: 'center' }}>Proof</th>
-                                                        <th style={{ padding: '12px', textAlign: 'right' }}>Actions</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {ledgerItems.length === 0 ? (
-                                                        <tr><td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>No {paymentQuarter === 'All' ? '' : paymentQuarter} payments or invoices recorded.</td></tr>
-                                                    ) : (
-                                                        ledgerItems.map(item => (
-                                                            <tr key={item.id} style={{ borderTop: '1px solid #f1f5f9' }}>
-                                                                <td style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', minHeight: '44px' }}>
-                                                                    <span>{item.invoice_no}</span>
-                                                                    {item.isSuiteInvoice ? (
-                                                                        <span style={{ 
-                                                                            padding: '2px 6px', 
-                                                                            borderRadius: '4px', 
-                                                                            fontSize: '0.7rem', 
-                                                                            fontWeight: 700, 
-                                                                            background: '#eff6ff', 
-                                                                            color: '#1e40af',
-                                                                            border: '1px solid #bfdbfe'
-                                                                        }}>
-                                                                            Invoice
-                                                                        </span>
-                                                                    ) : (
-                                                                        <span style={{ 
-                                                                            padding: '2px 6px', 
-                                                                            borderRadius: '4px', 
-                                                                            fontSize: '0.7rem', 
-                                                                            fontWeight: 700, 
-                                                                            background: '#f0fdf4', 
-                                                                            color: '#166534',
-                                                                            border: '1px solid #bbf7d0'
-                                                                        }}>
-                                                                            Payment
-                                                                        </span>
-                                                                    )}
-                                                                </td>
-                                                                <td style={{ padding: '12px' }}>{item.payment_date ? new Date(item.payment_date).toLocaleDateString() : '-'}</td>
-                                                                <td style={{ padding: '12px', textAlign: 'right', color: '#64748b' }}>{item.gst_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>{item.amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                                                <td style={{ padding: '12px', textAlign: 'center' }}>
-                                                                    {item.isSuiteInvoice ? (
-                                                                        <button 
-                                                                            onClick={() => viewInvoicePDF(item.id)}
-                                                                            style={{ color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'inline-flex', alignItems: 'center' }}
-                                                                            title="Preview Suite Invoice PDF"
-                                                                        >
-                                                                            <Eye size={16} />
-                                                                        </button>
-                                                                    ) : item.proof_url ? (
-                                                                        <a href={item.proof_url} target="_blank" rel="noreferrer" style={{ color: '#10b981', display: 'inline-flex', alignItems: 'center' }}><FileCheck size={16} /></a>
-                                                                    ) : (
-                                                                        <label style={{ cursor: 'pointer', color: '#94a3b8', display: 'inline-flex', alignItems: 'center' }}>
-                                                                            <Upload size={16} />
-                                                                            <input type="file" hidden onChange={(e) => handlePaymentProofUpload('customer', item.id, e.target.files[0])} />
-                                                                        </label>
-                                                                    )}
-                                                                </td>
-                                                                <td style={{ padding: '12px', textAlign: 'right' }}>
-                                                                    {item.isSuiteInvoice ? (
-                                                                        <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic' }}>Managed in Suite</span>
-                                                                    ) : (
-                                                                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                                                                            <button onClick={() => setPaymentModal({ isOpen: true, type: 'customer', data: item })} style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}><FileText size={14} /></button>
-                                                                            <button onClick={() => handleDeletePayment('customer', item.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' }}><Trash2 size={14} /></button>
-                                                                        </div>
-                                                                    )}
-                                                                </td>
-                                                            </tr>
-                                                        ))
-                                                    )}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-
-                                    {/* Supplier Payments (Outgoing) */}
-                                    <div>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}><Users size={20} className="text-accent" /> Supplier Ledger</h3>
-                                            <button className="btn btn-sm btn-primary" onClick={addExpenseRow}>+ Add Record</button>
-                                        </div>
-                                        <div className="table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
-                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                                                <thead style={{ background: '#f8fafc' }}>
-                                                    <tr>
-                                                        <th style={{ padding: '12px', textAlign: 'left' }}>Supplier / Inv No</th>
-                                                        <th style={{ padding: '12px', textAlign: 'left' }}>Date</th>
-                                                        <th style={{ padding: '12px', textAlign: 'right' }}>GST</th>
-                                                        <th style={{ padding: '12px', textAlign: 'right' }}>Total</th>
-                                                        <th style={{ padding: '12px', textAlign: 'center' }}>Proof</th>
-                                                        <th style={{ padding: '12px', textAlign: 'right' }}>Actions</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {fSupp.length === 0 ? (
-                                                        <tr><td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>No {paymentQuarter === 'All' ? '' : paymentQuarter} records found.</td></tr>
-                                                    ) : (
-                                                        fSupp.map(p => (
-                                                            <tr key={p.id} style={{ borderTop: '1px solid #f1f5f9' }}>
-                                                                <td style={{ padding: '12px' }}>
-                                                                    <div style={{ fontWeight: 600 }}>{partners.find(part => part.id === p.supplier_id)?.name || 'Unknown'}</div>
-                                                                    <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{p.invoice_no || '-'}</div>
-                                                                </td>
-                                                                <td style={{ padding: '12px' }}>{p.invoice_date ? new Date(p.invoice_date).toLocaleDateString() : '-'}</td>
-                                                                <td style={{ padding: '12px', textAlign: 'right', color: '#64748b' }}>{p.gst_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>{p.grand_total?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                                                <td style={{ padding: '12px', textAlign: 'center' }}>
-                                                                    {p.bill_url ? (
-                                                                        <a href={p.bill_url} target="_blank" rel="noreferrer" style={{ color: '#10b981' }}><FileCheck size={16} /></a>
-                                                                    ) : (
-                                                                        <label style={{ cursor: 'pointer', color: '#94a3b8' }}>
-                                                                            <Upload size={16} />
-                                                                            <input type="file" hidden onChange={(e) => handlePaymentProofUpload('supplier', p.id, e.target.files[0])} />
-                                                                        </label>
-                                                                    )}
-                                                                </td>
-                                                                <td style={{ padding: '12px', textAlign: 'right' }}>
-                                                                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                                                                        <button onClick={() => setExpenseModal({ isOpen: true, data: p })} style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}><FileText size={14} /></button>
-                                                                        <button onClick={() => handleDeleteExpenseById(p.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' }}><Trash2 size={14} /></button>
-                                                                    </div>
-                                                                </td>
-                                                            </tr>
-                                                        ))
-                                                    )}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </div>
-                                </>
-                            );
-                        })()}
                     </div>
                 )}
             </div>
@@ -7348,10 +7383,10 @@ export default function WorkflowEditor() {
                                                         <button
                                                             type="button"
                                                             onClick={() => viewAttachedFile(file)}
-                                                            style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', fontWeight: 700 }}
-                                                            title="Preview attachment"
+                                                            style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', cursor: 'pointer', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                            title="Open / Verify Document PDF"
                                                         >
-                                                            <Eye size={14} /> View
+                                                            <Eye size={14} /> Open / Verify PDF
                                                         </button>
                                                         <button
                                                             type="button"

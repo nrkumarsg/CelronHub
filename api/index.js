@@ -5,6 +5,8 @@ import cors from 'cors';
 import { runUniversalSearch } from '../src/lib/universalFinder.js';
 import { supabase } from '../src/lib/supabase.js';
 import { chatWithGemini } from '../src/lib/geminiService.js';
+import { handleKioskLogin } from '../src/lib/kioskAuthServer.js';
+import { handleAiComplete } from '../src/lib/ai/serverAiHandler.js';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 const app = express();
@@ -19,6 +21,20 @@ app.get('/api/health', (req, res) => res.json({ status: 'up', source: 'api' }));
 // ---- 0️⃣ Health check ----------------------------------------------------
 app.get('/ping', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 app.get('/api/ping', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+
+// ---- Kiosk PIN login ------------------------------------------------------
+app.post('/api/kiosk-login', async (req, res) => {
+    const { pin } = req.body || {};
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+    const result = await handleKioskLogin(pin, ip);
+    res.status(result.status).json(result.body);
+});
+
+// ---- AI provider proxy (keeps operator-owned API keys server-only) -------
+app.post('/api/ai/complete', async (req, res) => {
+    const result = await handleAiComplete(req.body);
+    res.status(result.status).json(result.body);
+});
 
 // ---- 1️⃣ Search endpoint -------------------------------------------------
 app.post('/api/universal-finder/search', async (req, res) => {
@@ -318,10 +334,11 @@ app.post('/api/universal-finder/chat', async (req, res) => {
 
 // ---- 5️⃣ Email Dispatch ----------------------------------------------------
 app.post('/api/send-email', async (req, res) => {
-    const { to, cc, bcc, subject, body, attachments, company_id, from_email } = req.body;
+    const { to, cc, bcc, subject, body, attachments, company_id, from_email, in_reply_to, inReplyTo, references } = req.body;
+    const replyToHeader = in_reply_to || inReplyTo || '';
 
     try {
-        console.log(`[EmailAPI] Request to send email from ${from_email} for company ${company_id}`);
+        console.log(`[EmailAPI] Request to send email from ${from_email} for company ${company_id}. Thread Reply-To: ${replyToHeader}`);
 
         // 1. Fetch SMTP Credentials
         const { data: settings, error: settingsErr } = await supabase
@@ -373,7 +390,7 @@ app.post('/api/send-email', async (req, res) => {
             };
         });
 
-        // 4. Send Mail
+        // 4. Send Mail with Threading Headers if available
         const mailOptions = {
             from: `"Celron Hub" <${senderEmail}>`,
             to,
@@ -381,7 +398,11 @@ app.post('/api/send-email', async (req, res) => {
             bcc,
             subject,
             text: body,
-            attachments: mailAttachments
+            attachments: mailAttachments,
+            ...(replyToHeader ? { inReplyTo: replyToHeader, references: references || replyToHeader } : {}),
+            headers: {
+                ...(replyToHeader ? { 'In-Reply-To': replyToHeader, 'References': references || replyToHeader } : {})
+            }
         };
 
         console.log(`[EmailAPI] Sending mail via ${smtpHost}:${smtpPort}...`);

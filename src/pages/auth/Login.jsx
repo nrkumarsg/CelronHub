@@ -13,8 +13,8 @@ const Login = () => {
                           (import.meta.env.VITE_CATALOG_ONLY === 'true' && 
                            !window.location.hostname.includes('celronhub') && 
                            !window.location.hostname.includes('celron-partners'));
-    const [email, setEmail] = useState('nrkumarsg@gmail.com');
-    const [password, setPassword] = useState('Mother1973');
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);

@@ -1,0 +1,43 @@
+{
+  "manifest_version": 2,
+  "name": "Celron Hub - Smart Upload Tool",
+  "version": "1.0.0",
+  "description": "Smart Upload Tool for Thunderbird: OCR, Drag & Drop, Drive integration, and instant email attachment.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "compose",
+    "tabs",
+    "storage",
+    "identity",
+    "accountsRead",
+    "messagesRead",
+    "alarms",
+    "notifications",
+    "<all_urls>"
+  ],
+  "content_security_policy": "script-src 'self' 'unsafe-eval'; object-src 'self'",
+  "background": {
+    "scripts": ["mailTriage.js", "background.js"]
+  },
+  "compose_action": {
+    "default_icon": "icons/icon32.png",
+    "default_title": "Open Smart Upload Tool",
+    "default_popup": "index.html"
+  },
+  "browser_action": {
+    "default_icon": "icons/icon32.png",
+    "default_title": "CEL-RON Mail Triage — New / Unanswered / Awaiting Reply",
+    "default_popup": "triage.html"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "smart-upload@celron.net",
+      "strict_min_version": "78.0"
+    }
+  }
+}

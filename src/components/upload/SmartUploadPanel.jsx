@@ -3,10 +3,12 @@ import {
     Search, X, Clock, Clipboard, Download, Cloud, Monitor, 
     AlertCircle, FileText, CheckCircle, Pin, Folder, Star, 
     Sparkles, ShieldAlert, FileImage, FileCode, Keyboard,
-    Smartphone, QrCode, Image as ImageIcon, Loader2
+    Smartphone, QrCode, Image as ImageIcon, Loader2, Camera, RefreshCw, Mail, Inbox,
+    ExternalLink, Grid, List
 } from 'lucide-react';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
+import { QRCodeSVG } from 'qrcode.react';
 import { performOCR } from '../../lib/googleAuthService';
 import { parseOCRBusinessCard } from '../../lib/geminiService';
 import { RecentFilesStore } from './RecentFilesStore';
@@ -15,9 +17,25 @@ import { DuplicateChecker } from './DuplicateChecker';
 import { listFolderContent } from '../../lib/driveService';
 import { getStoredToken } from '../../lib/googleAuthService';
 
-export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentType = 'manual', accept = '.pdf', activeFolderId = null, activeFolderName = 'System Workspace', initialTab = 'recent' }) {
+const DEFAULT_GDRIVE_FOLDER_ID = '1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w';
+const DEFAULT_GDRIVE_FOLDER_URL = `https://drive.google.com/drive/folders/${DEFAULT_GDRIVE_FOLDER_ID}?usp=drive_link`;
+
+export default function SmartUploadPanel({ 
+    isOpen = true, 
+    onClose, 
+    onSelect, 
+    documentType = 'manual', 
+    accept = '.pdf,.png,.jpg,.jpeg', 
+    activeFolderId = DEFAULT_GDRIVE_FOLDER_ID, 
+    activeFolderName = 'System Workspace', 
+    initialTab = 'recent',
+    embedded = false,
+    runningEnquiryNo = null
+}) {
     const [activeTab, setActiveTab] = useState(initialTab || 'recent');
     const [searchTerm, setSearchTerm] = useState('');
+    const [panelViewMode, setPanelViewMode] = useState('list'); // 'list' or 'grid' (Image 2 View Toggle)
+    const [showDriveQrModal, setShowDriveQrModal] = useState(false);
     
     // OCR states
     const [ocrFile, setOcrFile] = useState(null);
@@ -29,6 +47,13 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
     const [aiResult, setAiResult] = useState(null);
     const [isAiProcessing, setIsAiProcessing] = useState(false);
     const imgRef = useRef(null);
+
+    // Camera state
+    const [cameraStream, setCameraStream] = useState(null);
+    const [isCameraActive, setIsCameraActive] = useState(false);
+    const [cameraError, setCameraError] = useState('');
+    const [cameraFacingMode, setCameraFacingMode] = useState('environment'); // 'environment' or 'user'
+    const videoRef = useRef(null);
 
     // Mobile QR state
     const [isPolling, setIsPolling] = useState(false);
@@ -109,14 +134,80 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [isOpen]);
 
-    // Cleanup object URL previews to prevent leaks
+    // Camera Stream Lifecycle & Functions
     useEffect(() => {
+        if (activeTab === 'camera' && isOpen) {
+            startCamera(cameraFacingMode);
+        } else {
+            stopCamera();
+        }
         return () => {
-            if (previewUrl) {
-                URL.revokeObjectURL(previewUrl);
-            }
+            stopCamera();
         };
-    }, [previewUrl]);
+    }, [activeTab, isOpen]);
+
+    const startCamera = async (mode = 'environment') => {
+        stopCamera();
+        setCameraError('');
+        setIsCameraActive(false);
+        try {
+            const constraints = {
+                video: {
+                    facingMode: mode,
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                }
+            };
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            setCameraStream(stream);
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+            }
+            setIsCameraActive(true);
+        } catch (err) {
+            console.error("Camera access error:", err);
+            setCameraError(err.message || "Unable to access camera. Please check camera permissions in browser.");
+            setIsCameraActive(false);
+        }
+    };
+
+    const stopCamera = () => {
+        if (cameraStream) {
+            cameraStream.getTracks().forEach(track => track.stop());
+            setCameraStream(null);
+        }
+        setIsCameraActive(false);
+    };
+
+    const toggleCameraFacingMode = () => {
+        const nextMode = cameraFacingMode === 'environment' ? 'user' : 'environment';
+        setCameraFacingMode(nextMode);
+        startCamera(nextMode);
+    };
+
+    const captureCameraPhoto = () => {
+        if (!videoRef.current) return;
+        const video = videoRef.current;
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 1280;
+        canvas.height = video.videoHeight || 720;
+        const ctx = canvas.getContext('2d');
+
+        if (cameraFacingMode === 'user') {
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+        }
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        canvas.toBlob((blob) => {
+            if (!blob) return;
+            const now = new Date();
+            const timeStr = now.toISOString().replace(/[:.]/g, '-');
+            const file = new File([blob], `Camera_Capture_${timeStr}.png`, { type: 'image/png' });
+            stopCamera();
+            handleFileStaged(file);
+        }, 'image/png');
+    };
 
     // Load mock downloads suited for CelronHub shipping/marine themes
     const loadMockDownloads = () => {
@@ -192,6 +283,53 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
         handleFileStaged(file);
     };
 
+    // Universal Drag & Drop Handler for Files, Thunderbird EMLs, Outlook MSGs, and Gmail HTML
+    const handleUniversalDrop = async (e) => {
+        e.preventDefault();
+        setIsDraggingOver(false);
+
+        // Scenario 1: Standard files dragged (e.g. .eml, .msg, .pdf, .jpg, .docx from Thunderbird, Outlook, or File Explorer)
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            const file = e.dataTransfer.files[0];
+            handleFileStaged(file);
+            return;
+        }
+
+        // Scenario 2: Dragged email HTML or plain text from Thunderbird, Outlook Web, or Gmail
+        const htmlContent = e.dataTransfer.getData('text/html');
+        const plainText = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list');
+
+        if (htmlContent || plainText) {
+            let emailSubject = 'Thunderbird_Email';
+            
+            if (plainText) {
+                const firstLine = plainText.split('\n')[0].trim();
+                if (firstLine && firstLine.length > 2) {
+                    emailSubject = firstLine.substring(0, 50).replace(/[/\\?%*:|"<>]/g, '_');
+                }
+            }
+
+            if (htmlContent) {
+                const match = htmlContent.match(/Subject:\s*([^\n<]+)/i) || htmlContent.match(/<title>(.*?)<\/title>/i);
+                if (match && match[1]) {
+                    emailSubject = match[1].trim().replace(/[/\\?%*:|"<>]/g, '_');
+                }
+            }
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const fileName = `${emailSubject}_${timestamp}.eml`;
+            const rawBody = htmlContent || plainText;
+
+            const emlHeader = `From: Thunderbird/Outlook Drag <email@celron.net>\nSubject: ${emailSubject}\nDate: ${new Date().toUTCString()}\nMIME-Version: 1.0\nContent-Type: text/html; charset=utf-8\n\n`;
+            const fullEmlData = emlHeader + rawBody;
+
+            const blob = new Blob([fullEmlData], { type: 'message/rfc822' });
+            const emailFile = new File([blob], fileName, { type: 'message/rfc822' });
+
+            handleFileStaged(emailFile);
+        }
+    };
+
     // Keyboard clipboard paste
     const handlePaste = (e) => {
         const items = e.clipboardData?.items;
@@ -230,7 +368,7 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
 
         // Callback
         onSelect(fileToUpload, suggestions);
-        onClose();
+        if (!embedded && onClose) onClose();
         resetStagedState();
     };
 
@@ -246,14 +384,14 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
             tags: recent.category
         };
         onSelect(mockFile, suggestions);
-        onClose();
+        if (!embedded && onClose) onClose();
     };
 
     const handleSelectMockDownload = (mockDl) => {
         const mockFile = new File([], mockDl.name, { type: 'application/pdf' });
         const suggestions = AIFileClassifier.classify(mockDl.name);
         onSelect(mockFile, suggestions);
-        onClose();
+        if (!embedded && onClose) onClose();
     };
 
     const handleSelectGoogleDriveFile = (gFile) => {
@@ -267,7 +405,7 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
         };
         const suggestions = AIFileClassifier.classify(gFile.name);
         onSelect(mockFile, suggestions);
-        onClose();
+        if (!embedded && onClose) onClose();
     };
 
     const resetStagedState = () => {
@@ -408,47 +546,60 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                (u.category || '').toLowerCase().includes(term);
     });
 
-    if (!isOpen) return null;
+    if (!isOpen && !embedded) return null;
 
-    return (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
-            
-            {/* Modal Box */}
-            <div className="glass-panel animate-scale-up" 
-                style={{ 
-                    background: '#ffffff', 
-                    color: '#1e293b', 
-                    maxWidth: '960px', 
-                    width: '100%', 
-                    height: '660px',
-                    borderRadius: '24px', 
-                    border: '1px solid #e2e8f0', 
-                    boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', 
-                    display: 'flex', 
-                    flexDirection: 'column', 
-                    overflow: 'hidden',
-                    position: 'relative'
-                }}
-            >
-                {/* Header */}
-                <div style={{ padding: '20px 28px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <Cloud size={24} color="#6366f1" />
-                        <div>
-                            <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.02em' }}>Smart Document Upload</h3>
-                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Select a file source to instantly upload and tag technical documents</span>
-                        </div>
+    const panelContent = (
+        <div className="glass-panel animate-scale-up" 
+            onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
+            onDragLeave={() => setIsDraggingOver(false)}
+            onDrop={handleUniversalDrop}
+            style={{ 
+                background: '#ffffff', 
+                color: '#1e293b', 
+                maxWidth: embedded ? '100%' : '960px', 
+                width: '100%', 
+                height: embedded ? '580px' : '660px',
+                borderRadius: embedded ? '16px' : '24px', 
+                border: isDraggingOver ? '2px dashed #6366f1' : '1px solid #e2e8f0', 
+                boxShadow: embedded ? '0 4px 16px rgba(0,0,0,0.05)' : '0 25px 50px -12px rgba(0,0,0,0.25)', 
+                display: 'flex', 
+                flexDirection: 'column', 
+                overflow: 'hidden',
+                position: 'relative'
+            }}
+        >
+            {/* Header */}
+            <div style={{ padding: embedded ? '14px 20px' : '20px 28px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <Cloud size={24} color="#6366f1" />
+                    <div>
+                        <h3 style={{ margin: 0, fontSize: embedded ? '1.05rem' : '1.2rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            Smart Document Upload
+                            {runningEnquiryNo && (
+                                <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '2px 8px', borderRadius: '12px', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}>
+                                    Folder: {runningEnquiryNo}
+                                </span>
+                            )}
+                        </h3>
+                        <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                            {runningEnquiryNo 
+                                ? `All uploaded files automatically reach the project folder for ${runningEnquiryNo}` 
+                                : 'Select a file source to instantly upload and tag technical documents'}
+                        </span>
                     </div>
+                </div>
+                {!embedded && onClose && (
                     <button 
                         onClick={onClose}
                         style={{ background: '#fff', border: '1px solid #e2e8f0', cursor: 'pointer', color: '#94a3b8', padding: '6px', borderRadius: '10px', display: 'flex', alignItems: 'center' }}
                     >
                         <X size={18} />
                     </button>
-                </div>
+                )}
+            </div>
 
-                {/* Body Area */}
-                <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+            {/* Body Area */}
+            <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
                     
                     {/* Left Tabs Nav */}
                     <nav style={{ width: '220px', borderRight: '1px solid #f1f5f9', background: '#f8fafc', padding: '20px 12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -519,6 +670,17 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                             <Sparkles size={16} /> Smart OCR
                         </button>
                         <button 
+                            onClick={() => { setActiveTab('camera'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+                                background: activeTab === 'camera' ? '#6366f1' : 'transparent',
+                                color: activeTab === 'camera' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.2s'
+                            }}
+                        >
+                            <Camera size={16} /> Camera Photo
+                        </button>
+                        <button 
                             onClick={() => { setActiveTab('mobile_qr'); resetStagedState(); }}
                             style={{
                                 display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
@@ -549,7 +711,7 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                         {/* 1. RECENT FILES TAB */}
                         {activeTab === 'recent' && (
                             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                                <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+                                <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', alignItems: 'center' }}>
                                     <div style={{ flex: 1, display: 'flex', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '4px 12px' }}>
                                         <Search size={18} style={{ alignSelf: 'center', color: '#94a3b8' }} />
                                         <input 
@@ -560,6 +722,25 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                                             style={{ border: 'none', background: 'transparent', outline: 'none', padding: '10px', fontSize: '0.85rem', flex: 1 }}
                                         />
                                     </div>
+                                    {/* Image 2 View Toggle Component */}
+                                    <div style={{ display: 'flex', background: '#f8fafc', padding: '3px', borderRadius: '10px', border: '1px solid #e2e8f0', flexShrink: 0 }}>
+                                        <button 
+                                            type="button"
+                                            onClick={() => setPanelViewMode('grid')} 
+                                            title="Grid View Mode"
+                                            style={{ padding: '6px 10px', background: panelViewMode === 'grid' ? '#fff' : 'transparent', border: 'none', borderRadius: '8px', cursor: 'pointer', boxShadow: panelViewMode === 'grid' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', display: 'flex', alignItems: 'center' }}
+                                        >
+                                            <Grid size={16} color={panelViewMode === 'grid' ? '#6366f1' : '#64748b'} />
+                                        </button>
+                                        <button 
+                                            type="button"
+                                            onClick={() => setPanelViewMode('list')} 
+                                            title="List View Mode"
+                                            style={{ padding: '6px 10px', background: panelViewMode === 'list' ? '#fff' : 'transparent', border: 'none', borderRadius: '8px', cursor: 'pointer', boxShadow: panelViewMode === 'list' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', display: 'flex', alignItems: 'center' }}
+                                        >
+                                            <List size={16} color={panelViewMode === 'list' ? '#6366f1' : '#64748b'} />
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <div style={{ flex: 1, overflowY: 'auto', border: '1px solid #f1f5f9', borderRadius: '12px', padding: '8px' }}>
@@ -567,6 +748,43 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                                         <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8', fontSize: '0.85rem' }}>
                                             <Clock size={32} style={{ opacity: 0.3, marginBottom: '8px', margin: '0 auto' }} />
                                             No recent uploads found.
+                                        </div>
+                                    ) : panelViewMode === 'grid' ? (
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px' }}>
+                                            {filteredRecent.map(file => (
+                                                <div 
+                                                    key={file.id} 
+                                                    onClick={() => handleSelectRecent(file)}
+                                                    style={{ 
+                                                        display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '12px', 
+                                                        background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', cursor: 'pointer', fontSize: '0.8rem'
+                                                    }}
+                                                    onMouseEnter={e => e.currentTarget.style.borderColor = '#6366f1'}
+                                                    onMouseLeave={e => e.currentTarget.style.borderColor = '#e2e8f0'}
+                                                >
+                                                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '8px' }}>
+                                                        <FileText size={20} color="#6366f1" style={{ flexShrink: 0 }} />
+                                                        <strong style={{ color: '#334155', wordBreak: 'break-word', lineHeight: '1.3' }}>{file.name}</strong>
+                                                    </div>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto', paddingTop: '6px', borderTop: '1px solid #f1f5f9' }}>
+                                                        <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                                                            {new Date(file.uploadDate).toLocaleDateString()}
+                                                        </span>
+                                                        {file.url && (
+                                                            <a
+                                                                href={file.url}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '2px 6px', fontSize: '0.68rem', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '2px' }}
+                                                                title="Direct Open Link"
+                                                            >
+                                                                Open <ExternalLink size={10} />
+                                                            </a>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
                                     ) : (
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -590,9 +808,23 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                                                             </div>
                                                         </div>
                                                     </div>
-                                                    <span style={{ fontSize: '0.7rem', color: '#94a3b8', flexShrink: 0 }}>
-                                                        {new Date(file.uploadDate).toLocaleDateString()}
-                                                    </span>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                                                        <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                                                            {new Date(file.uploadDate).toLocaleDateString()}
+                                                        </span>
+                                                        {file.url && (
+                                                            <a
+                                                                href={file.url}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '2px 8px', fontSize: '0.7rem', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                                                                title="Direct Open Link"
+                                                            >
+                                                                Open <ExternalLink size={10} />
+                                                            </a>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -655,6 +887,116 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                         {/* 4. GOOGLE DRIVE TAB */}
                         {activeTab === 'gdrive' && (
                             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                                    <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <Cloud size={16} color="#6366f1" /> Google Drive Workspace Files ({gdriveFiles.length})
+                                    </span>
+                                    
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        {/* Mobile Direct GDrive Scan QR Button */}
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowDriveQrModal(!showDriveQrModal)}
+                                            title="Scan QR code on mobile to open Celron_Scans Drive directory"
+                                            style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '6px',
+                                                background: showDriveQrModal ? '#4f46e5' : '#eff6ff',
+                                                color: showDriveQrModal ? '#fff' : '#2563eb',
+                                                border: '1px solid ' + (showDriveQrModal ? '#4338ca' : '#bfdbfe'),
+                                                padding: '5px 12px',
+                                                borderRadius: '8px',
+                                                fontSize: '0.78rem',
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                                transition: 'all 0.2s'
+                                            }}
+                                        >
+                                            <QrCode size={15} />
+                                            <span>Scan via Mobile QR</span>
+                                        </button>
+
+                                        {/* View Toggle Component */}
+                                        <div style={{ display: 'flex', background: '#f8fafc', padding: '3px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                                            <button 
+                                                type="button"
+                                                onClick={() => setPanelViewMode('grid')} 
+                                                title="Grid View Mode"
+                                                style={{ padding: '6px 10px', background: panelViewMode === 'grid' ? '#fff' : 'transparent', border: 'none', borderRadius: '8px', cursor: 'pointer', boxShadow: panelViewMode === 'grid' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', display: 'flex', alignItems: 'center' }}
+                                            >
+                                                <Grid size={16} color={panelViewMode === 'grid' ? '#6366f1' : '#64748b'} />
+                                            </button>
+                                            <button 
+                                                type="button"
+                                                onClick={() => setPanelViewMode('list')} 
+                                                title="List View Mode"
+                                                style={{ padding: '6px 10px', background: panelViewMode === 'list' ? '#fff' : 'transparent', border: 'none', borderRadius: '8px', cursor: 'pointer', boxShadow: panelViewMode === 'list' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', display: 'flex', alignItems: 'center' }}
+                                            >
+                                                <List size={16} color={panelViewMode === 'list' ? '#6366f1' : '#64748b'} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Expandable QR Code Card for Mobile Direct Drive Scan */}
+                                {showDriveQrModal && (
+                                    <div style={{
+                                        background: 'linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%)',
+                                        border: '1px solid #bfdbfe',
+                                        borderRadius: '12px',
+                                        padding: '16px',
+                                        marginBottom: '16px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '20px',
+                                        flexWrap: 'wrap',
+                                        position: 'relative'
+                                    }}>
+                                        <div style={{ background: '#fff', padding: '10px', borderRadius: '12px', border: '1px solid #cbd5e1', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', flexShrink: 0 }}>
+                                            <QRCodeSVG 
+                                                value={
+                                                    activeFolderId && activeFolderId.startsWith('http') 
+                                                        ? activeFolderId 
+                                                        : `https://drive.google.com/drive/folders/${activeFolderId || DEFAULT_GDRIVE_FOLDER_ID}?usp=drive_link`
+                                                } 
+                                                size={110} 
+                                                level="H" 
+                                                includeMargin={true} 
+                                            />
+                                        </div>
+                                        <div style={{ flex: 1, minWidth: '220px' }}>
+                                            <h4 style={{ margin: '0 0 6px 0', fontSize: '0.92rem', fontWeight: 800, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <Smartphone size={16} color="#2563eb" /> Mobile Google Drive Direct Scan
+                                            </h4>
+                                            <p style={{ margin: '0 0 8px 0', fontSize: '0.78rem', color: '#475569', lineHeight: '1.4' }}>
+                                                Scan this QR code using your smartphone camera or Google Drive app to immediately open the <strong>Celron_Scans</strong> folder on your phone for direct document scanning.
+                                            </p>
+                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                <a
+                                                    href={
+                                                        activeFolderId && activeFolderId.startsWith('http') 
+                                                            ? activeFolderId 
+                                                            : `https://drive.google.com/drive/folders/${activeFolderId || DEFAULT_GDRIVE_FOLDER_ID}?usp=drive_link`
+                                                    }
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    style={{ fontSize: '0.74rem', fontWeight: 700, color: '#2563eb', textDecoration: 'none', background: '#fff', padding: '4px 10px', borderRadius: '6px', border: '1px solid #bfdbfe', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                                >
+                                                    Open Drive Directory <ExternalLink size={10} />
+                                                </a>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowDriveQrModal(false)}
+                                            style={{ position: 'absolute', top: '10px', right: '10px', background: 'transparent', border: 'none', cursor: 'pointer', color: '#64748b' }}
+                                        >
+                                            <X size={16} />
+                                        </button>
+                                    </div>
+                                )}
+
                                 {gdriveLoading ? (
                                     <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8' }}>
                                         <div className="animate-spin" style={{ width: '32px', height: '32px', border: '3px solid #f3f3f3', borderTop: '3px solid #6366f1', borderRadius: '50%', margin: '0 auto 12px' }}></div>
@@ -665,7 +1007,49 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                                         <Cloud size={36} style={{ opacity: 0.3, marginBottom: '8px', margin: '0 auto' }} />
                                         <span>No recent PDF files found on Google Drive. Make sure Google Drive is connected.</span>
                                     </div>
+                                ) : panelViewMode === 'grid' ? (
+                                    /* GRID VIEW MODE */
+                                    <div style={{ flex: 1, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '12px', paddingRight: '4px' }}>
+                                        {gdriveFiles.map(gf => (
+                                            <div 
+                                                key={gf.id}
+                                                onClick={() => handleSelectGoogleDriveFile(gf)}
+                                                style={{ 
+                                                    display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '14px', 
+                                                    background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', cursor: 'pointer', fontSize: '0.85rem', minHeight: '120px'
+                                                }}
+                                                onMouseEnter={e => e.currentTarget.style.borderColor = '#6366f1'}
+                                                onMouseLeave={e => e.currentTarget.style.borderColor = '#e2e8f0'}
+                                            >
+                                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
+                                                    <div style={{ background: '#eff6ff', padding: '8px', borderRadius: '8px', flexShrink: 0 }}>
+                                                        <Cloud size={20} color="#6366f1" />
+                                                    </div>
+                                                    <strong style={{ fontSize: '0.82rem', color: '#1e293b', lineHeight: '1.3', wordBreak: 'break-word' }}>{gf.name}</strong>
+                                                </div>
+
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
+                                                    <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                                                        {new Date(gf.createdTime || Date.now()).toLocaleDateString()}
+                                                    </span>
+                                                    {gf.webViewLink && (
+                                                        <a
+                                                            href={gf.webViewLink}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '2px 8px', fontSize: '0.7rem', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                                                            title="Direct Open Link"
+                                                        >
+                                                            Open <ExternalLink size={10} />
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
                                 ) : (
+                                    /* LIST VIEW MODE */
                                     <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                         {gdriveFiles.map(gf => (
                                             <div 
@@ -678,13 +1062,27 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                                                 onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
                                                 onMouseLeave={e => e.currentTarget.style.background = '#fff'}
                                             >
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                                    <Cloud size={16} color="#6366f1" />
-                                                    <strong>{gf.name}</strong>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
+                                                    <Cloud size={16} color="#6366f1" style={{ flexShrink: 0 }} />
+                                                    <strong style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{gf.name}</strong>
                                                 </div>
-                                                <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
-                                                    {new Date(gf.createdTime).toLocaleDateString()}
-                                                </span>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+                                                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                                                        {new Date(gf.createdTime || Date.now()).toLocaleDateString()}
+                                                    </span>
+                                                    {gf.webViewLink && (
+                                                        <a
+                                                            href={gf.webViewLink}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '3px 8px', fontSize: '0.72rem', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                                            title="Direct Open Link"
+                                                        >
+                                                            Open Direct Link <ExternalLink size={12} />
+                                                        </a>
+                                                    )}
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
@@ -697,25 +1095,37 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                             <div 
                                 onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
                                 onDragLeave={() => setIsDraggingOver(false)}
-                                onDrop={(e) => {
-                                    e.preventDefault();
-                                    setIsDraggingOver(false);
-                                    if (e.dataTransfer.files[0]) {
-                                        handleFileStaged(e.dataTransfer.files[0]);
-                                    }
-                                }}
+                                onDrop={handleUniversalDrop}
                                 style={{ 
                                     flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', 
-                                    border: isDraggingOver ? '2px dashed #6366f1' : '2px dashed #cbd5e1', 
-                                    borderRadius: '16px', background: isDraggingOver ? '#eff6ff' : '#f8fafc', padding: '40px 20px',
-                                    transition: 'all 0.2s'
+                                    border: isDraggingOver ? '2px dashed #6366f1' : '2px dashed #a5b4fc', 
+                                    borderRadius: '16px', background: isDraggingOver ? '#eff6ff' : '#f8fafc', padding: '30px 20px',
+                                    transition: 'all 0.2s', textAlign: 'center'
                                 }}
                             >
-                                <Monitor size={48} color={isDraggingOver ? '#6366f1' : '#94a3b8'} style={{ marginBottom: '16px' }} />
-                                <h4 style={{ margin: '0 0 6px 0', color: '#334155' }}>Drop Files Here</h4>
-                                <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>
-                                    Drag your document file from your computer and release it here.
+                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '14px' }}>
+                                    <div style={{ background: '#e0e7ff', color: '#4338ca', padding: '10px', borderRadius: '12px' }}>
+                                        <Mail size={28} />
+                                    </div>
+                                    <div style={{ background: '#dbeafe', color: '#1d4ed8', padding: '10px', borderRadius: '12px' }}>
+                                        <Monitor size={28} />
+                                    </div>
+                                    <div style={{ background: '#fef3c7', color: '#b45309', padding: '10px', borderRadius: '12px' }}>
+                                        <Inbox size={28} />
+                                    </div>
+                                </div>
+                                <h4 style={{ margin: '0 0 6px 0', fontSize: '1rem', fontWeight: 800, color: '#1e293b' }}>
+                                    Drag &amp; Drop Emails or Documents Here
+                                </h4>
+                                <p style={{ margin: '0 0 14px 0', fontSize: '0.82rem', color: '#64748b', maxWidth: '380px', lineHeight: '1.4' }}>
+                                    Drag any email directly from <strong>Mozilla Thunderbird</strong>, <strong>Outlook Desktop</strong>, or <strong>Gmail</strong>, or drop local PDFs, images, and office files from your computer.
                                 </p>
+                                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: '#3b82f6', color: '#fff' }}>✉️ Thunderbird (.eml)</span>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: '#0284c7', color: '#fff' }}>📧 Outlook (.msg/.eml)</span>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: '#ea580c', color: '#fff' }}>📨 Gmail</span>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: '#64748b', color: '#fff' }}>📄 PDF/PNG/JPG/DOCX</span>
+                                </div>
                             </div>
                         )}
                         {/* 6. SMART OCR TAB */}
@@ -785,7 +1195,81 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                             </div>
                         )}
 
-                        {/* 7. MOBILE UPLOAD (QR) TAB */}
+                        {/* 7. CAMERA PHOTO TAB */}
+                        {activeTab === 'camera' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: '320px', position: 'relative' }}>
+                                {cameraError ? (
+                                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '20px', color: '#64748b' }}>
+                                        <AlertCircle size={48} style={{ opacity: 0.4, marginBottom: '12px', color: '#ef4444' }} />
+                                        <h4 style={{ margin: '0 0 6px 0', color: '#0f172a' }}>Camera Access Error</h4>
+                                        <p style={{ fontSize: '0.82rem', color: '#64748b', maxWidth: '380px', margin: '0 0 16px' }}>{cameraError}</p>
+                                        <button
+                                            onClick={() => startCamera(cameraFacingMode)}
+                                            style={{ background: '#6366f1', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                        >
+                                            <RefreshCw size={16} /> Try Again
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#0f172a', borderRadius: '16px', overflow: 'hidden', position: 'relative', minHeight: '320px' }}>
+                                        <video
+                                            ref={videoRef}
+                                            autoPlay
+                                            playsInline
+                                            muted
+                                            style={{
+                                                width: '100%',
+                                                height: '100%',
+                                                maxHeight: '340px',
+                                                objectFit: 'cover',
+                                                transform: cameraFacingMode === 'user' ? 'scaleX(-1)' : 'none'
+                                            }}
+                                        />
+
+                                        {/* Status Badge */}
+                                        <div style={{ position: 'absolute', top: '14px', left: '14px', background: 'rgba(15, 23, 42, 0.75)', color: '#fff', padding: '6px 12px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', backdropFilter: 'blur(4px)' }}>
+                                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: isCameraActive ? '#22c55e' : '#ef4444' }} />
+                                            {isCameraActive ? 'Camera Live' : 'Connecting Camera...'}
+                                        </div>
+
+                                        {/* Flip Camera Button */}
+                                        <button
+                                            onClick={toggleCameraFacingMode}
+                                            style={{ position: 'absolute', top: '14px', right: '14px', background: 'rgba(15, 23, 42, 0.75)', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', backdropFilter: 'blur(4px)' }}
+                                            title="Switch Front / Rear Camera"
+                                        >
+                                            <RefreshCw size={14} /> Flip Camera
+                                        </button>
+
+                                        {/* Snap Photo Button */}
+                                        <div style={{ position: 'absolute', bottom: '16px', left: 0, right: 0, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                            <button
+                                                onClick={captureCameraPhoto}
+                                                disabled={!isCameraActive}
+                                                style={{
+                                                    background: isCameraActive ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' : '#cbd5e1',
+                                                    color: '#ffffff',
+                                                    border: '4px solid rgba(255,255,255,0.8)',
+                                                    borderRadius: '50px',
+                                                    padding: '12px 28px',
+                                                    fontSize: '0.9rem',
+                                                    fontWeight: 800,
+                                                    cursor: isCameraActive ? 'pointer' : 'not-allowed',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '8px',
+                                                    boxShadow: '0 8px 20px rgba(239, 68, 68, 0.4)'
+                                                }}
+                                            >
+                                                <Camera size={20} /> Snap &amp; Attach Photo
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* 8. MOBILE UPLOAD (QR) TAB */}
                         {activeTab === 'mobile_qr' && (
                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '300px', textAlign: 'center', padding: '20px' }}>
                                 {!activeFolderId ? (
@@ -950,6 +1434,15 @@ export default function SmartUploadPanel({ isOpen, onClose, onSelect, documentTy
                     style={{ display: 'none' }} 
                 />
             </div>
+    );
+
+    if (embedded) {
+        return panelContent;
+    }
+
+    return (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
+            {panelContent}
         </div>
     );
 }

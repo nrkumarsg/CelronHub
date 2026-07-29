@@ -1,24 +1,34 @@
 import { smartSearchCompany } from './geminiService.js';
+import { getEncryptedApiKey, getDecryptedApiKey } from './ai/configService.js';
+import { executeOpenAICompatibleRequest } from './ai/providerRunners.js';
+import { callServerAiProxy } from './ai/serverProxyClient.js';
 
 /**
- * Service to process business cards using OpenAI GPT-4o-mini Vision OCR.
+ * Service to process business cards and documents using OpenAI / Groq vision models.
+ * When the user hasn't configured their own personal key for a provider, the
+ * request is routed through the backend proxy, which holds the operator's own
+ * keys server-side only (never shipped to the browser).
  */
 
-const DEFAULT_OPENAI_KEY = atob('c2stcHJvai1SVzVTQXkxa29xUE82ZGl2Y2xuSEo2bTA5NUFJYkQ0RFRoc20zTDFIdHFwMlYtczNaNWkyOFhYcVFudXJNSjJLRFhfckU1WHJGeFQzQmxia0ZKQU9MSEVlX3ppanplY2Nqa1N1WDJjSGdZM0xra0lJSktiUE96VkRITVIzamRPeHdYNnVid2dKdlpIOTZDUUgwNXQxLWRrWkhGNEE=');
+async function runOpenAI(promptOrHistory, image, modelName, history = []) {
+    const hasCustomKey = Boolean(getEncryptedApiKey('OpenAI'));
+    if (hasCustomKey) {
+        const apiKey = await getDecryptedApiKey('OpenAI');
+        const provider = { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', modelName, temperature: 0.1, maxTokens: 2048 };
+        return executeOpenAICompatibleRequest(provider, apiKey, promptOrHistory, history, true, image);
+    }
+    return callServerAiProxy('openai', promptOrHistory, history, true, image, modelName);
+}
 
-const getOpenAIKey = () => {
-  return localStorage.getItem('custom_openai_key') || 
-         import.meta.env.VITE_OPENAI_API_KEY || 
-         DEFAULT_OPENAI_KEY;
-};
-
-const DEFAULT_GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY || '';
-
-const getGroqKey = () => {
-  return localStorage.getItem('custom_groq_key') || 
-         import.meta.env.VITE_GROQ_API_KEY || 
-         DEFAULT_GROQ_KEY;
-};
+async function runGroq(promptOrHistory, image, modelName, history = []) {
+    const hasCustomKey = Boolean(getEncryptedApiKey('Groq'));
+    if (hasCustomKey) {
+        const apiKey = await getDecryptedApiKey('Groq');
+        const provider = { name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', modelName, temperature: 0.1, maxTokens: 2048 };
+        return executeOpenAICompatibleRequest(provider, apiKey, promptOrHistory, history, true, image);
+    }
+    return callServerAiProxy('groq', promptOrHistory, history, true, image, modelName);
+}
 
 /**
  * Extract structured contact & company details from business card image bytes (base64)
@@ -26,21 +36,9 @@ const getGroqKey = () => {
  * @returns {Promise<Object>} Extracted details matching Partner and Contact schema
  */
 export const extractCardWithOpenAI = async (base64Image) => {
-  const apiKey = getOpenAIKey();
-  
-  if (!apiKey) {
-    throw new Error('OpenAI API Key is missing. Please configure it in your Settings or .env file.');
-  }
-
-  // Ensure clean base64 format with proper Data URI header for OpenAI
-  let cleanBase64 = base64Image;
-  if (!cleanBase64.startsWith('data:image/')) {
-    cleanBase64 = `data:image/jpeg;base64,${cleanBase64}`;
-  }
-
   const systemPrompt = `
     Analyze the provided business card image. Extract structured information for BOTH the organization (Partner) and the contact person (Contact).
-    
+
     You MUST output ONLY a valid JSON object with the following schema:
     {
       "partner": {
@@ -73,49 +71,7 @@ export const extractCardWithOpenAI = async (base64Image) => {
   `;
 
   try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: systemPrompt
-              },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: cleanBase64
-                }
-              }
-            ]
-          }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1
-      })
-    });
-
-    if (!response.ok) {
-      const errData = await response.json();
-      throw new Error(errData.error?.message || `OpenAI Vision request failed with status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const textContent = data.choices?.[0]?.message?.content;
-    
-    if (!textContent) {
-      throw new Error('Received empty response from OpenAI Vision model.');
-    }
-
-    const parsedData = JSON.parse(textContent);
+    const parsedData = await runOpenAI(systemPrompt, base64Image, 'gpt-4o-mini');
 
     // Auto-enrich Company details using ACRA UEN registry lookup if company name exists
     if (parsedData.partner?.name && parsedData.partner.name.toLowerCase() !== 'individual') {
@@ -171,22 +127,10 @@ export const extractCardWithOpenAI = async (base64Image) => {
  * Extracts unified Enquiry headers and line items spreadsheet grid from a base64 image.
  */
 export const extractEnquiryWithOpenAI = async (base64Image) => {
-  const apiKey = getOpenAIKey();
-  
-  if (!apiKey) {
-    throw new Error('OpenAI API Key is missing. Please configure it in your Settings or .env file.');
-  }
-
-  // Ensure clean base64 format with proper Data URI header for OpenAI
-  let cleanBase64 = base64Image;
-  if (!cleanBase64.startsWith('data:image/')) {
-    cleanBase64 = `data:image/jpeg;base64,${cleanBase64}`;
-  }
-
   const systemPrompt = `
     Analyze this purchase enquiry / RFQ image.
     Extract the complete structured information including the header metadata and the line items.
-    
+
     You MUST output ONLY a valid JSON object with this exact schema:
     {
       "header": {
@@ -209,7 +153,7 @@ export const extractEnquiryWithOpenAI = async (base64Image) => {
         }
       ]
     }
-    
+
     Rules:
     1. Customer: Colombo Dockyard PLC is the customer (CEL-RON ENTERPRISES PTE LTD is the supplier, so CEL-RON is NOT the customer).
     2. Clean up any OCR artifacts.
@@ -218,49 +162,7 @@ export const extractEnquiryWithOpenAI = async (base64Image) => {
   `;
 
   try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: systemPrompt
-              },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: cleanBase64
-                }
-              }
-            ]
-          }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1
-      })
-    });
-
-    if (!response.ok) {
-      const errData = await response.json();
-      throw new Error(errData.error?.message || `OpenAI Vision request failed with status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const textContent = data.choices?.[0]?.message?.content;
-    
-    if (!textContent) {
-      throw new Error('Received empty response from OpenAI Vision model.');
-    }
-
-    return JSON.parse(textContent);
+    return await runOpenAI(systemPrompt, base64Image, 'gpt-4o-mini');
   } catch (error) {
     console.error('[OpenAI Vision OCR Enquiry Error]:', error);
     throw error;
@@ -272,15 +174,9 @@ export const extractEnquiryWithOpenAI = async (base64Image) => {
  * Extracts structured supplier bill details from a base64 image or raw text.
  */
 export const extractBillWithOpenAI = async (base64ImageOrText, isText = false) => {
-  const apiKey = getOpenAIKey();
-  
-  if (!apiKey) {
-    throw new Error('OpenAI API Key is missing. Please configure it in your Settings or .env file.');
-  }
-
   const systemPrompt = `
     Analyze the provided invoice / supplier bill ${isText ? 'text content' : 'image'}. Extract structured information for the bill.
-    
+
     You MUST output ONLY a valid JSON object with the following schema:
     {
       "supplier_name": "string (The name of the supplier/vendor, e.g. Ark Pte Ltd)",
@@ -305,63 +201,13 @@ export const extractBillWithOpenAI = async (base64ImageOrText, isText = false) =
     3. Ensure calculations match: grand_total = subtotal + gst_amount.
   `;
 
-  const messageContent = [];
-  if (isText) {
-    messageContent.push({
-      type: 'text',
-      text: `${systemPrompt}\n\nInvoice Content/Text:\n"""\n${base64ImageOrText}\n"""`
-    });
-  } else {
-    // Ensure clean base64 format with proper Data URI header for OpenAI
-    let cleanBase64 = base64ImageOrText;
-    if (!cleanBase64.startsWith('data:image/')) {
-      cleanBase64 = `data:image/jpeg;base64,${cleanBase64}`;
-    }
-    messageContent.push({
-      type: 'text',
-      text: systemPrompt
-    });
-    messageContent.push({
-      type: 'image_url',
-      image_url: {
-        url: cleanBase64
-      }
-    });
-  }
+  const prompt = isText
+    ? `${systemPrompt}\n\nInvoice Content/Text:\n"""\n${base64ImageOrText}\n"""`
+    : systemPrompt;
+  const image = isText ? null : base64ImageOrText;
 
   try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'user',
-            content: messageContent
-          }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1
-      })
-    });
-
-    if (!response.ok) {
-      const errData = await response.json();
-      throw new Error(errData.error?.message || `OpenAI Vision request failed with status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const textContent = data.choices?.[0]?.message?.content;
-    
-    if (!textContent) {
-      throw new Error('Received empty response from OpenAI Vision model.');
-    }
-
-    return JSON.parse(textContent);
+    return await runOpenAI(prompt, image, 'gpt-4o-mini');
   } catch (error) {
     console.error('[OpenAI Vision OCR Bill Error]:', error);
     throw error;
@@ -373,15 +219,9 @@ export const extractBillWithOpenAI = async (base64ImageOrText, isText = false) =
  * Extracts structured supplier bill details from a base64 image or raw text.
  */
 export const extractBillWithGroq = async (base64ImageOrText, isText = false) => {
-  const apiKey = getGroqKey();
-  
-  if (!apiKey) {
-    throw new Error('Groq API Key is missing. Please configure it in your Settings or .env file.');
-  }
-
   const systemPrompt = `
     Analyze the provided invoice / supplier bill ${isText ? 'text content' : 'image'}. Extract structured information for the bill.
-    
+
     You MUST output ONLY a valid JSON object with the following schema:
     {
       "supplier_name": "string (The name of the supplier/vendor, e.g. Ark Pte Ltd)",
@@ -406,66 +246,14 @@ export const extractBillWithGroq = async (base64ImageOrText, isText = false) => 
     3. Ensure calculations match: grand_total = subtotal + gst_amount.
   `;
 
-  const messageContent = [];
-  if (isText) {
-    messageContent.push({
-      type: 'text',
-      text: `${systemPrompt}\n\nInvoice Content/Text:\n"""\n${base64ImageOrText}\n"""`
-    });
-  } else {
-    // Ensure clean base64 format with proper Data URI header for Groq
-    let cleanBase64 = base64ImageOrText;
-    if (!cleanBase64.startsWith('data:image/')) {
-      cleanBase64 = `data:image/jpeg;base64,${cleanBase64}`;
-    }
-    messageContent.push({
-      type: 'text',
-      text: systemPrompt
-    });
-    messageContent.push({
-      type: 'image_url',
-      image_url: {
-        url: cleanBase64
-      }
-    });
-  }
-
-  // If text, use llama-3.3-70b-versatile, if vision use meta-llama/llama-4-scout-17b-16e-instruct
+  const prompt = isText
+    ? `${systemPrompt}\n\nInvoice Content/Text:\n"""\n${base64ImageOrText}\n"""`
+    : systemPrompt;
+  const image = isText ? null : base64ImageOrText;
   const modelName = isText ? 'llama-3.3-70b-versatile' : 'meta-llama/llama-4-scout-17b-16e-instruct';
 
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages: [
-          {
-            role: 'user',
-            content: messageContent
-          }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1
-      })
-    });
-
-    if (!response.ok) {
-      const errData = await response.json();
-      throw new Error(errData.error?.message || `Groq API request failed with status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const textContent = data.choices?.[0]?.message?.content;
-    
-    if (!textContent) {
-      throw new Error('Received empty response from Groq model.');
-    }
-
-    return JSON.parse(textContent);
+    return await runGroq(prompt, image, modelName);
   } catch (error) {
     console.error('[Groq OCR Bill Error]:', error);
     throw error;
@@ -478,17 +266,11 @@ export const extractBillWithGroq = async (base64ImageOrText, isText = false) => 
  * @returns {Promise<Object>} Extracted details matching Partner and Contact schema
  */
 export const extractCardWithGroq = async (base64ImageOrText, isText = false) => {
-  const apiKey = getGroqKey();
-  
-  if (!apiKey) {
-    throw new Error('Groq API Key is missing. Please configure it in your Settings or .env file.');
-  }
-
   const modelName = isText ? 'llama-3.3-70b-versatile' : 'meta-llama/llama-4-scout-17b-16e-instruct';
 
   const systemPrompt = `
     Analyze the business card information. Extract structured details for BOTH the organization (Partner) and the contact person (Contact).
-    
+
     You MUST output ONLY a valid JSON object with the following schema:
     {
       "partner": {
@@ -520,63 +302,11 @@ export const extractCardWithGroq = async (base64ImageOrText, isText = false) => 
     3. Ensure general office lines go to partner.phone, while personal mobile lines go to contact.handphone.
   `;
 
-  const messageContent = [];
-  if (isText) {
-    messageContent.push({
-      type: 'text',
-      text: `Business Card OCR Text:\n"""\n${base64ImageOrText}\n"""`
-    });
-  } else {
-    // Ensure clean base64 format with proper Data URI header for Groq
-    let cleanBase64 = base64ImageOrText;
-    if (!cleanBase64.startsWith('data:image/')) {
-      cleanBase64 = `data:image/jpeg;base64,${cleanBase64}`;
-    }
-    messageContent.push({
-      type: 'image_url',
-      image_url: {
-        url: cleanBase64
-      }
-    });
-  }
+  const prompt = isText ? `Business Card OCR Text:\n"""\n${base64ImageOrText}\n"""` : '';
+  const image = isText ? null : base64ImageOrText;
 
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: messageContent
-          }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1
-      })
-    });
-
-    if (!response.ok) {
-      const errData = await response.json();
-      throw new Error(errData.error?.message || `Groq Vision request failed with status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const textContent = data.choices?.[0]?.message?.content;
-    
-    if (!textContent) {
-      throw new Error('Received empty response from Groq Vision model.');
-    }
-
-    const parsedData = JSON.parse(textContent);
+    const parsedData = await runGroq(prompt, image, modelName, [{ role: 'system', content: systemPrompt }]);
 
     // Auto-enrich Company details using ACRA UEN registry lookup if company name exists
     if (parsedData.partner?.name && parsedData.partner.name.toLowerCase() !== 'individual') {
@@ -626,4 +356,3 @@ export const extractCardWithGroq = async (base64ImageOrText, isText = false) => 
     throw error;
   }
 };
-

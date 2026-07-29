@@ -128,7 +128,7 @@ const SearchableSelect = ({
                         {onAddNew && (
                             <div 
                                 onClick={() => {
-                                    onAddNew();
+                                    onAddNew(searchTerm);
                                     setIsOpen(false);
                                     setSearchTerm('');
                                 }}

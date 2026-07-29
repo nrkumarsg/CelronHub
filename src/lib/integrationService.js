@@ -148,5 +148,5 @@ export const getGoogleDriveExplorerUrl = (enquiry, rootFolderId) => {
         const cleanRoot = rootFolderId.replace('https://drive.google.com/drive/folders/', '');
         return `https://drive.google.com/drive/folders/${cleanRoot}`;
     }
-    return "https://drive.google.com";
+    return "https://drive.google.com/drive/folders/1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w?usp=drive_link";
 };

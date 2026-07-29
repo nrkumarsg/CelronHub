@@ -173,7 +173,7 @@ export default function UniversalFinder() {
 
                     // Try to get country name from coordinates
                     try {
-                        const key = import.meta.env.VITE_GOOGLE_GEOCODE_KEY || 'AIzaSyBfT3-KSeOlJhLZAC7FTkLFaK3WlQz-ANs';
+                        const key = import.meta.env.VITE_GOOGLE_GEOCODE_KEY || import.meta.env.VITE_GOOGLE_API_KEY;
                         const resp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${key}`);
                         const data = await resp.json();
                         const countryObj = data.results?.find(r => r.types.includes('country'));

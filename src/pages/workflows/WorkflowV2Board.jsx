@@ -25,6 +25,7 @@ import CustomerEnquiryForm from '../../components/CustomerEnquiryForm';
 import JobEditV2Modal from '../../components/workflows/JobEditV2Modal';
 import ReceivePaymentModal from '../../components/workflow/ReceivePaymentModal';
 import SearchableSelect from '../../components/common/SearchableSelect';
+import ModuleSwitcherHeader from '../../components/common/ModuleSwitcherHeader';
 import { getPartners } from '../../lib/store';
 
 const DOC_TYPES = [
@@ -711,7 +712,7 @@ export default function WorkflowV2Board() {
             }
 
             const currentYear = new Date().getFullYear().toString();
-            const jobNo = doc.assigned_job_no;
+            const jobNo = doc.assigned_job_no || doc.document_no;
             const projName = buildProjectFolderName(jobNo, doc);
             const projectFolderId = await provisionFullProjectStructure(accessToken, celronRootId, currentYear, projName);
             
@@ -880,7 +881,7 @@ export default function WorkflowV2Board() {
         }
 
         // 2. If it's a Job or part of a Job, try to find the Project folder
-        const jobNo = doc.assigned_job_no;
+        const jobNo = doc.assigned_job_no || doc.document_no;
         if (!jobNo) {
             alert('This document is not linked to an active Job or Enquiry folder.');
             return;
@@ -954,6 +955,21 @@ export default function WorkflowV2Board() {
         window.open(`/workflows/print/${id}?autoDownload=true`, '_blank');
     };
 
+    const getStepIdForDocType = (docType) => {
+        switch (docType) {
+            case 'Enquiry': return 1;
+            case 'Quotation': return 2;
+            case 'Customer PO': return 3;
+            case 'Purchase Order':
+            case 'Job': return 4;
+            case 'Delivery Order': return 5;
+            case 'Tax Invoice':
+            case 'Proforma Invoice': return 6;
+            case 'Payment Received': return 7;
+            default: return 0;
+        }
+    };
+
     const getPageTitle = () => {
         if (isDepository) return 'RFQ Depository';
         if (activeType === 'All') return 'All Workflows';
@@ -983,6 +999,7 @@ export default function WorkflowV2Board() {
 
     return (
         <div className="animate-fade-in" style={{ maxWidth: '1600px', margin: '0 auto', padding: '0 8px' }}>
+            <ModuleSwitcherHeader activeModule="processing" />
             <header className="page-header">
                 <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -1018,17 +1035,25 @@ export default function WorkflowV2Board() {
                         {getPageDescription()}
                     </p>
                 </div>
-                <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     {activeType !== 'Payment Received' && activeType !== 'Job' && (
                         <button
-                        className="btn"
+                        type="button"
                         style={{ 
-                            display: 'flex', 
+                            display: 'inline-flex', 
                             alignItems: 'center', 
-                            gap: '8px', 
-                            background: activeType === 'Purchase Order' ? '#8b5cf6' : (activeType === 'Enquiry' ? '#10b981' : '#3b82f6'), 
-                            color: 'white', 
-                            border: 'none' 
+                            gap: '6px', 
+                            height: '36px',
+                            padding: '0 16px',
+                            borderRadius: '8px',
+                            background: '#4f46e5', 
+                            color: '#ffffff', 
+                            border: '1px solid #4338ca',
+                            fontSize: '13px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            boxShadow: '0 2px 4px rgba(79, 70, 229, 0.25)',
+                            transition: 'all 0.15s'
                         }}
                         onClick={() => {
                             const config = {
@@ -1051,7 +1076,7 @@ export default function WorkflowV2Board() {
                             }
                         }}
                     >
-                        <Plus size={18} /> 
+                        <Plus size={16} /> 
                         {(() => {
                             const labelMap = {
                                 'Purchase Order': 'New Purchase Order 2 Supplier',
@@ -1072,30 +1097,71 @@ export default function WorkflowV2Board() {
                     {activeType === 'Job' && (
                         <>
                             <button
-                                className="btn btn-secondary"
-                                style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '8px' }}
+                                type="button"
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    height: '36px',
+                                    padding: '0 14px',
+                                    borderRadius: '8px',
+                                    background: '#ffffff',
+                                    border: '1px solid #cbd5e1',
+                                    color: '#475569',
+                                    fontSize: '13px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                }}
                                 onClick={() => navigate('/workflows/jobs-dashboard')}
                             >
-                                <LayoutDashboard size={18} /> Go to Dashboard
+                                <LayoutDashboard size={16} /> Go to Dashboard
                             </button>
                             <button
-                                className="btn btn-primary"
-                                style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '8px' }}
+                                type="button"
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    height: '36px',
+                                    padding: '0 16px',
+                                    borderRadius: '8px',
+                                    background: '#4f46e5',
+                                    border: '1px solid #4338ca',
+                                    color: '#ffffff',
+                                    fontSize: '13px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    boxShadow: '0 2px 4px rgba(79, 70, 229, 0.25)'
+                                }}
                                 onClick={() => {
                                     window.open('/workflows/editor/quotation/new', '_blank');
                                 }}
                             >
-                                <Plus size={18} /> New Job
+                                <Plus size={16} /> New Job
                             </button>
                         </>
                     )}
                     <div className="dropdown" ref={dropdownRef}>
                         <button
-                            className="btn btn-primary"
-                            style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                            type="button"
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                height: '36px',
+                                padding: '0 16px',
+                                borderRadius: '8px',
+                                background: '#4f46e5',
+                                border: '1px solid #4338ca',
+                                color: '#ffffff',
+                                fontSize: '13px',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                boxShadow: '0 2px 4px rgba(79, 70, 229, 0.25)'
+                            }}
                             onClick={() => setShowDropdown(!showDropdown)}
                         >
-                            <Plus size={18} /> New Document
+                            <Plus size={16} /> New Document
                         </button>
                         <div className={`dropdown-content ${showDropdown ? 'show' : ''}`} style={{ right: 0, minWidth: '200px' }}>
                             {DOC_TYPES.map(type => (
@@ -1280,130 +1346,136 @@ export default function WorkflowV2Board() {
                 <>
                 <div style={{
                 display: 'flex',
-                gap: '12px',
+                gap: '8px',
                 marginBottom: '24px',
                 overflowX: 'auto',
                 paddingBottom: '8px'
             }}>
                 <button
+                    type="button"
                     onClick={() => navigate('/enquiries')}
                     style={{
-                        padding: '8px 16px',
-                        borderRadius: '20px',
-                        border: '1px solid var(--border-color)',
-                        background: 'transparent',
-                        color: 'var(--text-secondary)',
-                        fontWeight: 500,
+                        height: '34px',
+                        padding: '0 14px',
+                        borderRadius: '8px',
+                        border: '1px solid #cbd5e1',
+                        background: '#ffffff',
+                        color: '#475569',
+                        fontWeight: 600,
+                        fontSize: '12px',
                         cursor: 'pointer',
                         whiteSpace: 'nowrap',
-                        display: 'flex',
+                        display: 'inline-flex',
                         alignItems: 'center',
-                        gap: '6px'
+                        gap: '6px',
+                        transition: 'all 0.15s'
                     }}
-                    onMouseOver={(e) => {
-                        e.currentTarget.style.borderColor = 'var(--accent)';
-                        e.currentTarget.style.color = 'var(--accent)';
-                    }}
-                    onMouseOut={(e) => {
-                        e.currentTarget.style.borderColor = 'var(--border-color)';
-                        e.currentTarget.style.color = 'var(--text-secondary)';
-                    }}
+                    onMouseOver={(e) => e.currentTarget.style.background = '#f1f5f9'}
+                    onMouseOut={(e) => e.currentTarget.style.background = '#ffffff'}
                 >
-                    <FileText size={16} /> Enquiry from customer
+                    <FileText size={14} /> Enquiry from customer
                 </button>
 
                 <button
+                    type="button"
                     onClick={() => {
                         setActiveType('Enquiry');
                         if (!isDepository) navigate('/workflows?type=Enquiry');
                     }}
                     style={{
-                        padding: '8px 16px',
-                        borderRadius: '20px',
-                        border: '1px solid',
-                        borderColor: activeType === 'Enquiry' ? 'var(--accent)' : 'var(--border-color)',
-                        background: activeType === 'Enquiry' ? 'var(--accent)' : 'transparent',
-                        color: activeType === 'Enquiry' ? '#fff' : 'var(--text-secondary)',
-                        fontWeight: 500,
+                        height: '34px',
+                        padding: '0 14px',
+                        borderRadius: '8px',
+                        border: activeType === 'Enquiry' ? '1px solid #4338ca' : '1px solid #cbd5e1',
+                        background: activeType === 'Enquiry' ? '#4f46e5' : '#ffffff',
+                        color: activeType === 'Enquiry' ? '#ffffff' : '#475569',
+                        fontWeight: 600,
+                        fontSize: '12px',
                         cursor: 'pointer',
                         whiteSpace: 'nowrap',
-                        display: 'flex',
+                        display: 'inline-flex',
                         alignItems: 'center',
-                        gap: '6px'
+                        gap: '6px',
+                        boxShadow: activeType === 'Enquiry' ? '0 2px 4px rgba(79, 70, 229, 0.2)' : 'none',
+                        transition: 'all 0.15s'
                     }}
+                    onMouseOver={(e) => { if (activeType !== 'Enquiry') e.currentTarget.style.background = '#f1f5f9'; }}
+                    onMouseOut={(e) => { if (activeType !== 'Enquiry') e.currentTarget.style.background = '#ffffff'; }}
                 >
-                    <ArrowRightLeft size={16} /> Enquiry to Supplier
+                    <ArrowRightLeft size={14} /> Enquiry to Supplier
                 </button>
 
                 {!isDepository && (
                     <button
+                        type="button"
                         onClick={() => {
                             setActiveType('All');
                             navigate('/workflows');
                         }}
                         style={{
-                            padding: '8px 16px',
-                            borderRadius: '20px',
-                            border: '1px solid',
-                            borderColor: activeType === 'All' ? 'var(--accent)' : 'var(--border-color)',
-                            background: activeType === 'All' ? 'var(--accent)' : 'transparent',
-                            color: activeType === 'All' ? '#fff' : 'var(--text-secondary)',
-                            fontWeight: 500,
+                            height: '34px',
+                            padding: '0 14px',
+                            borderRadius: '8px',
+                            border: activeType === 'All' ? '1px solid #4338ca' : '1px solid #cbd5e1',
+                            background: activeType === 'All' ? '#4f46e5' : '#ffffff',
+                            color: activeType === 'All' ? '#ffffff' : '#475569',
+                            fontWeight: 600,
+                            fontSize: '12px',
                             cursor: 'pointer',
                             whiteSpace: 'nowrap',
-                            display: 'flex',
+                            display: 'inline-flex',
                             alignItems: 'center',
-                            gap: '6px'
+                            gap: '6px',
+                            boxShadow: activeType === 'All' ? '0 2px 4px rgba(79, 70, 229, 0.2)' : 'none',
+                            transition: 'all 0.15s'
                         }}
+                        onMouseOver={(e) => { if (activeType !== 'All') e.currentTarget.style.background = '#f1f5f9'; }}
+                        onMouseOut={(e) => { if (activeType !== 'All') e.currentTarget.style.background = '#ffffff'; }}
                     >
                         <Filter size={14} /> All Documents
                     </button>
                 )}
 
-                {!isDepository && DOC_TYPES.filter(t => t !== 'Enquiry').map(type => (
-                        <button
-                            key={type}
-                            onClick={() => {
-                                if (type === 'Statement of Account') {
-                                    navigate('/soa');
-                                } else {
-                                    navigate(`/workflows?type=${encodeURIComponent(type)}`);
-                                    setActiveType(type);
-                                }
-                            }}
-                            style={{
-                                padding: '8px 16px',
-                                borderRadius: '20px',
-                                border: '1px solid',
-                                borderColor: activeType === type ? 'var(--accent)' : 'var(--border-color)',
-                                background: activeType === type ? 'var(--accent)' : 'transparent',
-                                color: activeType === type ? '#fff' : 'var(--text-secondary)',
-                                fontWeight: 500,
-                                cursor: 'pointer',
-                                whiteSpace: 'nowrap',
-                                transition: 'all 0.2s',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '6px'
-                            }}
-                            onMouseOver={(e) => {
-                                if (activeType !== type) {
-                                    e.currentTarget.style.borderColor = 'var(--accent)';
-                                    e.currentTarget.style.color = 'var(--accent)';
-                                }
-                            }}
-                            onMouseOut={(e) => {
-                                if (activeType !== type) {
-                                    e.currentTarget.style.borderColor = 'var(--border-color)';
-                                    e.currentTarget.style.color = 'var(--text-secondary)';
-                                }
-                            }}
-                        >
-                            {type === 'Jobs' && <Briefcase size={14} />}
-                            {type === 'Quotation' && <FileText size={14} />}
-                            {type === 'Enquiry' ? 'Enquiry to Supplier' : type}
-                        </button>
-                    ))}
+                {!isDepository && DOC_TYPES.filter(t => t !== 'Enquiry').map(type => {
+                        const isActive = activeType === type;
+                        return (
+                            <button
+                                key={type}
+                                type="button"
+                                onClick={() => {
+                                    if (type === 'Statement of Account') {
+                                        navigate('/soa');
+                                    } else {
+                                        navigate(`/workflows?type=${encodeURIComponent(type)}`);
+                                        setActiveType(type);
+                                    }
+                                }}
+                                style={{
+                                    height: '34px',
+                                    padding: '0 14px',
+                                    borderRadius: '8px',
+                                    border: isActive ? '1px solid #4338ca' : '1px solid #cbd5e1',
+                                    background: isActive ? '#4f46e5' : '#ffffff',
+                                    color: isActive ? '#ffffff' : '#475569',
+                                    fontWeight: 600,
+                                    fontSize: '12px',
+                                    cursor: 'pointer',
+                                    whiteSpace: 'nowrap',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    boxShadow: isActive ? '0 2px 4px rgba(79, 70, 229, 0.2)' : 'none',
+                                    transition: 'all 0.15s'
+                                }}
+                                onMouseOver={(e) => { if (!isActive) e.currentTarget.style.background = '#f1f5f9'; }}
+                                onMouseOut={(e) => { if (!isActive) e.currentTarget.style.background = '#ffffff'; }}
+                            >
+                                {type === 'Jobs' && <Briefcase size={14} />}
+                                {type === 'Quotation' && <FileText size={14} />}
+                                {type === 'Enquiry' ? 'Enquiry to Supplier' : type}
+                            </button>
+                        );
+                    })}
                 </div>
 
             <div className="glass-panel">
@@ -1972,11 +2044,26 @@ export default function WorkflowV2Board() {
                                                 </button>
                                             </td>
                                             <td style={{ textAlign: 'right' }}>
-                                                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', position: 'relative', zIndex: 10 }}>
+                                                <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center', position: 'relative', zIndex: 10 }}>
                                                     <button
                                                         type="button"
-                                                        className="btn btn-sm btn-secondary"
-                                                        style={{ position: 'relative', zIndex: 20, cursor: 'pointer' }}
+                                                        style={{
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            gap: '4px',
+                                                            height: '32px',
+                                                            padding: '0 10px',
+                                                            borderRadius: '6px',
+                                                            background: '#ffffff',
+                                                            border: '1px solid #cbd5e1',
+                                                            color: '#334155',
+                                                            fontSize: '12px',
+                                                            fontWeight: 600,
+                                                            cursor: 'pointer',
+                                                            position: 'relative',
+                                                            zIndex: 20
+                                                        }}
                                                         onClick={(e) => {
                                                             e.preventDefault();
                                                             e.stopPropagation();
@@ -1990,12 +2077,25 @@ export default function WorkflowV2Board() {
                                                             }
                                                         }}
                                                     >
-                                                        <Eye size={14} /> {doc.notes?.startsWith('http') ? 'View' : 'Open'}
+                                                        <Eye size={14} color="#64748b" /> <span>{doc.notes?.startsWith('http') ? 'View' : 'Open'}</span>
                                                     </button>
+
                                                     <button
                                                         type="button"
-                                                        className="btn btn-sm btn-secondary"
-                                                        style={{ position: 'relative', zIndex: 20, cursor: 'pointer', color: '#6366f1' }}
+                                                        style={{
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            height: '32px',
+                                                            width: '32px',
+                                                            borderRadius: '6px',
+                                                            background: '#ffffff',
+                                                            border: '1px solid #cbd5e1',
+                                                            color: '#6366f1',
+                                                            cursor: 'pointer',
+                                                            position: 'relative',
+                                                            zIndex: 20
+                                                        }}
                                                         onClick={(e) => {
                                                             e.preventDefault();
                                                             e.stopPropagation();
@@ -2005,10 +2105,23 @@ export default function WorkflowV2Board() {
                                                     >
                                                         <Copy size={14} />
                                                     </button>
+
                                                     <button
                                                         type="button"
-                                                        className="btn btn-sm btn-secondary"
-                                                        style={{ position: 'relative', zIndex: 20, cursor: 'pointer' }}
+                                                        style={{
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            height: '32px',
+                                                            width: '32px',
+                                                            borderRadius: '6px',
+                                                            background: '#ffffff',
+                                                            border: '1px solid #cbd5e1',
+                                                            color: '#475569',
+                                                            cursor: 'pointer',
+                                                            position: 'relative',
+                                                            zIndex: 20
+                                                        }}
                                                         onClick={(e) => {
                                                             e.preventDefault();
                                                             e.stopPropagation();
@@ -2018,10 +2131,23 @@ export default function WorkflowV2Board() {
                                                     >
                                                         <Printer size={14} />
                                                     </button>
+
                                                     <button
                                                         type="button"
-                                                        className="btn btn-sm btn-secondary"
-                                                        style={{ color: '#10b981', position: 'relative', zIndex: 20, cursor: 'pointer' }}
+                                                        style={{
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            height: '32px',
+                                                            width: '32px',
+                                                            borderRadius: '6px',
+                                                            background: '#ffffff',
+                                                            border: '1px solid #cbd5e1',
+                                                            color: '#10b981',
+                                                            cursor: 'pointer',
+                                                            position: 'relative',
+                                                            zIndex: 20
+                                                        }}
                                                         onClick={(e) => {
                                                             e.preventDefault();
                                                             e.stopPropagation();
@@ -2035,8 +2161,20 @@ export default function WorkflowV2Board() {
                                                     {doc.document_type === 'Certificate' && (
                                                         <button
                                                             type="button"
-                                                            className="btn btn-sm btn-secondary"
-                                                            style={{ color: '#8b5cf6', position: 'relative', zIndex: 20, cursor: 'pointer' }}
+                                                            style={{
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                height: '32px',
+                                                                width: '32px',
+                                                                borderRadius: '6px',
+                                                                background: '#ffffff',
+                                                                border: '1px solid #cbd5e1',
+                                                                color: '#8b5cf6',
+                                                                cursor: 'pointer',
+                                                                position: 'relative',
+                                                                zIndex: 20
+                                                            }}
                                                             onClick={(e) => {
                                                                 e.preventDefault();
                                                                 e.stopPropagation();
@@ -2051,19 +2189,23 @@ export default function WorkflowV2Board() {
                                                     {(doc.document_type?.toUpperCase() === 'QUOTATION' || doc.document_type?.toUpperCase() === 'ENQUIRY') && (
                                                         <button
                                                             type="button"
-                                                            className={`btn btn-sm ${doc.is_job ? 'btn-secondary' : 'btn-success'}`}
                                                             style={{ 
-                                                                position: 'relative', 
-                                                                zIndex: 20, 
-                                                                cursor: doc.is_job ? 'default' : 'pointer', 
-                                                                display: 'flex', 
+                                                                display: 'inline-flex', 
                                                                 alignItems: 'center', 
+                                                                justifyContent: 'center',
                                                                 gap: '4px', 
-                                                                padding: '4px 10px', 
+                                                                height: '32px',
+                                                                padding: '0 10px',
+                                                                borderRadius: '6px',
+                                                                fontSize: '12px',
+                                                                fontWeight: 600,
+                                                                cursor: doc.is_job ? 'default' : 'pointer', 
                                                                 opacity: (conversionLoading || doc.is_job) ? 0.7 : 1,
                                                                 background: doc.is_job ? '#94a3b8' : '#10b981',
-                                                                borderColor: doc.is_job ? '#94a3b8' : '#10b981',
-                                                                color: '#fff'
+                                                                border: doc.is_job ? '1px solid #94a3b8' : '1px solid #059669',
+                                                                color: '#ffffff',
+                                                                position: 'relative', 
+                                                                zIndex: 20
                                                             }}
                                                             onClick={(e) => {
                                                                 e.preventDefault();
@@ -2084,18 +2226,22 @@ export default function WorkflowV2Board() {
                                                     {doc.document_type === 'Proforma Invoice' && (
                                                         <button
                                                             type="button"
-                                                            className="btn btn-sm"
                                                             style={{ 
-                                                                position: 'relative', 
-                                                                zIndex: 20, 
-                                                                cursor: 'pointer', 
-                                                                display: 'flex', 
+                                                                display: 'inline-flex', 
                                                                 alignItems: 'center', 
+                                                                justifyContent: 'center',
                                                                 gap: '4px', 
-                                                                padding: '4px 10px', 
-                                                                background: '#ef4444',
-                                                                borderColor: '#ef4444',
-                                                                color: '#fff'
+                                                                height: '32px',
+                                                                padding: '0 10px',
+                                                                borderRadius: '6px',
+                                                                fontSize: '12px',
+                                                                fontWeight: 600,
+                                                                background: '#6366f1',
+                                                                border: '1px solid #4f46e5',
+                                                                color: '#ffffff',
+                                                                cursor: 'pointer',
+                                                                position: 'relative', 
+                                                                zIndex: 20
                                                             }}
                                                             onClick={(e) => {
                                                                 e.preventDefault();
@@ -2113,18 +2259,22 @@ export default function WorkflowV2Board() {
                                                     {doc.is_job && doc.document_type === 'Job' && (
                                                         <button
                                                             type="button"
-                                                            className="btn btn-sm"
                                                             style={{ 
-                                                                position: 'relative', 
-                                                                zIndex: 20, 
-                                                                cursor: 'pointer', 
-                                                                display: 'flex', 
+                                                                display: 'inline-flex', 
                                                                 alignItems: 'center', 
+                                                                justifyContent: 'center',
                                                                 gap: '4px', 
-                                                                padding: '4px 10px', 
+                                                                height: '32px',
+                                                                padding: '0 10px',
+                                                                borderRadius: '6px',
+                                                                fontSize: '12px',
+                                                                fontWeight: 600,
                                                                 background: '#64748b',
-                                                                borderColor: '#64748b',
-                                                                color: '#fff'
+                                                                border: '1px solid #475569',
+                                                                color: '#ffffff',
+                                                                cursor: 'pointer',
+                                                                position: 'relative', 
+                                                                zIndex: 20
                                                             }}
                                                             onClick={(e) => {
                                                                 e.preventDefault();
@@ -2141,18 +2291,22 @@ export default function WorkflowV2Board() {
                                                     {doc.document_type === 'Quotation' && !doc.is_job && (
                                                         <button
                                                             type="button"
-                                                            className="btn btn-sm"
                                                             style={{ 
-                                                                position: 'relative', 
-                                                                zIndex: 20, 
-                                                                cursor: 'pointer', 
-                                                                display: 'flex', 
+                                                                display: 'inline-flex', 
                                                                 alignItems: 'center', 
+                                                                justifyContent: 'center',
                                                                 gap: '4px', 
-                                                                padding: '4px 10px', 
+                                                                height: '32px',
+                                                                padding: '0 10px',
+                                                                borderRadius: '6px',
+                                                                fontSize: '12px',
+                                                                fontWeight: 600,
                                                                 background: '#64748b',
-                                                                borderColor: '#64748b',
-                                                                color: '#fff'
+                                                                border: '1px solid #475569',
+                                                                color: '#ffffff',
+                                                                cursor: 'pointer',
+                                                                position: 'relative', 
+                                                                zIndex: 20
                                                             }}
                                                             onClick={(e) => {
                                                                 e.preventDefault();
@@ -2171,15 +2325,19 @@ export default function WorkflowV2Board() {
                                                             {!doc.is_job && (
                                                                 <button
                                                                     type="button"
-                                                                    className="btn btn-sm"
                                                                     style={{ 
+                                                                        display: 'inline-flex', 
+                                                                        alignItems: 'center', 
+                                                                        justifyContent: 'center',
+                                                                        gap: '4px', 
+                                                                        height: '32px',
+                                                                        padding: '0 8px',
+                                                                        borderRadius: '6px',
+                                                                        fontSize: '12px',
+                                                                        fontWeight: 600,
                                                                         background: '#10b981',
-                                                                        borderColor: '#10b981',
-                                                                        color: '#fff',
-                                                                        display: 'flex',
-                                                                        alignItems: 'center',
-                                                                        gap: '4px',
-                                                                        padding: '4px 8px',
+                                                                        border: '1px solid #059669',
+                                                                        color: '#ffffff',
                                                                         position: 'relative',
                                                                         zIndex: 20
                                                                     }}
@@ -2197,15 +2355,19 @@ export default function WorkflowV2Board() {
                                                             )}
                                                             <button
                                                                 type="button"
-                                                                className="btn btn-sm"
                                                                 style={{ 
-                                                                    background: '#ef4444',
-                                                                    borderColor: '#ef4444',
-                                                                    color: '#fff',
-                                                                    display: 'flex',
-                                                                    alignItems: 'center',
-                                                                    gap: '4px',
-                                                                    padding: '4px 8px',
+                                                                    display: 'inline-flex', 
+                                                                    alignItems: 'center', 
+                                                                    justifyContent: 'center',
+                                                                    gap: '4px', 
+                                                                    height: '32px',
+                                                                    padding: '0 8px',
+                                                                    borderRadius: '6px',
+                                                                    fontSize: '12px',
+                                                                    fontWeight: 600,
+                                                                    background: '#0284c7',
+                                                                    border: '1px solid #0369a1',
+                                                                    color: '#ffffff',
                                                                     position: 'relative',
                                                                     zIndex: 20
                                                                 }}
@@ -2226,13 +2388,26 @@ export default function WorkflowV2Board() {
 
                                                     <button
                                                         type="button"
-                                                        className="btn btn-sm btn-secondary"
-                                                        style={{ color: 'var(--danger)', position: 'relative', zIndex: 20, cursor: 'pointer' }}
+                                                        style={{
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            height: '32px',
+                                                            width: '32px',
+                                                            borderRadius: '6px',
+                                                            background: '#fef2f2',
+                                                            border: '1px solid #fecaca',
+                                                            color: '#ef4444',
+                                                            cursor: 'pointer',
+                                                            position: 'relative',
+                                                            zIndex: 20
+                                                        }}
                                                         onClick={(e) => {
                                                             e.preventDefault();
                                                             e.stopPropagation();
                                                             handleDelete(doc);
                                                         }}
+                                                        title="Delete Document"
                                                     >
                                                         <Trash2 size={14} />
                                                     </button>

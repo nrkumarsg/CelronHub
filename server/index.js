@@ -5,6 +5,8 @@ import express from 'express';
 import cors from 'cors';
 import { runUniversalSearch } from '../src/lib/universalFinder.js';
 import { supabase } from '../src/lib/supabase.js';
+import { handleKioskLogin } from '../src/lib/kioskAuthServer.js';
+import { handleAiComplete } from '../src/lib/ai/serverAiHandler.js';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 const app = express();
@@ -23,6 +25,20 @@ app.get('/', (req, res) => {
             </div>
         </div>
     `);
+});
+
+// ---- Kiosk PIN login ------------------------------------------------------
+app.post('/api/kiosk-login', async (req, res) => {
+    const { pin } = req.body || {};
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+    const result = await handleKioskLogin(pin, ip);
+    res.status(result.status).json(result.body);
+});
+
+// ---- AI provider proxy (keeps operator-owned API keys server-only) -------
+app.post('/api/ai/complete', async (req, res) => {
+    const result = await handleAiComplete(req.body);
+    res.status(result.status).json(result.body);
 });
 
 // ---- 1️⃣ Search endpoint -------------------------------------------------

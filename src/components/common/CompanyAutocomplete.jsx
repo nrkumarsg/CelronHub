@@ -13,9 +13,9 @@ const CompanyAutocomplete = ({ value, onChange, onSelect, className, aiDisabled 
 
     // Google API Key from env
     const GOOGLE_API_KEY = (
-        (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_API_KEY) ||
-        (typeof process !== 'undefined' && process.env?.VITE_GOOGLE_API_KEY) ||
-        'AIzaSyDZD7x8k_i5_VoGm-9EqVCy1InDSxxu8Eo'
+        (typeof import.meta !== 'undefined' && (import.meta.env?.VITE_GOOGLE_API_KEY || import.meta.env?.VITE_GOOGLE_GEOCODE_KEY)) ||
+        (typeof process !== 'undefined' && (process.env?.VITE_GOOGLE_API_KEY || process.env?.VITE_GOOGLE_GEOCODE_KEY)) ||
+        ''
     );
 
     useEffect(() => {

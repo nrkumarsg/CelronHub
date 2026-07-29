@@ -78,12 +78,15 @@ export default function OAuthCallback() {
 
                     const baseState = state.split(':')[0];
 
-                    if (['general','contacts_sync','manual_upload','enquiry_form','catalog_photo_upload','catalog_spare_new','calibration_lab','scanner_module','apk_management','drive_status_tray','drive_card_sync','drive_bill_sync'].includes(baseState)) {
+                    if (['general','contacts_sync','manual_upload','mobile_upload','enquiry_form','catalog_photo_upload','catalog_spare_new','calibration_lab','scanner_module','apk_management','drive_status_tray','drive_card_sync','drive_bill_sync'].includes(baseState)) {
+                        localStorage.setItem('google_access_token', accessToken);
+                        localStorage.setItem('google_token_expiry', new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString());
                         sessionStorage.setItem('google_contacts_token', accessToken);
                         sessionStorage.setItem('google_contacts_expires', new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString());
 
                         const messageMap = {
                             general: 'Google Drive Connected!',
+                            mobile_upload: 'Google Account Signed In! You can now upload files from your mobile phone.',
                             enquiry_form: 'Google Account Connected! You can now resume saving.',
                             contacts_sync: 'Google Contacts Connected!',
                             manual_upload: 'Google Drive Connected!',
@@ -99,6 +102,7 @@ export default function OAuthCallback() {
 
                         const targetMap = {
                             general: '/dashboard',
+                            mobile_upload: '/upload-media',
                             enquiry_form: '/workflows',
                             contacts_sync: '/contacts',
                             manual_upload: '/catalog/manuals/new',
@@ -113,11 +117,16 @@ export default function OAuthCallback() {
                         };
 
                         const returnUrl = sessionStorage.getItem('google_auth_return_url');
-                        const target = returnUrl || targetMap[baseState] || '/dashboard';
+                        let target = returnUrl || targetMap[baseState] || '/dashboard';
                         if (returnUrl) sessionStorage.removeItem('google_auth_return_url');
 
+                        // If returnUrl exists and doesn't contain token yet, append token
+                        if (target.includes('/upload-media') && !target.includes('token=')) {
+                            target += (target.includes('?') ? '&' : '?') + `token=${accessToken}`;
+                        }
+
                         alert(messageMap[baseState] || 'Google Connected Successfully!');
-                        navigate(target);
+                        window.location.href = target;
                         return;
                     }
 

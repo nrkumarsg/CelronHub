@@ -6,7 +6,7 @@ import {
     Search, FileText, Send, ClipboardCheck, Briefcase, Truck, Receipt, 
     ChevronRight, ArrowLeft, Plus, RefreshCcw, Activity, ArrowRightLeft, 
     Calendar, CheckCircle, Clock, AlertCircle, ShoppingCart, DollarSign,
-    ExternalLink, Trash2, Edit2, Layers, Folder, X
+    ExternalLink, Trash2, Edit2, Layers, Folder, X, Sparkles
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CustomerEnquiryForm from '../../components/CustomerEnquiryForm';
@@ -714,7 +714,14 @@ export default function JobWorkflow() {
                     </h1>
                     <p style={{ color: '#64748b', marginTop: '4px', fontSize: '1.05rem' }}>Eagle-Eye perspective to search, track, and complete full transaction lifecycles.</p>
                 </div>
-                <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <button 
+                        onClick={() => navigate('/workflows/wizard')} 
+                        className="btn"
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(168, 85, 247, 0.3)' }}
+                    >
+                        <Sparkles size={18} /> Launch Workflow Wizard
+                    </button>
                     <button 
                         onClick={() => navigate('/')} 
                         className="btn btn-secondary"

@@ -135,55 +135,11 @@ export const AuthProvider = ({ children }) => {
                 // Background refresh
                 await refreshProfileData(session.user, hasCache); 
             } else {
-                console.log('Auth: No active session found. Enabling developer bypass mode.');
-                const mockUser = {
-                    id: '0f62bbfb-a8fe-4a58-8547-0e6fb308a38a',
-                    email: 'nrkumarsg@gmail.com',
-                    aud: 'authenticated',
-                    role: 'authenticated'
-                };
-                setUser(mockUser);
-
-                // Define all companies the user needs access to in bypass mode
-                const bypassCompanies = [
-                    {
-                        id: '8431cd0b-7449-44a5-8213-2a8680d09ebe',
-                        name: 'CEL-RON ENTERPRISES PTE LTD',
-                        slug: 'celron-enterprises',
-                        logo_url: '/logo.png'
-                    },
-                    {
-                        id: 'c0000000-0000-0000-0000-000000000002',
-                        name: 'ARK INTERNATIONAL SERVICES',
-                        slug: 'ark-international',
-                        logo_url: null
-                    },
-                    {
-                        id: 'c0000000-0000-0000-0000-000000000003',
-                        name: 'arkis pte ltd',
-                        slug: 'arkis-pte',
-                        logo_url: null
-                    }
-                ];
-
-                const storedCompany = localStorage.getItem('active_company_id');
-                const activeId = (storedCompany && bypassCompanies.some(c => c.id === storedCompany))
-                    ? storedCompany 
-                    : '8431cd0b-7449-44a5-8213-2a8680d09ebe';
-
-                const activeComp = bypassCompanies.find(c => c.id === activeId);
-
-                setProfile({
-                    id: '0f62bbfb-a8fe-4a58-8547-0e6fb308a38a',
-                    email: 'nrkumarsg@gmail.com',
-                    role: 'superadmin',
-                    status: 'active',
-                    company_id: activeId,
-                    company_logo_url: activeComp?.logo_url || '/logo.png',
-                    accessible_modules: ['partners', 'contacts', 'vessels', 'work-locations', 'catalog', 'reports', 'settings', 'workflows', 'universal-finder', 'storage-directory']
-                });
-                setCompanies(bypassCompanies);
-                setActiveCompanyId(activeId);
+                console.log('Auth: No active session found.');
+                setUser(null);
+                setProfile(null);
+                setCompanies([]);
+                setActiveCompanyId(null);
                 setLoading(false);
             }
         } catch (err) {
@@ -437,61 +393,37 @@ export const AuthProvider = ({ children }) => {
         },
         signUp: (data) => supabase.auth.signUp(data),
         signIn: async (data) => {
-            const emailLower = data.email?.toLowerCase()?.trim();
-            const password = data.password?.trim();
-            if (emailLower === '201436227C' || password === '201436227C') {
-                console.log('Auth: Logged in via UEN PIN bypass');
+            const primary = await supabase.auth.signInWithPassword(data);
+            if (!primary.error) return primary;
 
-                // Sign in to Supabase in the background so we have a real authenticated session
-                supabase.auth.signInWithPassword({
-                    email: 'nrkumarsg@gmail.com',
-                    password: 'Mother1973'
-                }).then(({ data: sbData, error: sbErr }) => {
-                    if (sbErr) console.warn('Auth: Background Supabase sign-in failed:', sbErr.message);
-                    else console.log('Auth: Background Supabase session established successfully for user:', sbData?.user?.id);
-                }).catch(err => {
-                    console.warn('Auth: Background Supabase sign-in caught error:', err);
-                });
-
-                const mockUser = {
-                    id: '0f62bbfb-a8fe-4a58-8547-0e6fb308a38a',
-                    email: 'nrkumarsg@gmail.com',
-                    aud: 'authenticated',
-                    role: 'authenticated'
-                };
-                setUser(mockUser);
-                const mockProfile = {
-                    id: '0f62bbfb-a8fe-4a58-8547-0e6fb308a38a',
-                    email: 'nrkumarsg@gmail.com',
-                    role: 'superadmin',
-                    status: 'active',
-                    company_id: '8431cd0b-7449-44a5-8213-2a8680d09ebe',
-                    company_logo_url: '/logo.png',
-                    accessible_modules: ['partners', 'contacts', 'vessels', 'work-locations', 'catalog', 'reports', 'settings', 'workflows', 'universal-finder', 'storage-directory']
-                };
-                setProfile(mockProfile);
-                setCompanies([
-                    {
-                        id: '8431cd0b-7449-44a5-8213-2a8680d09ebe',
-                        name: 'CEL-RON ENTERPRISES PTE LTD',
-                        slug: 'celron-enterprises',
-                        logo_url: '/logo.png'
+            // Kiosk PIN fallback: catalog-only deployments authenticate staff via a
+            // shared PIN instead of the real account password. The PIN is verified
+            // server-side (never shipped to the client) which mints a real session.
+            const isCatalogOnly = window.location.hostname.includes('celronpricescanner') ||
+                                   window.location.hostname.includes('celronspares') ||
+                                   (import.meta.env.VITE_CATALOG_ONLY === 'true' &&
+                                    !window.location.hostname.includes('celronhub') &&
+                                    !window.location.hostname.includes('celron-partners'));
+            if (isCatalogOnly && data.password) {
+                try {
+                    const resp = await fetch('/api/kiosk-login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pin: data.password })
+                    });
+                    const result = await resp.json();
+                    if (resp.ok && result?.session) {
+                        const setResult = await supabase.auth.setSession({
+                            access_token: result.session.access_token,
+                            refresh_token: result.session.refresh_token
+                        });
+                        if (!setResult.error) return setResult;
                     }
-                ]);
-                setActiveCompanyId('8431cd0b-7449-44a5-8213-2a8680d09ebe');
-                localStorage.setItem('auth_cached_profile', JSON.stringify(mockProfile));
-                localStorage.setItem('auth_cached_companies', JSON.stringify([
-                    {
-                        id: '8431cd0b-7449-44a5-8213-2a8680d09ebe',
-                        name: 'CEL-RON ENTERPRISES PTE LTD',
-                        slug: 'celron-enterprises',
-                        logo_url: '/logo.png'
-                    }
-                ]));
-                localStorage.setItem('active_company_id', '8431cd0b-7449-44a5-8213-2a8680d09ebe');
-                return { data: { user: mockUser }, error: null };
+                } catch (err) {
+                    console.warn('Auth: kiosk PIN login failed', err);
+                }
             }
-            return supabase.auth.signInWithPassword(data);
+            return primary;
         },
         signOut: async () => {
             localStorage.removeItem('active_company_id');

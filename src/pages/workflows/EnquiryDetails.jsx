@@ -606,7 +606,7 @@ export default function EnquiryDetails() {
             body: bodyVal,
             selectedSuppliers,
             supplierContacts,
-            gdriveLink: enquiry.gdrive_file_link || 'https://drive.google.com/drive/folders/1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij?usp=sharing',
+            gdriveLink: enquiry.gdrive_file_link || 'https://drive.google.com/drive/folders/1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w?usp=drive_link',
             enquiryNo: enquiry?.enquiry_no,
             enquiryId: id,
             enquiryFolderId: enquiry.gdrive_folder_id

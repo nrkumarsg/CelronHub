@@ -237,7 +237,7 @@ export default function StorageDirectory() {
                         {tab.charAt(0).toUpperCase() + tab.slice(1)}
                         {tab !== 'explorer' && (
                             <a 
-                                href={tab === 'enquiries' ? 'https://drive.google.com/drive/folders/1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij?usp=drive_link' : 'https://drive.google.com/drive/folders/1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-?usp=drive_link'}
+                                href={tab === 'enquiries' ? 'https://drive.google.com/drive/folders/1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w?usp=drive_link' : 'https://drive.google.com/drive/folders/1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-?usp=drive_link'}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={(e) => e.stopPropagation()}
@@ -469,7 +469,7 @@ export default function StorageDirectory() {
                                     </div>
                                     <div style={{ display: 'flex', gap: '12px' }}>
                                         <a 
-                                            href={activeTab === 'enquiries' ? 'https://drive.google.com/drive/folders/1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij?usp=drive_link' : 'https://drive.google.com/drive/folders/1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-?usp=drive_link'}
+                                            href={activeTab === 'enquiries' ? 'https://drive.google.com/drive/folders/1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w?usp=drive_link' : 'https://drive.google.com/drive/folders/1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-?usp=drive_link'}
                                             target="_blank"
                                             rel="noopener noreferrer"
                                             style={{ 

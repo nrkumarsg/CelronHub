@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Send, Mail, Search, Paperclip, Trash2, Plus, Eye, Edit2, Upload, AlertCircle, CheckCircle2, FolderOpen, RefreshCw, FileText, ImageIcon, Loader2, FileCheck, Smartphone, Info } from 'lucide-react';
+import { X, Send, Mail, Search, Paperclip, Trash2, Plus, Eye, Edit2, Upload, AlertCircle, CheckCircle2, FolderOpen, RefreshCw, FileText, ImageIcon, Loader2, FileCheck, Smartphone, Info, UploadCloud } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { getStoredToken } from '../../lib/googleAuthService';
-import { listFolderContent, getOrCreateFolder } from '../../lib/driveService';
+import { listFolderContent, getOrCreateFolder, uploadFileToDrive } from '../../lib/driveService';
 import toast from 'react-hot-toast';
 import SmartAttachmentDropzone from '../common/SmartAttachmentDropzone';
 
@@ -18,7 +18,7 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
     const [bcc, setBcc] = useState(data.bcc || 'celron.simlim0305@gmail.com');
     const [subject, setSubject] = useState(data.subject || '');
     const [body, setBody] = useState(data.body || '');
-    const [attachments, setAttachments] = useState([]);
+    const [attachments, setAttachments] = useState(data.attachments || []);
     
     // Contact list state
     const [companySearch, setCompanySearch] = useState('');
@@ -92,6 +92,60 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
             toast.error('Failed to sync Google Drive files.');
         } finally {
             setLoadingDriveFiles(false);
+        }
+    };
+
+    // Save copy of current attachments/document directly to Google Drive & refresh
+    const [savingToDrive, setSavingToDrive] = useState(false);
+
+    const handleSaveToDrive = async () => {
+        if (!data.enquiryFolderId) {
+            toast.error('No Google Drive folder linked to this project.');
+            return;
+        }
+
+        const token = getStoredToken();
+        if (!token) {
+            toast.error('Google Drive is not connected. Connect Google Drive first.');
+            return;
+        }
+
+        setSavingToDrive(true);
+        try {
+            // 1. Get active target subfolder ID
+            let targetFolderId = activeAttachmentTab === 'supplierEnquiry' ? supplierUploadsFolderId :
+                                 activeAttachmentTab === 'photosMedia' ? photosFolderId : quotationsFolderId;
+
+            if (!targetFolderId) {
+                const folderName = activeAttachmentTab === 'supplierEnquiry' ? 'Supplier Enquiry uploads' :
+                                   activeAttachmentTab === 'photosMedia' ? 'Photos & Media' : 'Quotations received';
+                targetFolderId = await getOrCreateFolder(token, folderName, data.enquiryFolderId);
+            }
+
+            // 2. Execute custom save handler if provided or upload local attachment files
+            if (data.onSaveToDrive) {
+                await data.onSaveToDrive(targetFolderId);
+            } else if (attachments && attachments.length > 0) {
+                for (const file of attachments) {
+                    if (file instanceof File || file instanceof Blob) {
+                        await uploadFileToDrive(token, file, file.name, targetFolderId);
+                    }
+                }
+                toast.success('Attached document files uploaded to Google Drive!');
+            } else {
+                toast.error('No attached file available to save to Google Drive.');
+                setSavingToDrive(false);
+                return;
+            }
+
+            // 3. Re-fetch drive files to immediately update tab counts & file lists
+            await fetchDriveFiles();
+            toast.success('Google Drive attachments synced successfully!');
+        } catch (err) {
+            console.error('[SaveToDrive Error]:', err);
+            toast.error('Failed to save to Google Drive: ' + (err.message || 'Drive API error'));
+        } finally {
+            setSavingToDrive(false);
         }
     };
 
@@ -279,7 +333,9 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                     bcc: bcc,
                     subject: subject,
                     body: body,
-                    attachments: customAttachments
+                    attachments: customAttachments,
+                    in_reply_to: data.inReplyTo || data.messageId || '',
+                    references: data.references || data.inReplyTo || data.messageId || ''
                 })
             });
 
@@ -492,7 +548,7 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                             <div style={{ display: 'flex', gap: '6px' }}>
                                 <button
                                     type="button"
-                                    onClick={() => window.open(data.gdriveLink || 'https://drive.google.com/drive/folders/1Hr9-SFbjS-1pPIYu1kY57cRdc-1PVRij?usp=sharing', '_blank')}
+                                    onClick={() => window.open(data.gdriveLink || 'https://drive.google.com/drive/folders/1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w?usp=drive_link', '_blank')}
                                     style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
                                 >
                                     <FolderOpen size={12} />
@@ -514,6 +570,18 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                                     >
                                         <Smartphone size={12} />
                                         Mobile Upload (QR)
+                                    </button>
+                                )}
+                                {driveConnected && (
+                                    <button
+                                        type="button"
+                                        onClick={handleSaveToDrive}
+                                        disabled={savingToDrive || loadingDriveFiles}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '5px', background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', border: '1px solid #93c5fd', borderRadius: '6px', padding: '6px 12px', fontSize: '11px', fontWeight: 700, color: '#1d4ed8', cursor: 'pointer' }}
+                                        title="Save a copy of documents into Google Drive & refresh list"
+                                    >
+                                        <UploadCloud size={13} className={savingToDrive ? 'animate-spin' : ''} />
+                                        {savingToDrive ? 'Saving Copy...' : '☁️ Save Copy to Drive'}
                                     </button>
                                 )}
                                 {driveConnected && (
@@ -605,8 +673,19 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
 
                                             if (currentFiles.length === 0) {
                                                 return (
-                                                    <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '11px' }}>
-                                                        No files found in this folder.
+                                                    <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '11px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                                                        <span>No files found in Google Drive '{activeAttachmentTab === 'supplierEnquiry' ? 'Supplier Enquiry uploads' : activeAttachmentTab === 'photosMedia' ? 'Photos & Media' : 'Quotations received'}' folder.</span>
+                                                        {driveConnected && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={handleSaveToDrive}
+                                                                disabled={savingToDrive}
+                                                                style={{ padding: '6px 14px', fontSize: '11px', fontWeight: 700, background: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                                            >
+                                                                <UploadCloud size={14} className={savingToDrive ? 'animate-spin' : ''} />
+                                                                {savingToDrive ? 'Saving...' : 'Save Current Documents to Drive & Refresh'}
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 );
                                             }
@@ -678,16 +757,35 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
                                             <Paperclip size={15} color="#64748b" />
                                             <span style={{ fontSize: '12px', color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
-                                            <span style={{ fontSize: '11px', color: '#94a3b8' }}>({Math.round(file.size / 1024)} KB)</span>
+                                            <span style={{ fontSize: '11px', color: '#94a3b8' }}>({Math.round((file.size || 0) / 1024)} KB)</span>
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => removeAttachment(idx)}
-                                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
-                                            title="Remove attachment"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    if (file instanceof File || file instanceof Blob) {
+                                                        const url = URL.createObjectURL(file);
+                                                        window.open(url, '_blank');
+                                                    } else if (file.url || file.preview || file.webContentLink || file.webViewLink) {
+                                                        window.open(file.url || file.preview || file.webContentLink || file.webViewLink, '_blank');
+                                                    } else {
+                                                        toast.error('Unable to open file preview.');
+                                                    }
+                                                }}
+                                                style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', cursor: 'pointer', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                title="Open / Verify Document PDF"
+                                            >
+                                                <Eye size={13} /> Open / Verify PDF
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => removeAttachment(idx)}
+                                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
+                                                title="Remove attachment"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>

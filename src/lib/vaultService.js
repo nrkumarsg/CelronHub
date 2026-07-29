@@ -11,10 +11,7 @@ import { getDocumentSettings, saveDocumentSettings } from './store';
  */
 export const initializeVault = async (accessToken, companyId) => {
     const settings = await getDocumentSettings(companyId);
-    let topRootId = settings?.google_drive_folder_id;
-    if (!topRootId) {
-        throw new Error('Google Drive Root Folder ID (CELRON ROOT) not configured in Settings.');
-    }
+    let topRootId = settings?.google_drive_folder_id || '1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w';
 
     // Extract ID if a URL was provided
     if (topRootId.includes('drive.google.com')) {

@@ -331,7 +331,7 @@ export const performOCR = async (file) => {
     const apiKey = (
         (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_API_KEY) ||
         (typeof process !== 'undefined' && process.env?.VITE_GOOGLE_API_KEY) ||
-        'AIzaSyA5YW4mWUo__7hwGjvLor-DDsh-spg2r5M'
+        ''
     );
     if (!apiKey) {
         console.warn('VITE_GOOGLE_API_KEY not found. OCR disabled.');

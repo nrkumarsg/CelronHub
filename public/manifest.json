@@ -1,0 +1,52 @@
+{
+  "id": "/",
+  "name": "CelronHub Enterprise Workflow",
+  "short_name": "CelronHub",
+  "description": "CelronHub Enterprise Workflow & Vessel Management System",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f46e5",
+  "orientation": "any",
+  "categories": [
+    "business",
+    "productivity",
+    "utilities"
+  ],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/iso_bizsafe.png",
+      "sizes": "600x400",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "CelronHub Enterprise Mobile Desktop Workflow"
+    },
+    {
+      "src": "/iso_bizsafe.png",
+      "sizes": "600x400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "CelronHub Mobile Job Workflow Wizard"
+    }
+  ]
+}

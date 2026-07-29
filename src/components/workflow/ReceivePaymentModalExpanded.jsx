@@ -3,6 +3,9 @@ import { Loader2, X } from 'lucide-react';
 import { getStatementData, saveWorkflowDocument, generateDocNumber } from '../../lib/workflowV2Service';
 import RichTextEditor from '../common/RichTextEditor';
 import Tesseract from 'tesseract.js';
+import { getEncryptedApiKey, getDecryptedApiKey } from '../../lib/ai/configService';
+import { executeOpenAICompatibleRequest } from '../../lib/ai/providerRunners';
+import { callServerAiProxy } from '../../lib/ai/serverProxyClient';
 
 export default function ReceivePaymentModalExpanded({ prefill, onClose, onSuccess, partners, company_id }) {
   // ------------ Form State (left column) ------------
@@ -75,24 +78,22 @@ export default function ReceivePaymentModalExpanded({ prefill, onClose, onSucces
       setOcrRunning(false);
       setAiRunning(true);
 
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
-          messages: [{ role: 'system', content: 'You are an invoice parser.' }, { role: 'user', content: `Extract the fields from the following OCR text and return a JSON object with keys: company_name, invoice_number, issue_date (YYYY-MM-DD), description, amount (numeric), gst (numeric), total_amount (numeric). If a field cannot be found, set it to null.\n\n${text}` }],
-          temperature: 0
-        })
-      });
+      const invoicePrompt = `Extract the fields from the following OCR text and return a JSON object with keys: company_name, invoice_number, issue_date (YYYY-MM-DD), description, amount (numeric), gst (numeric), total_amount (numeric). If a field cannot be found, set it to null.\n\n${text}`;
+      const history = [{ role: 'system', content: 'You are an invoice parser.' }];
+      const modelName = 'gpt-3.5-turbo';
 
-      const result = await response.json();
-      const jsonString = result?.choices?.[0]?.message?.content?.trim();
-      let parsed = {};
-      try { parsed = JSON.parse(jsonString); }
-      catch { console.warn('OpenAI returned non‑JSON output'); }
+      const hasCustomKey = Boolean(getEncryptedApiKey('OpenAI'));
+      const raw = hasCustomKey
+        ? await executeOpenAICompatibleRequest(
+            { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', modelName, temperature: 0, maxTokens: 1024 },
+            await getDecryptedApiKey('OpenAI'),
+            invoicePrompt,
+            history,
+            true
+          )
+        : await callServerAiProxy('openai', invoicePrompt, history, true, null, modelName);
+
+      const parsed = raw && !raw.error ? raw : {};
 
       // Update formData with any values that exist
       setFormData(prev => ({

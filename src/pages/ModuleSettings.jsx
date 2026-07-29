@@ -33,7 +33,7 @@ export default function ModuleSettings() {
         signature_url: '',
         watermark: false,
         allow_signup: true,
-        google_drive_folder_id: '',
+        google_drive_folder_id: 'https://drive.google.com/drive/folders/1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w?usp=drive_link',
         google_calendar_id: '',
         paynow_url: '',
         bank_details: ''

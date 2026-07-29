@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { UploadCloud, Camera, CheckCircle, Loader2, AlertCircle, HardDrive, RefreshCw, Trash2, X, Plus } from 'lucide-react';
+import { UploadCloud, Camera, CheckCircle, Loader2, AlertCircle, HardDrive, RefreshCw, Trash2, X, Plus, Cloud, Lock } from 'lucide-react';
 import { uploadFileToDrive, listFolderContent } from '../../lib/driveService';
+import { connectGoogleAPI } from '../../lib/googleAuthService';
 
 export default function UploadMediaGateway() {
     const [searchParams] = useSearchParams();
@@ -18,19 +19,21 @@ export default function UploadMediaGateway() {
     const startedUploadsRef = useRef(new Set());
     const controllersRef = useRef({});
 
+    const activeToken = token || localStorage.getItem('google_access_token') || '';
+
     useEffect(() => {
         // Simple sanity check
-        if (!folderId || !token) {
+        if (!folderId && !jobId) {
             setInitError('Invalid or expired upload link. Please scan the QR code again.');
         }
-    }, [folderId, token]);
+    }, [folderId, jobId]);
 
     // Fetch existing files from Google Drive on load to prevent duplicates
     useEffect(() => {
-        if (folderId && token) {
+        if (folderId && activeToken) {
             const fetchExisting = async () => {
                 try {
-                    const files = await listFolderContent(token, folderId);
+                    const files = await listFolderContent(activeToken, folderId);
                     const fileNames = new Set(files.map(f => f.name));
                     setExistingFiles(fileNames);
                 } catch (err) {
@@ -39,7 +42,7 @@ export default function UploadMediaGateway() {
             };
             fetchExisting();
         }
-    }, [folderId, token]);
+    }, [folderId, activeToken]);
 
     // Cleanup object URLs on unmount
     useEffect(() => {
@@ -74,7 +77,7 @@ export default function UploadMediaGateway() {
         controllersRef.current[id] = controller;
 
         try {
-            await uploadFileToDrive(token, file, { 
+            await uploadFileToDrive(activeToken, file, { 
                 folderId: folderId,
                 signal: controller.signal
             }, (pct) => {
@@ -215,6 +218,24 @@ export default function UploadMediaGateway() {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     };
 
+    const handleMobileGoogleAuth = () => {
+        try {
+            sessionStorage.setItem('google_auth_return_url', window.location.href);
+        } catch (e) {}
+        connectGoogleAPI('mobile_upload');
+    };
+
+    const hasAuthError = queue.some(item => 
+        item.status === 'failed' && (
+            (item.errorMsg && (
+                item.errorMsg.toLowerCase().includes('auth') || 
+                item.errorMsg.toLowerCase().includes('401') || 
+                item.errorMsg.toLowerCase().includes('unauthorized') ||
+                item.errorMsg.toLowerCase().includes('invalid')
+            ))
+        )
+    );
+
     const succeededCount = queue.filter(item => item.status === 'success').length;
     const failedCount = queue.filter(item => item.status === 'failed').length;
     const uploadingCount = queue.filter(item => item.status === 'uploading').length;
@@ -274,7 +295,102 @@ export default function UploadMediaGateway() {
                     </h2>
                 </div>
 
-                {initError ? (
+                {/* Permanent Google Auth Bar for Smartphone Users */}
+                <div style={{
+                    background: 'rgba(59, 130, 246, 0.1)',
+                    border: '1px solid rgba(59, 130, 246, 0.25)',
+                    borderRadius: '14px',
+                    padding: '10px 14px',
+                    marginBottom: '18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justify: 'space-between',
+                    gap: '8px'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.78rem', color: '#93c5fd', fontWeight: 600 }}>
+                        <Cloud size={16} color="#60a5fa" />
+                        <span>Google Drive Connected</span>
+                    </div>
+                    <button
+                        onClick={handleMobileGoogleAuth}
+                        style={{
+                            padding: '6px 12px',
+                            background: 'linear-gradient(135deg, #4285F4 0%, #2563eb 100%)',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                        }}
+                    >
+                        🔑 Sign In / Refresh
+                    </button>
+                </div>
+
+                {(hasAuthError || (initError && initError.toLowerCase().includes('auth'))) && (
+                    <div style={{
+                        background: 'rgba(239, 68, 68, 0.12)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        borderRadius: '16px',
+                        padding: '18px 14px',
+                        marginBottom: '20px',
+                        textAlign: 'center'
+                    }}>
+                        <div style={{ color: '#fca5a5', fontWeight: 800, fontSize: '0.92rem', marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                            <Lock size={18} /> Google Drive Authentication Required
+                        </div>
+                        <p style={{ fontSize: '0.78rem', color: '#cbd5e1', margin: '0 0 14px', lineHeight: '1.4' }}>
+                            Your Google access token has expired or requires authentication. Tap below to sign in with Google directly from your phone.
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <button
+                                onClick={handleMobileGoogleAuth}
+                                style={{
+                                    width: '100%',
+                                    padding: '12px 18px',
+                                    background: 'linear-gradient(135deg, #4285F4 0%, #2563eb 100%)',
+                                    color: '#ffffff',
+                                    border: 'none',
+                                    borderRadius: '12px',
+                                    fontWeight: 800,
+                                    fontSize: '0.9rem',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '8px',
+                                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.4)'
+                                }}
+                            >
+                                <Cloud size={18} /> Sign in with Google
+                            </button>
+
+                            {folderId && (
+                                <a
+                                    href={`https://drive.google.com/drive/folders/${folderId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{
+                                        padding: '8px',
+                                        color: '#38bdf8',
+                                        fontSize: '0.78rem',
+                                        fontWeight: 600,
+                                        textDecoration: 'none',
+                                        display: 'block'
+                                    }}
+                                >
+                                    📁 Or Open Google Drive App Directly
+                                </a>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {initError && !hasAuthError ? (
                     <div style={{
                         background: 'rgba(239, 68, 68, 0.1)',
                         border: '1px solid rgba(239, 68, 68, 0.2)',
@@ -480,24 +596,44 @@ export default function UploadMediaGateway() {
                                 </button>
 
                                 {failedCount > 0 && (
-                                    <button 
-                                        onClick={handleRetryAllFailed}
-                                        style={{
-                                            padding: '6px 12px',
-                                            borderRadius: '8px',
-                                            background: 'rgba(244, 63, 94, 0.15)',
-                                            color: '#fb7185',
-                                            border: '1px solid rgba(244, 63, 94, 0.25)',
-                                            fontSize: '0.8rem',
-                                            fontWeight: 700,
-                                            cursor: 'pointer',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '4px'
-                                        }}
-                                    >
-                                        <RefreshCw size={14} /> Retry Failed
-                                    </button>
+                                    <>
+                                        <button 
+                                            onClick={handleRetryAllFailed}
+                                            style={{
+                                                padding: '6px 12px',
+                                                borderRadius: '8px',
+                                                background: 'rgba(244, 63, 94, 0.15)',
+                                                color: '#fb7185',
+                                                border: '1px solid rgba(244, 63, 94, 0.3)',
+                                                fontSize: '0.8rem',
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}
+                                        >
+                                            <RefreshCw size={14} /> Retry Failed
+                                        </button>
+                                        <button 
+                                            onClick={handleMobileGoogleAuth}
+                                            style={{
+                                                padding: '6px 12px',
+                                                borderRadius: '8px',
+                                                background: 'rgba(59, 130, 246, 0.2)',
+                                                color: '#60a5fa',
+                                                border: '1px solid rgba(59, 130, 246, 0.4)',
+                                                fontSize: '0.8rem',
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}
+                                        >
+                                            <Cloud size={14} /> Sign in to Fix Auth
+                                        </button>
+                                    </>
                                 )}
 
                                 {succeededCount > 0 && (

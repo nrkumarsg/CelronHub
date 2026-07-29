@@ -876,6 +876,13 @@ export default function CalibrationLab() {
                 >
                     <ExternalLink size={16} /> PMR App
                 </button>
+                <button
+                    onClick={() => window.open('https://pcb-repair-form.vercel.app', '_blank')}
+                    style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: 'transparent', color: '#8b5cf6', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '8px' }}
+                    title="Open PCB Repair Form"
+                >
+                    <ExternalLink size={16} /> PCB Repair Form
+                </button>
             </div>
 
             {activeTab === 'form' && (

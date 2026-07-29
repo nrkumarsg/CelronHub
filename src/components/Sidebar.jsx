@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, Link, NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, FolderOpen, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe, History, Plus, ExternalLink, Mail } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, FolderOpen, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe, History, Plus, ExternalLink, Mail, TrendingUp, Kanban } from 'lucide-react';
 
 import { useAuth } from '../contexts/AuthContext';
 import { getTodos } from '../lib/todoService';
@@ -135,6 +135,21 @@ export default function Sidebar() {
                             <span className="nav-text">Dashboard</span>
                         </NavLink>
 
+                        <NavLink to="/workflows/wizard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Workflow Wizard">
+                            <Sparkles size={20} color="#a855f7" />
+                            <span className="nav-text" style={{ fontWeight: 800, color: location.pathname.includes('/wizard') ? '#ffffff' : '#c084fc' }}>Workflow Wizard</span>
+                        </NavLink>
+
+                        <NavLink to="/scan-gateway" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Start From Scan Gateway">
+                            <Smartphone size={20} color="#38bdf8" />
+                            <span className="nav-text" style={{ fontWeight: 800, color: location.pathname === '/scan-gateway' ? '#ffffff' : '#38bdf8' }}>Start From Scan Gateway</span>
+                        </NavLink>
+
+                        <NavLink to="/workflows/whiteboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Jobs & Enquiry Whiteboard">
+                            <Kanban size={20} color="#f59e0b" />
+                            <span className="nav-text" style={{ fontWeight: 800, color: location.pathname === '/workflows/whiteboard' ? '#ffffff' : '#f59e0b' }}>📌 Jobs Whiteboard</span>
+                        </NavLink>
+
                         <NavLink to="/storage" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Storage Explorer">
                             <FolderOpen size={20} color="#0ea5e9" />
                             <span className="nav-text" style={{ fontWeight: 800, color: '#0ea5e9' }}>Storage Explorer</span>
@@ -150,14 +165,14 @@ export default function Sidebar() {
                             <span className="nav-text" style={{ fontWeight: 800, color: '#f59e0b' }}>Unified Supplier Hub</span>
                         </NavLink>
 
-                        <NavLink to="/dashboard/job-workflow" className={({ isActive }) => `nav-link nav-sub-link ${isActive ? 'active' : ''}`} title="Job Workflow">
-                            <ArrowRightLeft size={16} color="#6366f1" />
-                            <span className="nav-text" style={{ fontWeight: 600, color: location.pathname === '/dashboard/job-workflow' ? '#ffffff' : '#94a3b8' }}>Job Workflow</span>
-                        </NavLink>
-
                         <NavLink to="/unified-supplier-hub?tab=supplier_tools" className={() => `nav-link nav-sub-link ${isSupplierToolsActive ? 'active' : ''}`} title="Supplier Directory & Tools">
                             <Building2 size={16} color="#8b5cf6" />
                             <span className="nav-text" style={{ fontWeight: 600, color: isSupplierToolsActive ? '#ffffff' : '#94a3b8' }}>Supplier Directory &amp; Tools</span>
+                        </NavLink>
+
+                        <NavLink to="/supplier-search" className={({ isActive }) => `nav-link nav-sub-link ${isActive ? 'active' : ''}`} title="Supplier Search by Item">
+                            <Search size={16} color="#14b8a6" />
+                            <span className="nav-text" style={{ fontWeight: 600, color: location.pathname === '/supplier-search' ? '#ffffff' : '#94a3b8' }}>Supplier Search by Item</span>
                         </NavLink>
 
                         {hasAccess('partners') && (
@@ -202,6 +217,11 @@ export default function Sidebar() {
                             <span className="nav-text" style={{ fontWeight: 800, color: '#ec4899' }}>Statement of Account</span>
                         </NavLink>
 
+                        <NavLink to="/expenses-profit" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Expenses & Profit">
+                            <TrendingUp size={20} color="#10b981" />
+                            <span className="nav-text" style={{ fontWeight: 800, color: '#10b981' }}>Expenses &amp; Profit</span>
+                        </NavLink>
+
                         <NavLink to="/tools/email-composer" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Email Composer">
                             <Mail size={20} color="#3b82f6" />
                             <span className="nav-text" style={{ fontWeight: 800, color: '#3b82f6' }}>Email Composer</span>
@@ -244,6 +264,13 @@ export default function Sidebar() {
                                     <a href="https://celron-pmr.vercel.app" target="_blank" rel="noopener noreferrer" className="nav-link" title="PMR App">
                                         <ExternalLink size={20} color="#3b82f6" style={{ transform: 'none' }} />
                                         <span className="nav-text" style={{ color: '#3b82f6', fontWeight: 600 }}>PMR App</span>
+                                    </a>
+                                )}
+
+                                {hasAccess('forms') && (
+                                    <a href="https://pcb-repair-form.vercel.app" target="_blank" rel="noopener noreferrer" className="nav-link" title="PCB Repair Form">
+                                        <ExternalLink size={20} color="#8b5cf6" style={{ transform: 'none' }} />
+                                        <span className="nav-text" style={{ color: '#8b5cf6', fontWeight: 600 }}>PCB Repair Form</span>
                                     </a>
                                 )}
                             </>

@@ -1,4 +1,4 @@
-import { Routes, Route, useParams, useNavigate, Navigate } from 'react-router-dom';
+import { Routes, Route, useParams, useNavigate, Navigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { Smartphone, Lock, ShieldAlert } from 'lucide-react';
 import { downloadApkByIdentifier } from './lib/driveService';
@@ -6,6 +6,7 @@ import { downloadApkByIdentifier } from './lib/driveService';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
+import IndexRoute from './components/IndexRoute';
 import Partners from './pages/Partners';
 import PartnerForm from './pages/PartnerForm';
 import ContactsForm from './pages/ContactsForm';
@@ -30,10 +31,12 @@ import EnquiryDetails from './pages/workflows/EnquiryDetails';
 import JobDetails from './pages/workflows/JobDetails';
 import UnifiedSupplierHub from './pages/workflows/UnifiedSupplierHub';
 import WorkflowV2Board from './pages/workflows/WorkflowV2Board';
+import JobsWhiteboard from './pages/workflows/JobsWhiteboard';
 import JobsDashboard from './pages/workflows/JobsDashboard';
 import EnquiryList from './pages/workflows/EnquiryList';
 import WorkflowEditor from './pages/workflows/WorkflowEditor';
 import StatementOfAccount from './pages/workflows/StatementOfAccount';
+import ExpensesProfitPage from './pages/workflows/ExpensesProfitPage';
 import WorkflowPrintPreview from './pages/workflows/WorkflowPrintPreview';
 import EnquiryPrintPreview from './pages/workflows/EnquiryPrintPreview';
 import CategoriesDirectory from './pages/CategoriesDirectory';
@@ -48,6 +51,7 @@ import MessagingHub from './pages/MessagingHub';
 import ManualsDirectory from './pages/ManualsDirectory';
 import ManualForm from './pages/ManualForm';
 import ScannerModule from './pages/ScannerModule';
+import ScanGateway from './pages/workflows/ScanGateway';
 import SmartOCR from './pages/tools/SmartOCR';
 import EmailComposer from './pages/tools/EmailComposer';
 import Converter from './pages/tools/Converter';
@@ -66,6 +70,8 @@ import BillsPortal from './pages/accounts/BillsPortal';
 import UploadMediaGateway from './pages/workflows/UploadMediaGateway';
 import FloatingControlHub from './components/FloatingControlHub';
 import JobWorkflow from './pages/workflows/JobWorkflow';
+import WorkflowWizard from './pages/workflows/WorkflowWizard';
+import SupplierItemSearch from './pages/workflows/SupplierItemSearch';
 
 
 // Authentication & RBAC Components
@@ -84,10 +90,35 @@ import GstReporting from './pages/GstReporting';
 // App Layout wrapper to only show sidebar when logged in
 const AppLayout = ({ children }) => {
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const searchParams = new URLSearchParams(location.search);
+
+  const isMobilePath = location.pathname.startsWith('/m/') || location.pathname === '/m';
+  const isStandalone = searchParams.get('mobile') === 'true' || searchParams.get('standalone') === 'true' || isMobilePath;
+
+  // Auto-redirect desktop route to /m/ route on mobile device detection
+  useEffect(() => {
+    const isMobileDevice = window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (user && isMobileDevice && !isMobilePath) {
+      const targetPath = `/m${location.pathname === '/' ? '' : location.pathname}${location.search}`;
+      navigate(targetPath, { replace: true });
+    }
+  }, [user, location.pathname, isMobilePath, location.search, navigate]);
 
   // Auth routes shouldn't show the main layout
   if (!user) {
     return children;
+  }
+
+  if (isStandalone) {
+    return (
+      <div className="app-container standalone-mobile">
+        <main className="main-content" style={{ width: '100%', margin: 0, padding: '16px 24px' }}>
+          {children}
+        </main>
+      </div>
+    );
   }
 
   return (
@@ -228,6 +259,13 @@ const PasscodeGate = ({ onUnlock }) => {
 };
 
 function App() {
+  const location = useLocation();
+  const normalizedLocation = location.pathname.startsWith('/m/')
+    ? { ...location, pathname: location.pathname.replace(/^\/m/, '') || '/' }
+    : location.pathname === '/m'
+    ? { ...location, pathname: '/' }
+    : location;
+
   const isCatalogOnly = window.location.hostname.includes('celronpricescanner') || 
                         window.location.hostname.includes('celronspares') || 
                         (import.meta.env.VITE_CATALOG_ONLY === 'true' && 
@@ -260,7 +298,7 @@ function App() {
         <Route path="*" element={
           <AppLayout>
             {isCatalogOnly ? (
-              <Routes>
+              <Routes location={normalizedLocation}>
                 <Route path="/" element={<ProtectedRoute requiredModule="catalog"><CatalogDirectory /></ProtectedRoute>} />
                 <Route path="/catalog" element={<ProtectedRoute requiredModule="catalog"><CatalogDirectory /></ProtectedRoute>} />
                 <Route path="/catalog/system/:id" element={<ProtectedRoute requiredModule="catalog"><SystemForm /></ProtectedRoute>} />
@@ -271,11 +309,15 @@ function App() {
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             ) : (
-              <Routes>
+              <Routes location={normalizedLocation}>
               {/* Base Dashboard (Accessible if logged in and active, handled by wildcard ProtectedRoute) */}
-              <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/" element={<ProtectedRoute><IndexRoute /></ProtectedRoute>} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/dashboard/job-workflow" element={<ProtectedRoute><JobWorkflow /></ProtectedRoute>} />
+              <Route path="/dashboard/workflow-wizard" element={<ProtectedRoute><WorkflowWizard /></ProtectedRoute>} />
+              <Route path="/workflows/wizard" element={<ProtectedRoute><WorkflowWizard /></ProtectedRoute>} />
+              <Route path="/m/workflows/wizard" element={<ProtectedRoute><WorkflowWizard /></ProtectedRoute>} />
+              <Route path="/m/job-workflow" element={<ProtectedRoute><JobWorkflow /></ProtectedRoute>} />
               <Route path="/search" element={<ProtectedRoute><SearchResults /></ProtectedRoute>} />
 
               {/* User Management (Superadmins & Admins only) */}
@@ -296,6 +338,7 @@ function App() {
               <Route path="/partners/ai-parser" element={<ProtectedRoute requiredModule="partners"><AiEmailParser /></ProtectedRoute>} />
               <Route path="/partners/ai-drive-parser" element={<ProtectedRoute requiredModule="partners"><AiDriveCardParser /></ProtectedRoute>} />
               <Route path="/partners/:id" element={<ProtectedRoute requiredModule="partners"><PartnerForm /></ProtectedRoute>} />
+              <Route path="/supplier-search" element={<ProtectedRoute requiredModule="partners"><SupplierItemSearch /></ProtectedRoute>} />
 
               <Route path="/categories" element={<ProtectedRoute><CategoriesDirectory /></ProtectedRoute>} />
               <Route path="/brands" element={<ProtectedRoute><BrandsDirectory /></ProtectedRoute>} />
@@ -323,6 +366,7 @@ function App() {
               {/* Workflows & Universal Finder Module */}
               <Route path="/unified-supplier-hub" element={<ProtectedRoute><UnifiedSupplierHub /></ProtectedRoute>} />
               <Route path="/workflows/jobs-dashboard" element={<ProtectedRoute><JobsDashboard /></ProtectedRoute>} />
+              <Route path="/workflows/whiteboard" element={<ProtectedRoute><JobsWhiteboard /></ProtectedRoute>} />
               <Route path="/workflows" element={<ProtectedRoute><WorkflowV2Board /></ProtectedRoute>} />
               <Route path="/enquiries" element={<ProtectedRoute><EnquiryList /></ProtectedRoute>} />
               <Route path="/quotations" element={<ProtectedRoute><WorkflowV2Board /></ProtectedRoute>} />
@@ -335,6 +379,8 @@ function App() {
               <Route path="/certificates" element={<ProtectedRoute><WorkflowV2Board /></ProtectedRoute>} />
               <Route path="/payment-received" element={<ProtectedRoute><WorkflowV2Board /></ProtectedRoute>} />
               <Route path="/soa" element={<ProtectedRoute><StatementOfAccount /></ProtectedRoute>} />
+              <Route path="/expenses-profit" element={<ProtectedRoute><ExpensesProfitPage /></ProtectedRoute>} />
+              <Route path="/m/expenses-profit" element={<ProtectedRoute><ExpensesProfitPage /></ProtectedRoute>} />
               <Route path="/payments" element={<ProtectedRoute><WorkflowV2Board /></ProtectedRoute>} />
               <Route path="/workflows/legacy" element={<ProtectedRoute><WorkflowBoard /></ProtectedRoute>} />
               <Route path="/workflows/enquiry/print/:id" element={<ProtectedRoute><EnquiryPrintPreview /></ProtectedRoute>} />
@@ -368,6 +414,7 @@ function App() {
               <Route path="/notes/:id" element={<ProtectedRoute><NoteForm /></ProtectedRoute>} />
               <Route path="/calendar" element={<ProtectedRoute><Calendar /></ProtectedRoute>} />
               <Route path="/scanner" element={<ProtectedRoute><ScannerModule /></ProtectedRoute>} />
+              <Route path="/scan-gateway" element={<ProtectedRoute><ScanGateway /></ProtectedRoute>} />
               <Route path="/tools/ocr" element={<ProtectedRoute><SmartOCR /></ProtectedRoute>} />
               <Route path="/tools/email-composer" element={<ProtectedRoute><EmailComposer /></ProtectedRoute>} />
               <Route path="/tools/converter" element={<ProtectedRoute><Converter /></ProtectedRoute>} />
