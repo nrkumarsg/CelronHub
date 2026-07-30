@@ -354,7 +354,7 @@ export default function JobsWhiteboard() {
                                 onChange={(e) => setShowArchived(e.target.checked)}
                                 style={{ accentColor: '#6366f1' }}
                             />
-                            <Archive size={14} /> Show Archived (>30d Closed)
+                            <Archive size={14} /> Show Archived (&gt;30d Closed)
                         </label>
 
                         <button

@@ -712,7 +712,7 @@ export default function ScannerModule() {
                                         Name Card Merger (Front & Back)
                                     </h3>
                                     <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
-                                        Upload Front & Back of business card -> Merge into 1 file -> Run AI Contact Extractor
+                                        Upload Front & Back of business card &rarr; Merge into 1 file &rarr; Run AI Contact Extractor
                                     </p>
                                 </div>
                             </div>
