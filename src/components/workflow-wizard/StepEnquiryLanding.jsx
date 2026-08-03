@@ -306,6 +306,7 @@ export default function StepEnquiryLanding({
                     <SmartUploadPanel
                         embedded={true}
                         isOpen={true}
+                        initialTab="dragdrop"
                         runningEnquiryNo={wizardData.enquiryNo}
                         activeFolderId={activeLandingFolder}
                         activeFolderName={`Enquiry Landing Folder (${wizardData.enquiryNo || 'Draft'})`}

@@ -4,7 +4,7 @@ import {
     AlertCircle, FileText, CheckCircle, Pin, Folder, Star, 
     Sparkles, ShieldAlert, FileImage, FileCode, Keyboard,
     Smartphone, QrCode, Image as ImageIcon, Loader2, Camera, RefreshCw, Mail, Inbox,
-    ExternalLink, Grid, List
+    ExternalLink, Grid, List, MessageSquare
 } from 'lucide-react';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
@@ -691,6 +691,17 @@ export default function SmartUploadPanel({
                         >
                             <Smartphone size={16} /> Mobile Upload (QR)
                         </button>
+                        <button 
+                            onClick={() => { setActiveTab('whatsapp'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+                                background: activeTab === 'whatsapp' ? '#25D366' : 'transparent',
+                                color: activeTab === 'whatsapp' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.2s'
+                            }}
+                        >
+                            <MessageSquare size={16} /> WhatsApp Integration
+                        </button>
 
                         <div style={{ marginTop: 'auto', borderTop: '1px solid #e2e8f0', paddingTop: '16px', fontSize: '0.75rem', color: '#94a3b8' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: 600 }}>
@@ -1092,39 +1103,129 @@ export default function SmartUploadPanel({
 
                         {/* 5. DRAG & DROP TAB */}
                         {activeTab === 'dragdrop' && (
-                            <div 
-                                onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
-                                onDragLeave={() => setIsDraggingOver(false)}
-                                onDrop={handleUniversalDrop}
-                                style={{ 
-                                    flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', 
-                                    border: isDraggingOver ? '2px dashed #6366f1' : '2px dashed #a5b4fc', 
-                                    borderRadius: '16px', background: isDraggingOver ? '#eff6ff' : '#f8fafc', padding: '30px 20px',
-                                    transition: 'all 0.2s', textAlign: 'center'
-                                }}
-                            >
-                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '14px' }}>
-                                    <div style={{ background: '#e0e7ff', color: '#4338ca', padding: '10px', borderRadius: '12px' }}>
-                                        <Mail size={28} />
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '20px', overflowY: 'auto' }}>
+                                <div>
+                                    <h3 style={{ margin: '0 0 4px 0', fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.02em' }}>
+                                        Document Uploader
+                                    </h3>
+                                    <p style={{ margin: 0, fontSize: '0.82rem', color: '#64748b' }}>
+                                        Ingest new documents into the enterprise pipeline.
+                                    </p>
+                                </div>
+
+                                {/* Drag & Drop Main Card */}
+                                <div 
+                                    onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
+                                    onDragLeave={() => setIsDraggingOver(false)}
+                                    onDrop={handleUniversalDrop}
+                                    style={{ 
+                                        background: isDraggingOver ? '#eff6ff' : '#ffffff', 
+                                        border: isDraggingOver ? '2px dashed #2563eb' : '1px solid #e2e8f0', 
+                                        borderRadius: '16px', 
+                                        padding: '40px 24px', 
+                                        display: 'flex', 
+                                        flexDirection: 'column', 
+                                        alignItems: 'center', 
+                                        justifyContent: 'center',
+                                        textAlign: 'center',
+                                        boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
+                                        <Cloud size={32} color="#475569" />
                                     </div>
-                                    <div style={{ background: '#dbeafe', color: '#1d4ed8', padding: '10px', borderRadius: '12px' }}>
-                                        <Monitor size={28} />
-                                    </div>
-                                    <div style={{ background: '#fef3c7', color: '#b45309', padding: '10px', borderRadius: '12px' }}>
-                                        <Inbox size={28} />
+
+                                    <h4 style={{ margin: '0 0 6px 0', fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>
+                                        Drag and drop files here
+                                    </h4>
+                                    <p style={{ margin: '0 0 20px 0', fontSize: '0.82rem', color: '#64748b', maxWidth: '420px', lineHeight: '1.4' }}>
+                                        Support for PDF, DOCX, XLSX, EML, and high-res images.<br />
+                                        Documents are automatically indexed by the AI Engine.
+                                    </p>
+
+                                    <button 
+                                        type="button"
+                                        onClick={triggerNativeFileInput}
+                                        style={{ 
+                                            background: '#004AC6', 
+                                            color: '#ffffff', 
+                                            border: 'none', 
+                                            borderRadius: '8px', 
+                                            padding: '10px 24px', 
+                                            fontSize: '0.88rem', 
+                                            fontWeight: 700, 
+                                            cursor: 'pointer',
+                                            boxShadow: '0 4px 12px rgba(0,74,198,0.25)',
+                                            transition: 'transform 0.1s'
+                                        }}
+                                    >
+                                        Select Files
+                                    </button>
+                                </div>
+
+                                {/* DIRECT IMPORT CHANNELS */}
+                                <div>
+                                    <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#64748b', letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', marginBottom: '10px' }}>
+                                        DIRECT IMPORT CHANNELS
+                                    </span>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setActiveTab('dragdrop')}
+                                            style={{
+                                                background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px 12px',
+                                                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all 0.2s'
+                                            }}
+                                        >
+                                            <Mail size={22} color="#3b82f6" />
+                                            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#334155' }}>Email</span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setActiveTab('whatsapp')}
+                                            style={{
+                                                background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px 12px',
+                                                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all 0.2s'
+                                            }}
+                                        >
+                                            <MessageSquare size={22} color="#25D366" />
+                                            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#334155' }}>WhatsApp</span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setActiveTab('ocr')}
+                                            style={{
+                                                background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px 12px',
+                                                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all 0.2s'
+                                            }}
+                                        >
+                                            <Sparkles size={22} color="#8b5cf6" />
+                                            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#334155' }}>Scan</span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setActiveTab('mobile_qr')}
+                                            style={{
+                                                background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px 12px',
+                                                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all 0.2s'
+                                            }}
+                                        >
+                                            <Smartphone size={22} color="#059669" />
+                                            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#334155' }}>External API</span>
+                                        </button>
                                     </div>
                                 </div>
-                                <h4 style={{ margin: '0 0 6px 0', fontSize: '1rem', fontWeight: 800, color: '#1e293b' }}>
-                                    Drag &amp; Drop Emails or Documents Here
-                                </h4>
-                                <p style={{ margin: '0 0 14px 0', fontSize: '0.82rem', color: '#64748b', maxWidth: '380px', lineHeight: '1.4' }}>
-                                    Drag any email directly from <strong>Mozilla Thunderbird</strong>, <strong>Outlook Desktop</strong>, or <strong>Gmail</strong>, or drop local PDFs, images, and office files from your computer.
-                                </p>
-                                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                                    <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: '#3b82f6', color: '#fff' }}>✉️ Thunderbird (.eml)</span>
-                                    <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: '#0284c7', color: '#fff' }}>📧 Outlook (.msg/.eml)</span>
-                                    <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: '#ea580c', color: '#fff' }}>📨 Gmail</span>
-                                    <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: '#64748b', color: '#fff' }}>📄 PDF/PNG/JPG/DOCX</span>
+
+                                {/* Pro Tip Banner */}
+                                <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.78rem', color: '#1e40af' }}>
+                                    <span style={{ fontSize: '1rem' }}>💡</span>
+                                    <span>
+                                        <strong>Pro Tip:</strong> Connect your email or WhatsApp to automatically scrape attachments into the <strong>{runningEnquiryNo || 'Enquiries'}</strong> folder.
+                                    </span>
                                 </div>
                             </div>
                         )}
@@ -1301,6 +1402,125 @@ export default function SmartUploadPanel({
                                         </div>
                                     </div>
                                 )}
+                            </div>
+                        )}
+
+                        {/* 8. WHATSAPP INTEGRATION TAB */}
+                        {activeTab === 'whatsapp' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%' }}>
+                                <div style={{ 
+                                    background: 'linear-gradient(135deg, rgba(37, 211, 102, 0.12) 0%, rgba(18, 140, 126, 0.12) 100%)', 
+                                    border: '1px solid rgba(37, 211, 102, 0.3)', 
+                                    borderRadius: '16px', 
+                                    padding: '16px 20px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: '16px',
+                                    flexWrap: 'wrap'
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                                        <div style={{ background: '#25D366', color: '#fff', padding: '10px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(37, 211, 102, 0.3)' }}>
+                                            <MessageSquare size={24} />
+                                        </div>
+                                        <div>
+                                            <h4 style={{ margin: '0 0 2px 0', fontSize: '1rem', fontWeight: 800, color: '#0f172a' }}>
+                                                WhatsApp Smart Upload (Personal & Business)
+                                            </h4>
+                                            <span style={{ fontSize: '0.78rem', color: '#475569' }}>
+                                                Drag PDFs or photos directly from WhatsApp Web (`web.whatsapp.com`) into CelronHub
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <a
+                                        href="https://web.whatsapp.com"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{
+                                            background: '#25D366',
+                                            color: '#ffffff',
+                                            padding: '8px 14px',
+                                            borderRadius: '8px',
+                                            fontSize: '0.8rem',
+                                            fontWeight: 700,
+                                            textDecoration: 'none',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                            boxShadow: '0 2px 6px rgba(37, 211, 102, 0.3)'
+                                        }}
+                                    >
+                                        Open WhatsApp Web <ExternalLink size={12} />
+                                    </a>
+                                </div>
+
+                                <div 
+                                    onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
+                                    onDragLeave={() => setIsDraggingOver(false)}
+                                    onDrop={handleUniversalDrop}
+                                    style={{ 
+                                        flex: 1, 
+                                        display: 'flex', 
+                                        flexDirection: 'column', 
+                                        justifyContent: 'center', 
+                                        alignItems: 'center', 
+                                        border: isDraggingOver ? '2px dashed #25D366' : '2px dashed #a7f3d0', 
+                                        borderRadius: '16px', 
+                                        background: isDraggingOver ? '#ecfdf5' : '#f0fdf4', 
+                                        padding: '24px 20px',
+                                        transition: 'all 0.2s', 
+                                        textAlign: 'center',
+                                        minHeight: '200px'
+                                    }}
+                                >
+                                    <div style={{ background: '#dcfce7', color: '#15803d', padding: '12px', borderRadius: '50%', marginBottom: '10px' }}>
+                                        <MessageSquare size={28} />
+                                    </div>
+                                    <h4 style={{ margin: '0 0 6px 0', fontSize: '1rem', fontWeight: 800, color: '#14532d' }}>
+                                        Drag & Drop Purchase Orders / Quotations Here
+                                    </h4>
+                                    <p style={{ margin: '0 0 14px 0', fontSize: '0.8rem', color: '#166534', maxWidth: '420px', lineHeight: '1.4' }}>
+                                        Open <strong>WhatsApp Web</strong> alongside CelronHub. Drag any PO document directly from your chat window into this zone, or copy an image/file in WhatsApp (`Ctrl+C`) and press `Ctrl+V`!
+                                    </p>
+                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                        <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', background: '#25D366', color: '#fff' }}>
+                                            📱 Personal WhatsApp
+                                        </span>
+                                        <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', background: '#128C7E', color: '#fff' }}>
+                                            💼 Business WhatsApp
+                                        </span>
+                                        <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', background: '#059669', color: '#fff' }}>
+                                            ⚡ Drag PDF / PNG / JPG
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div style={{ 
+                                    background: '#f8fafc', 
+                                    border: '1px solid #e2e8f0', 
+                                    borderRadius: '14px', 
+                                    padding: '12px 16px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '14px'
+                                }}>
+                                    <div style={{ background: '#fff', padding: '6px', borderRadius: '8px', border: '1px solid #cbd5e1', flexShrink: 0 }}>
+                                        <QRCodeSVG 
+                                            value={`https://wa.me/6597685891?text=Send%20document%20for%20${runningEnquiryNo || 'CelronHub'}`}
+                                            size={70}
+                                            level="M"
+                                        />
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <h5 style={{ margin: '0 0 2px 0', fontSize: '0.85rem', fontWeight: 800, color: '#0f172a' }}>
+                                            WhatsApp Cloud Ingestion Bot (+65 97685891)
+                                        </h5>
+                                        <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b', lineHeight: '1.35' }}>
+                                            Customers can also send orders directly to your WhatsApp Business number. Incoming files automatically sync with <strong>{runningEnquiryNo || 'your Job Suite'}</strong>.
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
                         )}
 

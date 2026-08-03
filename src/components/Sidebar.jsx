@@ -277,6 +277,19 @@ export default function Sidebar() {
                         )}
 
                         <div className="nav-separator" />
+                        <span className="nav-group-header">Desktop</span>
+                        <a 
+                            href="https://smartuploader.vercel.app" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="nav-link" 
+                            title="Daily Upload"
+                        >
+                            <ExternalLink size={20} color="#38bdf8" style={{ transform: 'none' }} />
+                            <span className="nav-text" style={{ color: '#38bdf8', fontWeight: 800 }}>Daily Upload</span>
+                        </a>
+
+                        <div className="nav-separator" />
                         <span className="nav-group-header">System</span>
 
                         <NavLink to="/help" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Help & Support">
