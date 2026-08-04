@@ -599,8 +599,11 @@ export const QuickPartnerAdd = ({ company_id, initialData, onSuccess, onCancel, 
                 ...formData,
                 company_id
             };
-            // Sanitize payload to remove joined columns that don't belong to the 'partners' table
+            // Sanitize payload to remove joined columns and generated columns that don't belong to the 'partners' table update
             delete dataToSave.contacts;
+            Object.keys(dataToSave).forEach(key => {
+                if (key.startsWith('norm_')) delete dataToSave[key];
+            });
 
             const { data, error } = isExisting 
                 ? await supabase.from('partners').update(dataToSave).eq('id', formData.id).select()
@@ -1620,6 +1623,9 @@ export const QuickPartnerContactDualAdd = ({ company_id, initialPartner, initial
             delete partnerPayload.isCleaning;
             delete partnerPayload.isExtracting;
             delete partnerPayload.customCategory;
+            Object.keys(partnerPayload).forEach(key => {
+                if (key.startsWith('norm_')) delete partnerPayload[key];
+            });
 
             // 1. Save Partner
             const isPartnerExisting = !!partnerData.id;

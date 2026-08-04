@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Celron Hub - Smart Upload Tool",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Smart Upload Tool for Thunderbird: OCR, Drag & Drop, Drive integration, and instant email attachment.",
   "icons": {
     "16": "icons/icon16.png",
@@ -36,7 +36,7 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "smart-upload@celron.net",
+      "id": "smart-upload-v2@celron.net",
       "strict_min_version": "78.0"
     }
   }

@@ -220,6 +220,7 @@ export default function WorkflowEditor() {
     const [isDraggingSigned, setIsDraggingSigned] = useState(false);
 
     const [linkedEnquiry, setLinkedEnquiry] = useState(null);
+    const [customBillingPercent, setCustomBillingPercent] = useState('');
 
     // Payments State
     const [customerPayments, setCustomerPayments] = useState([]);
@@ -2259,6 +2260,44 @@ export default function WorkflowEditor() {
             discount_amount: roundedDiscAmt
         }));
     }, [lineItems, formData.discount_percent, formData.discount_amount, discountType]);
+
+    const applyBillingPercentageSplit = (percentVal) => {
+        const factor = parseFloat(percentVal) / 100;
+        if (isNaN(factor) || factor <= 0) return;
+
+        setLineItems(prevItems => prevItems.map(item => {
+            if (item.is_section || item.is_note) return item;
+            const basePrice = item.full_unit_price !== undefined ? parseFloat(item.full_unit_price) : parseFloat(item.unit_price || 0);
+            const newUnitPrice = Math.round(basePrice * factor * 100) / 100;
+            const newAmount = Math.round((parseFloat(item.quantity) || 1) * newUnitPrice * 100) / 100;
+            
+            return {
+                ...item,
+                full_unit_price: basePrice,
+                unit_price: newUnitPrice,
+                amount: newAmount
+            };
+        }));
+        
+        toast.success(`Scaled line item prices to ${percentVal}% advance amount!`);
+    };
+
+    const restoreFullPrices = () => {
+        setLineItems(prevItems => prevItems.map(item => {
+            if (item.is_section || item.is_note) return item;
+            if (item.full_unit_price !== undefined) {
+                const origPrice = parseFloat(item.full_unit_price);
+                const origAmount = Math.round((parseFloat(item.quantity) || 1) * origPrice * 100) / 100;
+                return {
+                    ...item,
+                    unit_price: origPrice,
+                    amount: origAmount
+                };
+            }
+            return item;
+        }));
+        toast.success("Restored 100% full original line item prices!");
+    };
 
     const handleHeaderChange = (e) => {
         const { name, value } = e.target;
@@ -4828,6 +4867,104 @@ export default function WorkflowEditor() {
 
                             {formData.document_type !== 'Enquiry' && (
                                 <div className="summary-box">
+                                    {/* Advance Deposit & Billing Split Automation Tool */}
+                                    <div style={{
+                                        background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
+                                        border: '1px solid #bae6fd',
+                                        borderRadius: '12px',
+                                        padding: '10px 14px',
+                                        marginBottom: '14px'
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 800, fontSize: '0.8rem', color: '#0369a1' }}>
+                                                <Percent size={15} color="#0284c7" />
+                                                <span>Advance Billing % Automation</span>
+                                            </div>
+                                            {lineItems.some(i => i.full_unit_price !== undefined && i.full_unit_price !== i.unit_price) && (
+                                                <button
+                                                    type="button"
+                                                    onClick={restoreFullPrices}
+                                                    style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '2px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}
+                                                >
+                                                    ↺ Restore 100%
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                            {[50, 30, 20, 15, 70, 100].map(pct => (
+                                                <button
+                                                    key={pct}
+                                                    type="button"
+                                                    onClick={() => pct === 100 ? restoreFullPrices() : applyBillingPercentageSplit(pct)}
+                                                    style={{
+                                                        background: pct === 100 ? '#475569' : '#0284c7',
+                                                        color: '#ffffff',
+                                                        border: 'none',
+                                                        padding: '4px 8px',
+                                                        borderRadius: '6px',
+                                                        fontSize: '0.72rem',
+                                                        fontWeight: 700,
+                                                        cursor: 'pointer',
+                                                        boxShadow: '0 1px 3px rgba(2, 132, 199, 0.2)'
+                                                    }}
+                                                >
+                                                    {pct === 100 ? '100% Full' : `⚡ Scale ${pct}%`}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        {/* Custom % Input Box */}
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px' }}>
+                                            <div style={{ position: 'relative', flex: 1 }}>
+                                                <input 
+                                                    type="number" 
+                                                    placeholder="Custom % (e.g. 15)" 
+                                                    value={customBillingPercent}
+                                                    onChange={(e) => setCustomBillingPercent(e.target.value)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter' && customBillingPercent) {
+                                                            e.preventDefault();
+                                                            applyBillingPercentageSplit(customBillingPercent);
+                                                        }
+                                                    }}
+                                                    style={{
+                                                        width: '100%',
+                                                        padding: '4px 22px 4px 8px',
+                                                        borderRadius: '6px',
+                                                        border: '1px solid #93c5fd',
+                                                        fontSize: '0.75rem',
+                                                        fontWeight: 700,
+                                                        background: '#fff',
+                                                        outline: 'none'
+                                                    }}
+                                                />
+                                                <span style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', fontWeight: 800, color: '#0284c7' }}>%</span>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    if (customBillingPercent) applyBillingPercentageSplit(customBillingPercent);
+                                                }}
+                                                disabled={!customBillingPercent}
+                                                style={{
+                                                    background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                                                    color: '#fff',
+                                                    border: 'none',
+                                                    padding: '4px 10px',
+                                                    borderRadius: '6px',
+                                                    fontSize: '0.73rem',
+                                                    fontWeight: 800,
+                                                    cursor: customBillingPercent ? 'pointer' : 'not-allowed',
+                                                    opacity: customBillingPercent ? 1 : 0.6,
+                                                    whiteSpace: 'nowrap'
+                                                }}
+                                            >
+                                                ⚡ Apply
+                                            </button>
+                                        </div>
+                                    </div>
+
                                     <div className="summary-row">
                                         <span>Untaxed Amount:</span>
                                         <span>{formData.currency} {(formData.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>

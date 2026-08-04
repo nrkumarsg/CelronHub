@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { 
     FolderOpen, ExternalLink, Search, RefreshCcw, FileText, Send, ShoppingBag, 
     Briefcase, Truck, Receipt, DollarSign, CheckCircle2, AlertCircle, Clock, 
-    Building2, Ship, Calendar, ArrowRight, ArrowLeft, Eye, Play, Sparkles, Filter, Plus 
+    Building2, Ship, Calendar, ArrowRight, ArrowLeft, Eye, Play, Sparkles, Filter, Plus, Upload, Edit3, Trash2 
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { getGoogleDriveExplorerUrl } from '../../lib/integrationService';
 import { generateDocNumber } from '../../lib/workflowV2Service';
+import WorkflowUploadModal from './WorkflowUploadModal';
+import EditWorkflowDocumentModal from './EditWorkflowDocumentModal';
 import toast from 'react-hot-toast';
 
 export default function StepJobDriveExplorer({ 
@@ -14,7 +16,12 @@ export default function StepJobDriveExplorer({
     updateWizardData, 
     onPrev, 
     onNavigateStep,
-    companyId 
+    companyId,
+    partners = [],
+    contacts = [],
+    vessels = [],
+    workLocations = [],
+    settings = {}
 }) {
     const [jobsList, setJobsList] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -22,6 +29,10 @@ export default function StepJobDriveExplorer({
     const [filterStatus, setFilterStatus] = useState('ALL');
     const [filterDocType, setFilterDocType] = useState('JOB'); // 'ALL' | 'ENQ' | 'QTN' | 'JOB' (Default: 'JOB')
     const [viewMode, setViewMode] = useState('table'); // 'table' or 'cards'
+    
+    // Modal states for CRUD
+    const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+    const [editingDoc, setEditingDoc] = useState(null);
 
     useEffect(() => {
         if (companyId) {
@@ -269,6 +280,36 @@ export default function StepJobDriveExplorer({
         }
     };
 
+    const handleDeleteJobSuite = async (suite) => {
+        const title = suite.jobNo || 'Selected Workflow Record';
+        if (!window.confirm(`Are you sure you want to delete ${title}? This action will delete the workflow document record.`)) {
+            return;
+        }
+
+        try {
+            const docIds = (suite.allDocs || []).map(d => d.id).filter(Boolean);
+            if (docIds.length > 0) {
+                const { error } = await supabase
+                    .from('workflow_documents')
+                    .delete()
+                    .in('id', docIds);
+                if (error) throw error;
+            } else if (suite.jobDoc?.id || suite.enquiryDoc?.id) {
+                const targetId = suite.jobDoc?.id || suite.enquiryDoc?.id;
+                const { error } = await supabase
+                    .from('workflow_documents')
+                    .delete()
+                    .eq('id', targetId);
+                if (error) throw error;
+            }
+            toast.success(`Deleted workflow suite ${title}`);
+            loadJobsRepository();
+        } catch (err) {
+            console.error('Error deleting workflow record suite:', err);
+            toast.error('Failed to delete: ' + (err.message || 'Database error'));
+        }
+    };
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {/* Header Banner */}
@@ -292,12 +333,34 @@ export default function StepJobDriveExplorer({
                             Step 0: Jobs &amp; Google Drive Repository
                         </h2>
                         <span style={{ fontSize: '0.84rem', color: '#64748b' }}>
-                            Audit job lifecycle updates &amp; select a job or create a new enquiry (Step 1)
+                            Audit job lifecycle updates &amp; select a job or upload new enquiry/job (Step 1/4)
                         </span>
                     </div>
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    {/* PRIMARY WORKFLOW UPLOAD BUTTON */}
+                    <button
+                        type="button"
+                        onClick={() => setIsUploadModalOpen(true)}
+                        style={{
+                            background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '10px',
+                            padding: '8px 18px',
+                            fontSize: '0.84rem',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: '0 4px 14px rgba(99, 102, 241, 0.35)'
+                        }}
+                    >
+                        <Upload size={16} /> Workflow Upload
+                    </button>
+
                     <button
                         type="button"
                         onClick={handleCreateNewEnquiry}
@@ -615,7 +678,7 @@ export default function StepJobDriveExplorer({
 
                                         {/* 6) Google Drive / Actions */}
                                         <td style={{ padding: '12px 10px', textAlign: 'center' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', flexWrap: 'wrap' }}>
                                                 <a
                                                     href={driveUrl}
                                                     target="_blank"
@@ -657,6 +720,44 @@ export default function StepJobDriveExplorer({
                                                 >
                                                     <Eye size={13} /> Load
                                                 </button>
+
+                                                {/* Edit Action */}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setEditingDoc(suite.jobDoc || suite.enquiryDoc || suite.quotationDoc || suite.allDocs?.[0])}
+                                                    style={{
+                                                        background: '#fff',
+                                                        color: '#2563eb',
+                                                        border: '1px solid #93c5fd',
+                                                        borderRadius: '8px',
+                                                        padding: '6px 8px',
+                                                        fontSize: '0.75rem',
+                                                        fontWeight: 700,
+                                                        cursor: 'pointer'
+                                                    }}
+                                                    title="Edit workflow document details"
+                                                >
+                                                    <Edit3 size={13} /> Edit
+                                                </button>
+
+                                                {/* Delete Action */}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDeleteJobSuite(suite)}
+                                                    style={{
+                                                        background: '#fef2f2',
+                                                        color: '#ef4444',
+                                                        border: '1px solid #fecaca',
+                                                        borderRadius: '8px',
+                                                        padding: '6px 8px',
+                                                        fontSize: '0.75rem',
+                                                        fontWeight: 700,
+                                                        cursor: 'pointer'
+                                                    }}
+                                                    title="Delete workflow document record"
+                                                >
+                                                    <Trash2 size={13} />
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
@@ -693,6 +794,32 @@ export default function StepJobDriveExplorer({
                     + Create New Enquiry (Step 1) <ArrowRight size={18} />
                 </button>
             </div>
+
+            {/* Workflow Upload Modal */}
+            <WorkflowUploadModal
+                isOpen={isUploadModalOpen}
+                onClose={() => setIsUploadModalOpen(false)}
+                partners={partners}
+                contacts={contacts}
+                vessels={vessels}
+                workLocations={workLocations}
+                companyId={companyId}
+                settings={settings}
+                updateWizardData={updateWizardData}
+                onNavigateStep={onNavigateStep}
+                onRefreshRepository={loadJobsRepository}
+            />
+
+            {/* Edit Workflow Document Modal */}
+            <EditWorkflowDocumentModal
+                isOpen={!!editingDoc}
+                onClose={() => setEditingDoc(null)}
+                documentData={editingDoc}
+                partners={partners}
+                vessels={vessels}
+                workLocations={workLocations}
+                onRefreshRepository={loadJobsRepository}
+            />
         </div>
     );
 }

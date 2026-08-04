@@ -1,0 +1,5 @@
+GST Category,Count,Invoice Amount (SGD),GST Amount (SGD),Total Amount (SGD)
+Total 0% GST,4,7780,0,7780
+With Standard GST (9%),38,133380.6,11947.172,144693.572
+No Charge / Zero Amount Jobs,7,0,0,0
+GRAND TOTALS,47,141160.6,11947.172,152473.572

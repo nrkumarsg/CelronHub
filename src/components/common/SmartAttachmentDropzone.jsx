@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { UploadCloud, QrCode, Plus, Smartphone, X, Info, Sparkles } from 'lucide-react';
+import { UploadCloud, QrCode, Plus, Smartphone, X, Info, Sparkles, MessageSquare } from 'lucide-react';
 import { listFolderContent } from '../../lib/driveService';
 import { getStoredToken } from '../../lib/googleAuthService';
 import toast from 'react-hot-toast';
@@ -152,15 +152,39 @@ export default function SmartAttachmentDropzone({
                 <h4 style={{ margin: '0 0 4px 0', fontSize: '13px', fontWeight: 700, color: '#1e293b' }}>
                     Upload Document
                 </h4>
-                <p style={{ margin: '0 0 16px 0', fontSize: '11px', color: '#64748b', maxWidth: '280px', lineHeight: '1.4' }}>
-                    Upload a file from your computer or scan the QR code to capture directly with your mobile camera.
+                <p style={{ margin: '0 0 16px 0', fontSize: '11px', color: '#64748b', maxWidth: '300px', lineHeight: '1.4' }}>
+                    Upload files from computer, drag directly from WhatsApp Web (`web.whatsapp.com`), or scan QR code.
                 </p>
 
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
                     {onOpenSmartUpload && (
                         <button 
                             type="button" 
-                            onClick={onOpenSmartUpload}
+                            onClick={() => onOpenSmartUpload('whatsapp')}
+                            style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '6px', 
+                                cursor: 'pointer', 
+                                background: 'linear-gradient(135deg, #25D366 0%, #128C7E 100%)', 
+                                border: 'none',
+                                color: '#fff', 
+                                padding: '6px 14px', 
+                                borderRadius: '6px', 
+                                fontSize: '11px', 
+                                fontWeight: 700, 
+                                transition: 'all 0.2s',
+                                boxShadow: '0 2px 6px rgba(37, 211, 102, 0.3)'
+                            }}
+                        >
+                            <MessageSquare size={13} /> WhatsApp Upload
+                        </button>
+                    )}
+
+                    {onOpenSmartUpload && (
+                        <button 
+                            type="button" 
+                            onClick={() => onOpenSmartUpload()}
                             style={{ 
                                 display: 'inline-flex', 
                                 alignItems: 'center', 
@@ -198,7 +222,7 @@ export default function SmartAttachmentDropzone({
                             transition: 'all 0.2s' 
                         }}
                     >
-                        <Plus size={13} /> Select Local File
+                        <Plus size={13} /> Local File
                     </label>
                     <input 
                         type="file" 
@@ -227,7 +251,7 @@ export default function SmartAttachmentDropzone({
                             boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
                         }}
                     >
-                        <QrCode size={13} /> Scan from Mobile
+                        <QrCode size={13} /> Mobile QR
                     </button>
                 </div>
             </div>

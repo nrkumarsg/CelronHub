@@ -91,6 +91,13 @@ export const savePartner = async (partnerData) => {
   delete payload.updated_at;
   delete payload.contacts;
 
+  // Remove generated/computed columns (e.g. norm_name) that PostgreSQL prohibits updating
+  Object.keys(payload).forEach(key => {
+    if (key.startsWith('norm_')) {
+      delete payload[key];
+    }
+  });
+
   // Fix empty strings for Supabase
   if (payload.customerCredit === '') payload.customerCredit = null;
   if (payload.supplierCredit === '') payload.supplierCredit = null;

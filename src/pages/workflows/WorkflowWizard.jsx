@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { 
     FileText, ArrowLeft, Save, Sparkles, RefreshCcw, CheckCircle, 
-    Smartphone, Folder, HelpCircle, History, Trash2, X, AlertCircle, Play, ExternalLink 
+    Smartphone, Folder, HelpCircle, History, Trash2, X, AlertCircle, Play, ExternalLink, Upload 
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -22,6 +22,7 @@ import StepInvoicing from '../../components/workflow-wizard/StepInvoicing';
 import StepPaymentReceived from '../../components/workflow-wizard/StepPaymentReceived';
 import StepExpensesAndProfit from '../../components/workflow-wizard/StepExpensesAndProfit';
 import StepJobDriveExplorer from '../../components/workflow-wizard/StepJobDriveExplorer';
+import WorkflowUploadModal from '../../components/workflow-wizard/WorkflowUploadModal';
 
 const DRAFT_STORAGE_KEY = 'celron_workflow_wizard_active_draft';
 const DRAFT_HISTORY_KEY = 'celron_workflow_wizard_saved_drafts';
@@ -36,10 +37,11 @@ export default function WorkflowWizard() {
     const [isSaving, setIsSaving] = useState(false);
     const [loadingData, setLoadingData] = useState(true);
     
-    // Draft states
+    // Draft & Upload states
     const [activeDraftFound, setActiveDraftFound] = useState(null);
     const [savedDraftsList, setSavedDraftsList] = useState([]);
     const [showDraftsModal, setShowDraftsModal] = useState(false);
+    const [showUploadModal, setShowUploadModal] = useState(false);
 
     // Supabase datasets for searchable select dropdowns
     const [partners, setPartners] = useState([]);
@@ -587,7 +589,27 @@ export default function WorkflowWizard() {
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                        onClick={() => setShowUploadModal(true)}
+                        style={{
+                            background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                            border: 'none',
+                            borderRadius: '10px',
+                            padding: '8px 16px',
+                            fontSize: '0.84rem',
+                            fontWeight: 800,
+                            color: '#ffffff',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: '0 4px 14px rgba(99, 102, 241, 0.35)'
+                        }}
+                    >
+                        <Upload size={16} /> Workflow Upload
+                    </button>
+
                     <button
                         onClick={() => setShowDraftsModal(true)}
                         style={{
@@ -796,6 +818,10 @@ export default function WorkflowWizard() {
                             onNavigateStep={setCurrentStep}
                             companyId={companyId}
                             settings={settings}
+                            partners={partners}
+                            contacts={contacts}
+                            vessels={vessels}
+                            workLocations={workLocations}
                         />
                     )}
 
@@ -961,6 +987,20 @@ export default function WorkflowWizard() {
                     </div>
                 </div>
             )}
+
+            {/* TOP BAR WORKFLOW UPLOAD MODAL */}
+            <WorkflowUploadModal
+                isOpen={showUploadModal}
+                onClose={() => setShowUploadModal(false)}
+                partners={partners}
+                contacts={contacts}
+                vessels={vessels}
+                workLocations={workLocations}
+                companyId={companyId}
+                settings={settings}
+                updateWizardData={updateWizardData}
+                onNavigateStep={setCurrentStep}
+            />
         </div>
     );
 }

@@ -42,7 +42,7 @@ const SearchableSelect = ({
     };
 
     return (
-        <div className={`searchable-select-container ${className}`} ref={dropdownRef} style={{ position: 'relative', width: '100%' }}>
+        <div className={`searchable-select-container ${className}`} ref={dropdownRef} style={{ position: 'relative', width: '100%', zIndex: isOpen ? 1000 : 'auto' }}>
             <div 
                 className="form-select" 
                 onClick={() => setIsOpen(!isOpen)}
@@ -88,22 +88,23 @@ const SearchableSelect = ({
             </div>
 
             {isOpen && (
-                <div className="glass-panel" style={{
+                <div style={{
                     position: 'absolute',
                     top: 'calc(100% + 4px)',
                     left: 0,
                     right: 0,
-                    zIndex: 1000,
+                    zIndex: 9999,
                     maxHeight: '300px',
                     overflowY: 'auto',
                     padding: '8px',
-                    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
-                    border: '1px solid rgba(226, 232, 240, 0.8)',
-                    background: '#fff',
+                    boxShadow: '0 12px 32px -4px rgba(15, 23, 42, 0.18), 0 4px 12px -2px rgba(15, 23, 42, 0.08)',
+                    border: '1px solid #cbd5e1',
+                    background: '#ffffff',
+                    backgroundColor: '#ffffff',
                     borderRadius: '12px',
                     animation: 'select-slide-down 0.2s ease-out'
                 }}>
-                    <div style={{ position: 'relative', marginBottom: '8px', sticky: 'top', background: '#fff', zIndex: 10 }}>
+                    <div style={{ position: 'sticky', top: 0, background: '#ffffff', backgroundColor: '#ffffff', zIndex: 10, marginBottom: '8px', paddingTop: '2px', paddingBottom: '2px' }}>
                         <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
                         <input 
                             type="text" 

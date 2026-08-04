@@ -15,6 +15,7 @@ import { moveFile, uploadFileToDrive } from '../lib/driveService';
 import toast from 'react-hot-toast';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
+import SmartUploadPanel from '../components/upload/SmartUploadPanel';
 
 // Secure Custom Drive Image Renderer bypassing CORS limits
 const DriveImage = ({ fileId, accessToken, style, className }) => {
@@ -98,6 +99,7 @@ export default function AiDriveCardParser() {
   // Subfolders & Destination State
   const [subfolders, setSubfolders] = useState([]);
   const [destFolderId, setDestFolderId] = useState(localStorage.getItem('gdrive_scanner_dest_folder') || '');
+  const [showSmartUpload, setShowSmartUpload] = useState(false);
   const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
   const [uploadingMobileFile, setUploadingMobileFile] = useState(false);
   const mobileUploadInputRef = useRef(null);
@@ -220,6 +222,39 @@ export default function AiDriveCardParser() {
     } finally {
       setUploadingMobileFile(false);
       if (mobileUploadInputRef.current) mobileUploadInputRef.current.value = '';
+    }
+  };
+
+  const handleSmartUploadSelect = async (fileObj) => {
+    setShowSmartUpload(false);
+    const token = googleAccessToken || localStorage.getItem('google_access_token');
+    if (!token) {
+      toast.error('Google account not connected. Please login first.');
+      return;
+    }
+
+    const targetFolderId = destFolderId || folderId;
+    const targetFolderName = subfolders.find(f => f.id === targetFolderId)?.name || 'Raw_Bus_Cards';
+
+    toast.loading(`Processing card file for "${targetFolderName}"...`, { id: 'card-upload' });
+
+    try {
+      if (fileObj.isGoogleDrive) {
+        if (destFolderId && fileObj.id) {
+          await moveFile(token, fileObj.id, destFolderId);
+        }
+        toast.success(`Card "${fileObj.name}" linked to ${targetFolderName}!`, { id: 'card-upload' });
+      } else {
+        await uploadFileToDrive(token, fileObj, { folderId: targetFolderId });
+        toast.success(`Uploaded "${fileObj.name}" to ${targetFolderName}!`, { id: 'card-upload' });
+      }
+
+      setTimeout(() => {
+        triggerFolderSync();
+      }, 500);
+    } catch (err) {
+      console.error('Failed to upload card via SmartUpload:', err);
+      toast.error('Upload failed: ' + err.message, { id: 'card-upload' });
     }
   };
 
@@ -917,6 +952,27 @@ export default function AiDriveCardParser() {
                   capture="environment" 
                   style={{ display: 'none' }} 
                 />
+                <button 
+                  onClick={() => setShowSmartUpload(true)}
+                  disabled={!isDriveConnected || isSyncing}
+                  style={{ 
+                    background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)', 
+                    color: '#ffffff', 
+                    border: 'none', 
+                    padding: '10px 18px', 
+                    borderRadius: '8px', 
+                    fontWeight: 700, 
+                    cursor: 'pointer', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '6px',
+                    boxShadow: '0 2px 6px rgba(99, 102, 241, 0.3)',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Upload business cards via WhatsApp Web, Clipboard, Camera or Local files into destination folder"
+                >
+                  <Sparkles size={16} /> Smart Upload Hub
+                </button>
                 <button 
                   onClick={() => mobileUploadInputRef.current?.click()}
                   disabled={!isDriveConnected || uploadingMobileFile || isSyncing}
@@ -1725,6 +1781,18 @@ export default function AiDriveCardParser() {
             </button>
           </div>
         </div>
+      )}
+
+      {showSmartUpload && (
+        <SmartUploadPanel
+          isOpen={showSmartUpload}
+          onClose={() => setShowSmartUpload(false)}
+          activeFolderId={destFolderId || folderId}
+          activeFolderName={subfolders.find(f => f.id === destFolderId)?.name || 'Raw_Bus_Cards'}
+          documentType="Business Card Image"
+          accept="image/*,.pdf"
+          onSelect={handleSmartUploadSelect}
+        />
       )}
 
     </div>

@@ -27,6 +27,7 @@ import ReceivePaymentModal from '../../components/workflow/ReceivePaymentModal';
 import SearchableSelect from '../../components/common/SearchableSelect';
 import ModuleSwitcherHeader from '../../components/common/ModuleSwitcherHeader';
 import { getPartners } from '../../lib/store';
+import SmartUploadPanel from '../../components/upload/SmartUploadPanel';
 
 const DOC_TYPES = [
     'Enquiry', 'Quotation', 'Job', 'Purchase Order', 'Order Acknowledgment',
@@ -144,6 +145,7 @@ export default function WorkflowV2Board() {
     const [customerDocs, setCustomerDocs] = useState([]);
     const [loadingCustomerDocs, setLoadingCustomerDocs] = useState(false);
     const [poFile, setPoFile] = useState(null);
+    const [showSmartUpload, setShowSmartUpload] = useState(false);
     const [partners, setPartners] = useState([]);
     const [selectedPartnerId, setSelectedPartnerId] = useState('');
 
@@ -465,11 +467,21 @@ export default function WorkflowV2Board() {
     const handleDuplicate = async (id) => {
         if (window.confirm('Are you sure you want to duplicate this document? All items will be copied to a new draft.')) {
             try {
-                await duplicateWorkflowDocument(id);
-                fetchDocs();
+                toast.loading('Duplicating document...', { id: 'dup-doc' });
+                const { data: newDoc, error } = await duplicateWorkflowDocument(id);
+                if (error) throw error;
+
+                toast.success(`Duplicated successfully as ${newDoc?.document_no || 'Draft'}! Opening editor...`, { id: 'dup-doc' });
+                
+                if (newDoc && newDoc.id) {
+                    const slug = (newDoc.document_type || 'job').toLowerCase().replace(/\s+/g, '-');
+                    navigate(`/workflows/editor/${slug}/${newDoc.id}`);
+                } else {
+                    fetchDocs();
+                }
             } catch (error) {
                 console.error("Duplicate failed:", error);
-                toast.error("Failed to duplicate document. Error: " + (error.message || "Unknown error."));
+                toast.error("Failed to duplicate document. Error: " + (error.message || "Unknown error."), { id: 'dup-doc' });
             }
         }
     };
@@ -539,29 +551,68 @@ export default function WorkflowV2Board() {
                             drive_folder_id: projectFolderId
                         }).eq('document_no', jobNo);
 
-                        // If PO file is uploaded, upload it to Drive
+                        // If PO file is uploaded/selected, copy/upload it to Drive
                         if (poFile) {
-                            const uploadResult = await uploadFileToDrive(accessToken, poFile, { folderId: projectFolderId });
-                            const poUrl = `https://drive.google.com/file/d/${uploadResult.id}/view`;
+                            let poUrl = null;
+                            if (poFile.isGoogleDrive && poFile.id) {
+                                const { copyFile } = await import('../../lib/driveService');
+                                const copyRes = await copyFile(accessToken, poFile.id, projectFolderId);
+                                poUrl = `https://drive.google.com/file/d/${copyRes.id || poFile.id}/view`;
+                            } else if (poFile instanceof File || poFile.name) {
+                                const uploadResult = await uploadFileToDrive(accessToken, poFile, { folderId: projectFolderId });
+                                poUrl = `https://drive.google.com/file/d/${uploadResult.id}/view`;
+                            }
 
-                            // Update all documents associated with this job with the attachment URL
-                            await supabase.from('workflow_documents').update({ 
-                                customer_po_attachment_url: poUrl,
-                                attachment_urls: [poUrl]
-                            }).eq('assigned_job_no', jobNo);
+                            if (poUrl) {
+                                // Update all documents associated with this job with the attachment URL
+                                await supabase.from('workflow_documents').update({ 
+                                    customer_po_attachment_url: poUrl,
+                                    attachment_urls: [poUrl]
+                                }).eq('assigned_job_no', jobNo);
+                            }
                         }
 
-                        // Migrate Enquiry files if enquiry_id is linked
+                        // Move Enquiry folder into the newly created Job folder if enquiry_id or enquiry_no is linked
+                        let enqFolderId = null;
                         if (conversionTarget?.enquiry_id) {
                             const { data: enqData } = await supabase
                                 .from('customer_enquiries')
                                 .select('gdrive_folder_id')
                                 .eq('id', conversionTarget.enquiry_id)
                                 .maybeSingle();
+                            enqFolderId = enqData?.gdrive_folder_id;
 
-                            if (enqData?.gdrive_folder_id) {
-                                await migrateEnquiryFilesToJob(accessToken, enqData.gdrive_folder_id, projectFolderId);
+                            if (!enqFolderId) {
+                                const { data: docData } = await supabase
+                                    .from('workflow_documents')
+                                    .select('drive_folder_id')
+                                    .eq('id', conversionTarget.enquiry_id)
+                                    .maybeSingle();
+                                enqFolderId = docData?.drive_folder_id;
                             }
+                        }
+
+                        if (!enqFolderId) {
+                            const targetNo = conversionTarget?.enquiry_no || (conversionTarget?.document_type === 'Enquiry' ? conversionTarget?.document_no : null);
+                            if (targetNo) {
+                                const { data: docData } = await supabase
+                                    .from('workflow_documents')
+                                    .select('drive_folder_id')
+                                    .eq('document_no', targetNo)
+                                    .maybeSingle();
+                                enqFolderId = docData?.drive_folder_id;
+                            }
+                        }
+
+                        if (enqFolderId && projectFolderId) {
+                            try {
+                                const { moveFolder } = await import('../../lib/driveService');
+                                await moveFolder(accessToken, enqFolderId, projectFolderId);
+                                console.log(`Successfully moved Enquiry folder (${enqFolderId}) into Job folder (${projectFolderId})`);
+                            } catch (mErr) {
+                                console.warn("Notice: moveFolder failed or folder already moved:", mErr);
+                            }
+                            await migrateEnquiryFilesToJob(accessToken, enqFolderId, projectFolderId);
                         }
                     }
                 } catch (driveErr) {
@@ -2531,35 +2582,53 @@ export default function WorkflowV2Board() {
                             <div className="form-item" style={{ marginBottom: '24px' }}>
                                 <label style={{ display: 'block', fontSize: '0.9rem', color: '#374151', marginBottom: '6px', fontWeight: 500 }}>Upload Customer PO (File Repository)</label>
                                 <div style={{ 
-                                    border: '2px dashed #e5e7eb', 
+                                    border: '2px dashed #6366f1', 
                                     borderRadius: '12px', 
-                                    padding: '16px', 
+                                    padding: '20px', 
                                     textAlign: 'center',
-                                    background: poFile ? '#f0fdf4' : '#fafafa',
-                                    borderColor: poFile ? '#22c55e' : '#e5e7eb',
+                                    background: poFile ? '#f0fdf4' : '#faf5ff',
+                                    borderColor: poFile ? '#22c55e' : '#6366f1',
                                     transition: 'all 0.2s'
                                 }}>
-                                    <input 
-                                        type="file" 
-                                        id="po-upload" 
-                                        hidden 
-                                        onChange={(e) => setPoFile(e.target.files[0])} 
-                                    />
-                                    <label htmlFor="po-upload" style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-                                        {poFile ? (
-                                            <>
-                                                <FileCheck size={24} color="#22c55e" />
-                                                <span style={{ fontSize: '0.85rem', color: '#15803d', fontWeight: 600 }}>{poFile.name} selected</span>
-                                                <button type="button" onClick={(e) => { e.preventDefault(); setPoFile(null); }} style={{ fontSize: '0.75rem', color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Remove</button>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Upload size={24} color="#6366f1" />
-                                                <span style={{ fontSize: '0.85rem', color: '#4b5563' }}>Click to upload or drag and drop PO file</span>
-                                                <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}>PDF, DOCX or Images (Max 10MB)</span>
-                                            </>
-                                        )}
-                                    </label>
+                                    {poFile ? (
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                                            <FileCheck size={28} color="#22c55e" />
+                                            <span style={{ fontSize: '0.9rem', color: '#15803d', fontWeight: 700 }}>
+                                                {poFile.name || poFile.title || 'Customer PO Selected'}
+                                            </span>
+                                            <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
+                                                <button 
+                                                    type="button" 
+                                                    onClick={() => setShowSmartUpload(true)} 
+                                                    style={{ fontSize: '0.8rem', color: '#4f46e5', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, textDecoration: 'underline' }}
+                                                >
+                                                    Change File via Smart Upload
+                                                </button>
+                                                <button 
+                                                    type="button" 
+                                                    onClick={() => setPoFile(null)} 
+                                                    style={{ fontSize: '0.8rem', color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                                                >
+                                                    Remove
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div 
+                                            onClick={() => setShowSmartUpload(true)}
+                                            style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}
+                                        >
+                                            <div style={{ padding: '10px', borderRadius: '50%', background: 'rgba(99, 102, 241, 0.1)', color: '#6366f1' }}>
+                                                <Upload size={24} />
+                                            </div>
+                                            <span style={{ fontSize: '0.95rem', color: '#1e293b', fontWeight: 700 }}>
+                                                Click to open Smart Document Upload
+                                            </span>
+                                            <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                                                Choose from Recent Files, Clipboard, Google Drive, Camera, Drag & Drop, or Mobile QR
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -2856,6 +2925,21 @@ export default function WorkflowV2Board() {
                     partners={partners}
                     company_id={profile?.company_id}
                     prefill={paymentPrefill}
+                />
+            )}
+            {showSmartUpload && (
+                <SmartUploadPanel
+                    isOpen={showSmartUpload}
+                    onClose={() => setShowSmartUpload(false)}
+                    onSelect={(fileObj) => {
+                        console.log("Selected file via Smart Upload:", fileObj);
+                        setPoFile(fileObj);
+                        setShowSmartUpload(false);
+                    }}
+                    documentType="customer_po"
+                    accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
+                    activeFolderName={conversionTarget?.subject || conversionTarget?.document_no || 'Job Workspace'}
+                    runningEnquiryNo={conversionTarget?.enquiry_no || conversionTarget?.document_no || 'ENQ-2607-0005'}
                 />
             )}
         </div>

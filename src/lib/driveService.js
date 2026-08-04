@@ -749,6 +749,14 @@ export const migrateEnquiryFilesToJob = async (accessToken, enquiryFolderId, job
     if (!enquiryFolderId || !jobFolderId) return;
 
     try {
+        // Move the entire Enquiry folder directly into the Job folder first
+        try {
+            await moveFile(accessToken, enquiryFolderId, jobFolderId);
+            console.log(`Successfully moved Enquiry folder (${enquiryFolderId}) into Job folder (${jobFolderId})`);
+        } catch (moveFolderErr) {
+            console.warn(`Enquiry folder direct move notice (may already be inside or permissions issue):`, moveFolderErr);
+        }
+
         // 1. Find or create target subfolders inside the Job folder to ensure they exist
         const photosGalleryId = await getOrCreateFolder(accessToken, 'Photos & Gallery', jobFolderId);
         const supportDocsId = await getOrCreateFolder(accessToken, 'SupportDocs', jobFolderId);

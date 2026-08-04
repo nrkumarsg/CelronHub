@@ -1536,7 +1536,7 @@ export default function StatementOfAccount() {
 
                 {soaView === 'summary' ? (
                     <>
-                        <div className="glass-panel" style={{ marginBottom: '32px' }}>
+                        <div className="glass-panel" style={{ marginBottom: '32px', position: 'relative', zIndex: 30 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                         <div style={{ background: 'var(--accent)', color: 'white', padding: '8px', borderRadius: '10px' }}>
                             <Filter size={20} />

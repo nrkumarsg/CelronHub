@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "celronhub": {
+      "command": "node",
+      "args": [
+        "C:/GoogleGravityDemo/CelronHub/mcp-server/src/index.js"
+      ],
+      "env": {
+        "VITE_SUPABASE_URL": "https://dfoihdzpgkrtyerzzchm.supabase.co",
+        "VITE_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRmb2loZHpwZ2tydHllcnp6Y2htIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1NzMxMTgsImV4cCI6MjA4NzE0OTExOH0.9FGN21KeUpS0UyyFJJ1YjXLElL4AF6ym_hKAJsr_ek4"
+      }
+    }
+  }
+}
