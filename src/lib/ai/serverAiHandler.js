@@ -16,7 +16,7 @@ function getServerApiKey(providerId) {
 }
 
 export async function handleAiComplete(req) {
-    const { provider: providerId, prompt, history = [], useJson = true, image = null, model } = req || {};
+    const { provider: providerId, prompt, history = [], useJson = true, image = null, model, images = null } = req || {};
     const id = (providerId || '').toLowerCase();
     const defaults = PROVIDER_DEFAULTS[id];
 
@@ -35,7 +35,7 @@ export async function handleAiComplete(req) {
     const provider = model ? { ...defaults, modelName: model } : defaults;
 
     try {
-        const result = await executeProviderRequest(provider, apiKey, prompt, history, useJson, image);
+        const result = await executeProviderRequest(provider, apiKey, prompt, history, useJson, image, null, images);
         return { status: 200, body: { result } };
     } catch (err) {
         console.error(`[AI Proxy] ${defaults.name} request failed:`, err.message);

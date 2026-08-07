@@ -13,8 +13,9 @@ import { getOrCreateFolder, moveFile } from '../driveService';
  * @param {string} [txtFileId] - Optional companion text file Google Drive ID
  * @returns {Promise<Object>} The pipeline JSON output
  */
-export async function runDocumentPipeline(accessToken, sourceFolder, fileId, inputTypeUsed, payload, txtFileId = null) {
+export async function runDocumentPipeline(accessToken, sourceFolder, fileId, inputTypeUsed, payload, txtFileId = null, secondaryPayload = null) {
     const isText = inputTypeUsed === 'text_file';
+    const isMultiImage = Array.isArray(payload) || (payload && secondaryPayload);
     
     const systemPrompt = `
 You are the structural parsing layer of the CEL-RON Hub Intelligent Document Ingestion Pipeline. Your job is to process document payloads and output a single, strictly valid JSON object.
@@ -23,11 +24,12 @@ You are the structural parsing layer of the CEL-RON Hub Intelligent Document Ing
 The input provided to you will be either:
 1. A raw text string extracted from a companion .txt file.
 2. A direct image asset analysis via vision fallback.
+3. Multi-image candidate front and back business card scans.
 
 ### SCHEMA EXTRACTORS
 
 IF processing a Business Card (Raw_Bus_Cards):
-Extract these fields: company_name, contact_person, designation, email, phone_numbers (array), address, uen.
+Extract these fields: company_name, contact_person, designation, email, phone_numbers (array), address, uen, website, brands, business_scope, notes.
 
 IF processing a Supplier Invoice (Raw_Supplier_Invoices):
 Extract these fields: supplier_name, invoice_number, invoice_date (YYYY-MM-DD), currency, subtotal, tax_amount, grand_total, line_items (array of objects containing description, quantity, unit_price, amount).
@@ -66,13 +68,27 @@ Return ONLY JSON. Do not write introductory text, markdown code blocks, or conve
 
     const userPrompt = isText 
         ? `Here is the raw text extracted from the companion text file:\n"""\n${payload}\n"""`
-        : `Please analyze the provided image asset.`;
+        : (isMultiImage 
+            ? `Please analyze the provided Front and Back business card image assets simultaneously.`
+            : `Please analyze the provided image asset.`);
 
     const history = [{ role: 'system', content: systemPrompt }];
-    const imagePayload = isText ? null : payload;
+    
+    let imagePayload = null;
+    let imagesPayload = null;
+
+    if (!isText) {
+        if (Array.isArray(payload)) {
+            imagesPayload = payload;
+        } else if (payload && secondaryPayload) {
+            imagesPayload = [payload, secondaryPayload];
+        } else {
+            imagePayload = payload;
+        }
+    }
 
     // Execute through AI fallback router
-    const result = await runWithFallback(userPrompt, false, history, null, imagePayload, true);
+    const result = await runWithFallback(userPrompt, false, history, null, imagePayload, true, imagesPayload);
     
     console.log('[Document Ingestion Pipeline] Raw LLM response:', result);
 

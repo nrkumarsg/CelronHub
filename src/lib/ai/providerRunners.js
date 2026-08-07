@@ -32,7 +32,7 @@ export function safeJSONParse(text) {
     }
 }
 
-export async function executeGeminiRequest(provider, apiKey, prompt, history = [], useJson = true, image = null, signal) {
+export async function executeGeminiRequest(provider, apiKey, prompt, history = [], useJson = true, image = null, signal, images = null) {
     const url = `${provider.baseUrl}/v1beta/models/${provider.modelName}:generateContent?key=${apiKey}`;
     const contents = [];
 
@@ -48,14 +48,17 @@ export async function executeGeminiRequest(provider, apiKey, prompt, history = [
     });
 
     const activeParts = [{ text: prompt }];
-    if (image) {
-        activeParts.push({
-            inlineData: {
-                mimeType: getMimeType(image),
-                data: cleanBase64(image)
-            }
-        });
-    }
+    const imageList = Array.isArray(images) && images.length > 0 ? images : (image ? [image] : []);
+    imageList.forEach(img => {
+        if (img) {
+            activeParts.push({
+                inlineData: {
+                    mimeType: getMimeType(img),
+                    data: cleanBase64(img)
+                }
+            });
+        }
+    });
 
     contents.push({
         role: 'user',
@@ -100,7 +103,7 @@ export async function executeGeminiRequest(provider, apiKey, prompt, history = [
     return useJson ? safeJSONParse(text) : text;
 }
 
-export async function executeClaudeRequest(provider, apiKey, prompt, history = [], useJson = true, image = null, signal) {
+export async function executeClaudeRequest(provider, apiKey, prompt, history = [], useJson = true, image = null, signal, images = null) {
     const endpoint = provider.baseUrl.endsWith('/v1/messages') ? provider.baseUrl : `${provider.baseUrl}/v1/messages`;
 
     const systemMsg = history.find(msg => msg.role === 'system');
@@ -114,17 +117,18 @@ export async function executeClaudeRequest(provider, apiKey, prompt, history = [
         });
     });
 
+    const imageList = Array.isArray(images) && images.length > 0 ? images : (image ? [image] : []);
     let contentPayload = prompt;
-    if (image) {
+    if (imageList.length > 0) {
         contentPayload = [
-            {
+            ...imageList.map(img => ({
                 type: 'image',
                 source: {
                     type: 'base64',
-                    media_type: getMimeType(image),
-                    data: cleanBase64(image)
+                    media_type: getMimeType(img),
+                    data: cleanBase64(img)
                 }
-            },
+            })),
             {
                 type: 'text',
                 text: prompt
@@ -174,7 +178,7 @@ export async function executeClaudeRequest(provider, apiKey, prompt, history = [
     return useJson ? safeJSONParse(text) : text;
 }
 
-export async function executeOpenAICompatibleRequest(provider, apiKey, prompt, history = [], useJson = true, image = null, signal) {
+export async function executeOpenAICompatibleRequest(provider, apiKey, prompt, history = [], useJson = true, image = null, signal, images = null) {
     let url = provider.baseUrl;
     if (url.endsWith('/chat/completions')) {
         // already correct
@@ -197,11 +201,15 @@ export async function executeOpenAICompatibleRequest(provider, apiKey, prompt, h
         });
     });
 
+    const imageList = Array.isArray(images) && images.length > 0 ? images : (image ? [image] : []);
     let userContent = prompt;
-    if (image) {
+    if (imageList.length > 0) {
         userContent = [
             { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: `data:${getMimeType(image)};base64,${cleanBase64(image)}` } }
+            ...imageList.map(img => ({
+                type: 'image_url',
+                image_url: { url: `data:${getMimeType(img)};base64,${cleanBase64(img)}` }
+            }))
         ];
     }
 
@@ -251,13 +259,13 @@ export async function executeOpenAICompatibleRequest(provider, apiKey, prompt, h
     return useJson ? safeJSONParse(text) : text;
 }
 
-export async function executeProviderRequest(provider, apiKey, prompt, history = [], useJson = true, image = null, signal) {
+export async function executeProviderRequest(provider, apiKey, prompt, history = [], useJson = true, image = null, signal, images = null) {
     const name = (provider.name || '').toLowerCase();
     if (name === 'gemini') {
-        return executeGeminiRequest(provider, apiKey, prompt, history, useJson, image, signal);
+        return executeGeminiRequest(provider, apiKey, prompt, history, useJson, image, signal, images);
     }
     if (name === 'claude') {
-        return executeClaudeRequest(provider, apiKey, prompt, history, useJson, image, signal);
+        return executeClaudeRequest(provider, apiKey, prompt, history, useJson, image, signal, images);
     }
-    return executeOpenAICompatibleRequest(provider, apiKey, prompt, history, useJson, image, signal);
+    return executeOpenAICompatibleRequest(provider, apiKey, prompt, history, useJson, image, signal, images);
 }

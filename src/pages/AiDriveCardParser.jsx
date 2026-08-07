@@ -5,13 +5,16 @@ import {
   ArrowLeft, CheckCircle2, Trash2, Users, Loader2, Info, Search, HelpCircle,
   UploadCloud, Image as ImageIcon, Database, RefreshCw, Layers, CheckSquare,
   AlertCircle, ChevronRight, Edit2, Play, CircleDot, ExternalLink,
-  Smartphone, QrCode, Camera
+  Smartphone, QrCode, Camera, Cpu, HardDrive, ArrowRightLeft
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getPartners, getPendingPartners, savePartner, saveContact, deletePartner } from '../lib/store';
 import { runDocumentPipeline } from '../lib/ai/documentPipeline';
 import { connectGoogleAPI, isTokenValid } from '../lib/googleAuthService';
 import { moveFile, uploadFileToDrive } from '../lib/driveService';
+import { AIProviderFactory } from '../lib/ai/providerFactory';
+import { stitchCardImages } from '../lib/imageStitcher';
+import DriveFolderPickerModal from '../components/common/DriveFolderPickerModal';
 import toast from 'react-hot-toast';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
@@ -81,12 +84,23 @@ export default function AiDriveCardParser() {
   const [googleAccessToken, setGoogleAccessToken] = useState('');
   const [isDriveConnected, setIsDriveConnected] = useState(false);
 
-  // Folder Configuration
-  const [folderLink, setFolderLink] = useState('https://drive.google.com/drive/folders/1FopCXZKCiKTQrwExkB2D_JGm1tVWqOwU?usp=drive_link');
-  const [folderId, setFolderId] = useState('1FopCXZKCiKTQrwExkB2D_JGm1tVWqOwU');
+  // Dynamic Source & Destination Google Drive Management
+  const [sourceFolderLink, setSourceFolderLink] = useState('https://drive.google.com/drive/folders/1FopCXZKCiKTQrwExkB2D_JGm1tVWqOwU?usp=drive_link');
+  const [sourceFolderId, setSourceFolderId] = useState(localStorage.getItem('gdrive_scanner_source_folder') || '1FopCXZKCiKTQrwExkB2D_JGm1tVWqOwU');
+  const [sourceFolderName, setSourceFolderName] = useState(localStorage.getItem('gdrive_scanner_source_name') || 'Raw_Bus_Cards');
+
+  const [destFolderId, setDestFolderId] = useState(localStorage.getItem('gdrive_scanner_dest_folder') || '');
+  const [destFolderName, setDestFolderName] = useState(localStorage.getItem('gdrive_scanner_dest_name') || 'Merged_Bus_Cards');
+  const [subfolders, setSubfolders] = useState([]);
+
+  // Folder Picker Modal State
+  const [folderPickerModal, setFolderPickerModal] = useState({ isOpen: false, mode: 'source' }); // 'source' | 'dest'
+
+  // Multi-Provider AI API Switcher State
+  const [selectedAiProvider, setSelectedAiProvider] = useState(localStorage.getItem('gdrive_scanner_ai_provider') || 'Gemini');
 
   // Queue Data States
-  const [activeTab, setActiveTab] = useState('pending'); // 'pending' | 'approved' | 'all'
+  const [activeTab, setActiveTab] = useState('pending'); // 'pending' | 'approved'
   const [activeDirectoryPartners, setActiveDirectoryPartners] = useState([]);
   const [pendingDrafts, setPendingDrafts] = useState([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
@@ -96,19 +110,17 @@ export default function AiDriveCardParser() {
   const [syncLogs, setSyncLogs] = useState([]);
   const [currentProgress, setCurrentProgress] = useState({ current: 0, total: 0, file: '' });
 
-  // Subfolders & Destination State
-  const [subfolders, setSubfolders] = useState([]);
-  const [destFolderId, setDestFolderId] = useState(localStorage.getItem('gdrive_scanner_dest_folder') || '');
   const [showSmartUpload, setShowSmartUpload] = useState(false);
   const [qrModal, setQrModal] = useState({ isOpen: false, folderId: null, folderName: '' });
   const [uploadingMobileFile, setUploadingMobileFile] = useState(false);
   const mobileUploadInputRef = useRef(null);
 
-  // Interactive Double-Panel Review State
+  // Interactive Double-Panel Review & Card Pairing State
   const [selectedDraft, setSelectedDraft] = useState(null);
+  const [isStitching, setIsStitching] = useState(false);
   const [editedPartner, setEditedPartner] = useState({
     name: '', weblink: '', country: 'Singapore', city: '', address: '', phone1: '', email1: '', uen: '', types: ['Supplier'],
-    brand: '', brands: '', business_scope: '', notes: ''
+    brand: '', brands: '', business_scope: '', notes: '', google_drive_link: '', business_card_url: '', business_card_back_url: ''
   });
   const [editedContact, setEditedContact] = useState({
     name: '', email: '', handphone: '', post: 'Representative', department: 'Operations'
@@ -119,12 +131,8 @@ export default function AiDriveCardParser() {
 
   const sortItems = (items) => {
     return [...items].sort((a, b) => {
-      if (sortBy === 'az') {
-        return (a.name || '').localeCompare(b.name || '');
-      }
-      if (sortBy === 'za') {
-        return (b.name || '').localeCompare(a.name || '');
-      }
+      if (sortBy === 'az') return (a.name || '').localeCompare(b.name || '');
+      if (sortBy === 'za') return (b.name || '').localeCompare(a.name || '');
       if (sortBy === 'lastScan') {
         const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
         const dateB = b.created_at ? new Date(b.created_at) : new Date(0);
@@ -144,13 +152,15 @@ export default function AiDriveCardParser() {
         const data = await res.json();
         const folders = data.files || [];
         setSubfolders(folders);
-        
-        const defaultDest = folders.find(f => f.name === '2026_Cards_Entry') || 
-                            folders.find(f => f.name.includes('Entry') || f.name.includes('Images') || f.name.includes('Merged')) || 
-                            folders.find(f => f.name.toLowerCase() !== 'raw_bus_cards');
+
+        const defaultDest = folders.find(f => f.name === 'Merged_Bus_Cards') || 
+                            folders.find(f => f.name === '2026_Cards_Entry') || 
+                            folders.find(f => f.name.includes('Merged') || f.name.includes('Entry'));
         if (defaultDest && !localStorage.getItem('gdrive_scanner_dest_folder')) {
           setDestFolderId(defaultDest.id);
+          setDestFolderName(defaultDest.name);
           localStorage.setItem('gdrive_scanner_dest_folder', defaultDest.id);
+          localStorage.setItem('gdrive_scanner_dest_name', defaultDest.name);
         }
       }
     } catch (err) {
@@ -166,7 +176,7 @@ export default function AiDriveCardParser() {
     if (token && valid) {
       setGoogleAccessToken(token);
       setIsDriveConnected(true);
-      const resolvedId = extractFolderId(folderLink);
+      const resolvedId = extractFolderId(sourceFolderLink);
       loadSubfolders(resolvedId, token);
     } else {
       setIsDriveConnected(false);
@@ -178,85 +188,11 @@ export default function AiDriveCardParser() {
 
   useEffect(() => {
     const token = googleAccessToken || localStorage.getItem('google_access_token');
-    if (token && folderLink) {
-      const resolvedId = extractFolderId(folderLink);
+    if (token && sourceFolderLink) {
+      const resolvedId = extractFolderId(sourceFolderLink);
       loadSubfolders(resolvedId, token);
     }
-  }, [folderLink, googleAccessToken]);
-
-  const handleMobileUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const token = googleAccessToken || localStorage.getItem('google_access_token');
-    if (!token) {
-      toast.error('Google account not connected.');
-      return;
-    }
-
-    setUploadingMobileFile(true);
-    toast.loading(`Uploading card "${file.name}" to Raw_Bus_Cards...`, { id: 'mobile-upload' });
-
-    try {
-      let targetScanFolderId = folderId;
-      try {
-        const checkQuery = `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and (name = 'Raw_Bus_Cards' or name = 'raw_bus_cards' or name = 'Raw Bus Cards' or name = 'raw bus cards') and trashed = false`;
-        const checkUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(checkQuery)}&fields=files(id,name)`;
-        const checkRes = await fetch(checkUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-        if (checkRes.ok) {
-          const checkData = await checkRes.json();
-          if (checkData.files && checkData.files.length > 0) {
-            targetScanFolderId = checkData.files[0].id;
-          }
-        }
-      } catch (err) {
-        console.error('Failed to resolve subfolder during mobile upload:', err);
-      }
-
-      await uploadFileToDrive(token, file, { folderId: targetScanFolderId });
-      toast.success(`Uploaded successfully to Raw_Bus_Cards!`, { id: 'mobile-upload' });
-      triggerFolderSync();
-    } catch (err) {
-      console.error('Mobile upload failed:', err);
-      toast.error('Upload failed: ' + err.message, { id: 'mobile-upload' });
-    } finally {
-      setUploadingMobileFile(false);
-      if (mobileUploadInputRef.current) mobileUploadInputRef.current.value = '';
-    }
-  };
-
-  const handleSmartUploadSelect = async (fileObj) => {
-    setShowSmartUpload(false);
-    const token = googleAccessToken || localStorage.getItem('google_access_token');
-    if (!token) {
-      toast.error('Google account not connected. Please login first.');
-      return;
-    }
-
-    const targetFolderId = destFolderId || folderId;
-    const targetFolderName = subfolders.find(f => f.id === targetFolderId)?.name || 'Raw_Bus_Cards';
-
-    toast.loading(`Processing card file for "${targetFolderName}"...`, { id: 'card-upload' });
-
-    try {
-      if (fileObj.isGoogleDrive) {
-        if (destFolderId && fileObj.id) {
-          await moveFile(token, fileObj.id, destFolderId);
-        }
-        toast.success(`Card "${fileObj.name}" linked to ${targetFolderName}!`, { id: 'card-upload' });
-      } else {
-        await uploadFileToDrive(token, fileObj, { folderId: targetFolderId });
-        toast.success(`Uploaded "${fileObj.name}" to ${targetFolderName}!`, { id: 'card-upload' });
-      }
-
-      setTimeout(() => {
-        triggerFolderSync();
-      }, 500);
-    } catch (err) {
-      console.error('Failed to upload card via SmartUpload:', err);
-      toast.error('Upload failed: ' + err.message, { id: 'card-upload' });
-    }
-  };
+  }, [sourceFolderLink, googleAccessToken]);
 
   const addLog = (message, type = 'info') => {
     setSyncLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), message, type }]);
@@ -297,22 +233,81 @@ export default function AiDriveCardParser() {
   };
 
   const handleOpenFolder = () => {
-    if (!folderLink) return;
-    let targetUrl = folderLink.trim();
+    if (!sourceFolderLink) return;
+    let targetUrl = sourceFolderLink.trim();
     if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
       targetUrl = `https://drive.google.com/drive/folders/${targetUrl}`;
     }
     window.open(targetUrl, '_blank');
   };
 
-  // BACKGROUND BATCH SYNC PIPELINE
-  const triggerFolderSync = async () => {
-    const resolvedId = extractFolderId(folderLink);
-    if (!resolvedId) {
-      toast.error('Invalid Google Drive folder link or ID.');
+  const handleMobileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const token = googleAccessToken || localStorage.getItem('google_access_token');
+    if (!token) {
+      toast.error('Google account not connected.');
       return;
     }
-    setFolderId(resolvedId);
+
+    setUploadingMobileFile(true);
+    toast.loading(`Uploading card "${file.name}" to ${sourceFolderName}...`, { id: 'mobile-upload' });
+
+    try {
+      const targetFolderId = sourceFolderId || extractFolderId(sourceFolderLink);
+      await uploadFileToDrive(token, file, { folderId: targetFolderId });
+      toast.success(`Uploaded successfully to ${sourceFolderName}!`, { id: 'mobile-upload' });
+      triggerFolderSync();
+    } catch (err) {
+      console.error('Mobile upload failed:', err);
+      toast.error('Upload failed: ' + err.message, { id: 'mobile-upload' });
+    } finally {
+      setUploadingMobileFile(false);
+      if (mobileUploadInputRef.current) mobileUploadInputRef.current.value = '';
+    }
+  };
+
+  const handleSmartUploadSelect = async (fileObj) => {
+    setShowSmartUpload(false);
+    const token = googleAccessToken || localStorage.getItem('google_access_token');
+    if (!token) {
+      toast.error('Google account not connected. Please login first.');
+      return;
+    }
+
+    const targetFolderId = sourceFolderId || extractFolderId(sourceFolderLink);
+    toast.loading(`Processing card file for "${sourceFolderName}"...`, { id: 'card-upload' });
+
+    try {
+      if (fileObj.isGoogleDrive) {
+        if (targetFolderId && fileObj.id) {
+          await moveFile(token, fileObj.id, targetFolderId);
+        }
+        toast.success(`Card "${fileObj.name}" linked!`, { id: 'card-upload' });
+      } else {
+        await uploadFileToDrive(token, fileObj, { folderId: targetFolderId });
+        toast.success(`Uploaded "${fileObj.name}"!`, { id: 'card-upload' });
+      }
+
+      setTimeout(() => {
+        triggerFolderSync();
+      }, 500);
+    } catch (err) {
+      console.error('Failed to upload card via SmartUpload:', err);
+      toast.error('Upload failed: ' + err.message, { id: 'card-upload' });
+    }
+  };
+
+  // -------------------------------------------------------------
+  // INTELLIGENT FRONT & BACK CARD PAIRING & BATCH PROCESSING LOOP
+  // -------------------------------------------------------------
+  const triggerFolderSync = async () => {
+    const resolvedSourceId = sourceFolderId || extractFolderId(sourceFolderLink);
+    if (!resolvedSourceId) {
+      toast.error('Invalid Google Drive source folder link or ID.');
+      return;
+    }
 
     const token = googleAccessToken || localStorage.getItem('google_access_token');
     if (!token) {
@@ -322,97 +317,55 @@ export default function AiDriveCardParser() {
 
     setIsSyncing(true);
     setSyncLogs([]);
-    addLog('Starting Folder Discovery & OCR Pre-processing...', 'start');
+    addLog(`Starting Batch Folder Discovery using AI Provider: ${selectedAiProvider}...`, 'start');
 
     try {
-      // 1. Fetch files inside the folder recursively (BFS traversal)
-      addLog(`Connecting to Drive Folder ID: ${resolvedId}...`);
-      
-      let targetScanFolderId = resolvedId;
-      try {
-        const checkQuery = `'${resolvedId}' in parents and mimeType = 'application/vnd.google-apps.folder' and (name = 'Raw_Bus_Cards' or name = 'raw_bus_cards' or name = 'Raw Bus Cards' or name = 'raw bus cards') and trashed = false`;
-        const checkUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(checkQuery)}&fields=files(id,name)`;
-        const checkRes = await fetch(checkUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-        if (checkRes.ok) {
-          const checkData = await checkRes.json();
-          if (checkData.files && checkData.files.length > 0) {
-            targetScanFolderId = checkData.files[0].id;
-            addLog(`Found specific folder "Raw_Bus_Cards" (ID: ${targetScanFolderId}). Scanning this folder only.`, 'info');
-          }
-        }
-      } catch (err) {
-        console.error('Failed to resolve Raw_Bus_Cards folder:', err);
-      }
+      addLog(`Connecting to Source Folder (ID: ${resolvedSourceId})...`, 'info');
 
-      const foldersToScan = [targetScanFolderId];
+      // Fetch files recursively inside source folder
+      const foldersToScan = [resolvedSourceId];
       const scannedFolders = new Set();
       const allFiles = [];
-      const textFiles = [];
-      
+
       while (foldersToScan.length > 0 && scannedFolders.size < 50) {
         const currentFolderId = foldersToScan.shift();
         if (scannedFolders.has(currentFolderId)) continue;
         scannedFolders.add(currentFolderId);
-        
-        addLog(`Scanning directory level... Discovered ${allFiles.length} card(s) so far.`);
-        
+
         let pageToken = null;
         do {
           const query = `'${currentFolderId}' in parents and trashed = false and (` +
             `mimeType = 'application/vnd.google-apps.folder' or ` +
             `mimeType contains 'image/' or ` +
-            `name contains '.jpg' or ` +
-            `name contains '.jpeg' or ` +
-            `name contains '.png' or ` +
-            `name contains '.webp' or ` +
-            `name contains '.txt'` +
+            `name contains '.jpg' or name contains '.jpeg' or name contains '.png' or name contains '.webp'` +
             `)`;
-          
+
           const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100${pageToken ? `&pageToken=${pageToken}` : ''}`;
-          
-          const res = await fetch(url, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          
-          if (!res.ok) {
-            console.error(`Error listing folder ${currentFolderId}: ${res.status}`);
-            break;
-          }
-          
+          const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+
+          if (!res.ok) break;
           const data = await res.json();
           const filesInFolder = data.files || [];
-          
+
           for (const f of filesInFolder) {
             if (f.mimeType === 'application/vnd.google-apps.folder') {
               if (!scannedFolders.has(f.id) && !foldersToScan.includes(f.id)) {
                 foldersToScan.push(f.id);
               }
-            } else if (f.name.toLowerCase().endsWith('.txt')) {
-              textFiles.push(f);
             } else {
-              // It is an actual card image file!
               allFiles.push(f);
             }
           }
-          
           pageToken = data.nextPageToken || null;
         } while (pageToken);
       }
-      
-      addLog(`Discovered ${allFiles.length} total card file(s) in Drive directory.`, 'success');
-      
-      // Deduplicate discovered files by ID
-      const uniqueFilesMap = new Map();
-      allFiles.forEach(f => {
-        if (f && f.id) uniqueFilesMap.set(f.id, f);
-      });
-      const uniqueFiles = Array.from(uniqueFilesMap.values());
 
-      const uniqueTextFilesMap = new Map();
-      textFiles.forEach(f => {
-        if (f && f.id) uniqueTextFilesMap.set(f.id, f);
-      });
-      const uniqueTextFiles = Array.from(uniqueTextFilesMap.values());
+      addLog(`Discovered ${allFiles.length} total card scan image(s) in directory.`, 'success');
+
+      // Deduplicate files
+      const uniqueFilesMap = new Map();
+      allFiles.forEach(f => { if (f?.id) uniqueFilesMap.set(f.id, f); });
+      const uniqueFiles = Array.from(uniqueFilesMap.values());
 
       if (uniqueFiles.length === 0) {
         addLog('No business card images found. Sync complete.', 'success');
@@ -420,23 +373,12 @@ export default function AiDriveCardParser() {
         return;
       }
 
-      // 2. Cross-reference with existing drafts and active profiles to avoid duplicates
-      addLog('Cross-referencing files against Supabase indexed network...', 'info');
-      
-      // Get currently pre-indexed cards in draft state
+      // Check existing drafts in database
       const existingDraftsList = await getPendingPartners(profile);
       const activePartnersList = await getPartners(profile);
-
-      // Map indexed File IDs to quickly check
       const indexedFileIds = new Set();
-      existingDraftsList.forEach(p => {
-        if (p.info) {
-          const match = p.info.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
-          if (match) indexedFileIds.add(match[1]);
-          indexedFileIds.add(p.info);
-        }
-      });
-      activePartnersList.forEach(p => {
+
+      [...existingDraftsList, ...activePartnersList].forEach(p => {
         if (p.info) {
           const match = p.info.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
           if (match) indexedFileIds.add(match[1]);
@@ -444,208 +386,209 @@ export default function AiDriveCardParser() {
         }
       });
 
-      // Find files that haven't been saved yet
-      const unprocessedFiles = uniqueFiles.filter(file => {
-        return !indexedFileIds.has(file.id);
-      });
-
-      addLog(`Queue Analysis: ${uniqueFiles.length - unprocessedFiles.length} file(s) already cached. ${unprocessedFiles.length} new card(s) require processing.`, 'info');
+      const unprocessedFiles = uniqueFiles.filter(f => !indexedFileIds.has(f.id));
+      addLog(`Queue Analysis: ${uniqueFiles.length - unprocessedFiles.length} cached, ${unprocessedFiles.length} new scans to process.`, 'info');
 
       if (unprocessedFiles.length === 0) {
-        addLog('All cards in the directory are fully synced. Ready for review!', 'success');
+        addLog('All cards in folder are fully indexed.', 'success');
         setIsSyncing(false);
-        toast.success('Drive Directory is fully up-to-date!');
+        toast.success('Drive folder is fully up-to-date!');
         loadDraftsQueue();
         return;
       }
 
-      // 3. Process new files asynchronously
-      setCurrentProgress({ current: 0, total: unprocessedFiles.length, file: '' });
-      const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+      // -------------------------------------------------------------
+      // GROUP SEQUENTIAL FRONT & BACK CARD PAIRS
+      // -------------------------------------------------------------
+      const pairs = [];
+      const pairedFileIds = new Set();
 
-      for (let i = 0; i < unprocessedFiles.length; i++) {
-        const file = unprocessedFiles[i];
-        setCurrentProgress({ current: i + 1, total: unprocessedFiles.length, file: file.name });
-        addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Pre-downloading: ${file.name}...`, 'info');
+      const getBaseKey = (filename) => {
+        const clean = filename.toLowerCase().replace(/\.(jpg|jpeg|png|webp)$/i, '');
+        return clean.replace(/[_\-\s]?(front|back|f|b|side1|side2|a|b|1|2)$/i, '').trim();
+      };
+
+      const isBackSide = (filename) => {
+        const clean = filename.toLowerCase();
+        return clean.includes('back') || clean.includes('_b.') || clean.includes('_b_') || clean.includes('side2');
+      };
+
+      // 1. Group by Naming Convention
+      const nameGroups = new Map();
+      unprocessedFiles.forEach(file => {
+        const key = getBaseKey(file.name);
+        if (!nameGroups.has(key)) nameGroups.set(key, []);
+        nameGroups.get(key).push(file);
+      });
+
+      nameGroups.forEach((groupFiles, key) => {
+        if (groupFiles.length >= 2) {
+          const backFile = groupFiles.find(f => isBackSide(f.name)) || groupFiles[1];
+          const frontFile = groupFiles.find(f => f.id !== backFile.id) || groupFiles[0];
+          pairs.push({ frontFile, backFile, isPair: true, key });
+          pairedFileIds.add(frontFile.id);
+          pairedFileIds.add(backFile.id);
+        }
+      });
+
+      // 2. Unpaired files treated as standalone or sequential candidates
+      const remainingFiles = unprocessedFiles.filter(f => !pairedFileIds.has(f.id));
+      for (let i = 0; i < remainingFiles.length; i += 2) {
+        const frontFile = remainingFiles[i];
+        const backFile = remainingFiles[i + 1] || null;
+        pairs.push({ frontFile, backFile, isPair: Boolean(backFile), key: frontFile.name });
+      }
+
+      addLog(`Front/Back Pairing Engine: Grouped ${unprocessedFiles.length} file(s) into ${pairs.length} candidate card set(s).`, 'ai');
+      setCurrentProgress({ current: 0, total: pairs.length, file: '' });
+
+      const delay = (ms) => new Promise(res => setTimeout(res, ms));
+
+      // -------------------------------------------------------------
+      // BATCH PROCESS & MERGE PAIRS
+      // -------------------------------------------------------------
+      for (let i = 0; i < pairs.length; i++) {
+        const pair = pairs[i];
+        const { frontFile, backFile } = pair;
+
+        setCurrentProgress({ current: i + 1, total: pairs.length, file: frontFile.name });
+        addLog(`[Pair ${i + 1}/${pairs.length}] Downloading scan(s): ${frontFile.name}${backFile ? ` + ${backFile.name}` : ''}...`, 'info');
 
         try {
-          // Download file content as Blob
-          const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
+          // Download Front Image Base64
+          const frontRes = await fetch(`https://www.googleapis.com/drive/v3/files/${frontFile.id}?alt=media`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
-
-          if (!fileRes.ok) {
-            throw new Error(`Failed to download ${file.name}`);
-          }
-
-          const blob = await fileRes.blob();
-          
-          // Convert Blob to Base64 safely
-          const base64 = await new Promise((resolve, reject) => {
+          if (!frontRes.ok) throw new Error(`Failed to download ${frontFile.name}`);
+          const frontBlob = await frontRes.blob();
+          const frontBase64 = await new Promise((res, rej) => {
             const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
+            reader.onloadend = () => res(reader.result);
+            reader.onerror = rej;
+            reader.readAsDataURL(frontBlob);
           });
 
-          // Check for companion PaddleOCR text file
-          const baseName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
-          const companionTxt = uniqueTextFiles.find(tf => 
-            tf.name.toLowerCase() === `${file.name.toLowerCase()}.txt` ||
-            tf.name.toLowerCase() === `${baseName.toLowerCase()}.txt`
-          );
-
-          let extractedText = '';
-          if (companionTxt) {
-            try {
-              addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Found companion text file "${companionTxt.name}". Downloading PaddleOCR text...`, 'info');
-              const txtRes = await fetch(`https://www.googleapis.com/drive/v3/files/${companionTxt.id}?alt=media`, {
-                headers: { 'Authorization': `Bearer ${token}` }
+          let backBase64 = null;
+          if (backFile) {
+            const backRes = await fetch(`https://www.googleapis.com/drive/v3/files/${backFile.id}?alt=media`, {
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (backRes.ok) {
+              const backBlob = await backRes.blob();
+              backBase64 = await new Promise((res, rej) => {
+                const reader = new FileReader();
+                reader.onloadend = () => res(reader.result);
+                reader.onerror = rej;
+                reader.readAsDataURL(backBlob);
               });
-              if (txtRes.ok) {
-                extractedText = await txtRes.text();
-                addLog(`[Card ${i + 1}/${unprocessedFiles.length}] PaddleOCR text loaded successfully (${extractedText.length} chars).`, 'success');
-              }
-            } catch (txtErr) {
-              console.error('Failed to read companion text file:', txtErr);
             }
           }
 
-          // OCR Extraction loop with Exponential Backoff Retry mechanism
-          let pipelineResult = null;
-          let success = false;
+          // Multimodal AI Extraction via AIProviderFactory / fallback pipeline
+          addLog(`[Pair ${i + 1}/${pairs.length}] Executing Vision OCR via ${selectedAiProvider}...`, 'ai');
+          
+          let ext = null;
+          try {
+            if (backBase64) {
+              const aiResult = await AIProviderFactory.processCardPair({
+                frontImage: frontBase64,
+                backImage: backBase64,
+                providerName: selectedAiProvider
+              });
+              ext = aiResult || {};
+            } else {
+              const pipelineRes = await runDocumentPipeline(token, 'Raw_Bus_Cards', frontFile.id, 'image_vision', frontBase64, null);
+              ext = pipelineRes?.extracted_data || {};
+            }
+          } catch (aiErr) {
+            console.warn(`[AI Pair Extractor] Provider ${selectedAiProvider} failed, using default pipeline fallback:`, aiErr);
+            const pipelineRes = await runDocumentPipeline(token, 'Raw_Bus_Cards', frontFile.id, 'image_vision', frontBase64, null);
+            ext = pipelineRes?.extracted_data || {};
+          }
 
-          for (let attempt = 1; attempt <= 3; attempt++) {
+          const partnerName = ext.company_name || ext.partner?.name || `Draft_${frontFile.name.split('.')[0]}`;
+          const contactName = ext.contact?.name || ext.contact_person || '';
+
+          // Canvas Side-by-Side Image Stitching
+          let mergedDriveLink = '';
+          let mergedFileId = null;
+
+          if (backBase64 && typeof window !== 'undefined') {
             try {
-              if (extractedText) {
-                addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Processing companion text via Ingestion Pipeline (Attempt ${attempt}/3)...`, 'ai');
-                pipelineResult = await runDocumentPipeline(token, 'Raw_Bus_Cards', file.id, 'text_file', extractedText, companionTxt?.id);
-              } else {
-                addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Processing image via Ingestion Pipeline (Attempt ${attempt}/3)...`, 'ai');
-                pipelineResult = await runDocumentPipeline(token, 'Raw_Bus_Cards', file.id, 'image_vision', base64, null);
-              }
-              success = true;
-              break;
-            } catch (apiError) {
-              const errMsg = apiError.message || String(apiError);
-              const isRateLimit = errMsg.toLowerCase().includes('rate limit') || 
-                                  errMsg.toLowerCase().includes('tpm') || 
-                                  errMsg.toLowerCase().includes('429') || 
-                                  errMsg.toLowerCase().includes('too many requests') ||
-                                  errMsg.toLowerCase().includes('tokens per min');
+              addLog(`[Pair ${i + 1}/${pairs.length}] Stitching Front & Back cards into composite image...`, 'info');
+              const { blob: stitchedBlob, filename: stitchedFilename } = await stitchCardImages(
+                frontBase64, backBase64,
+                { companyName: partnerName, contactName: contactName, layout: 'side-by-side' }
+              );
 
-              if (isRateLimit && attempt < 3) {
-                const backoffTime = attempt * 3500;
-                addLog(`[Rate Limit Detected] Tokens/min limit reached. Cooling down for ${(backoffTime / 1000).toFixed(1)}s before retrying...`, 'error');
-                await delay(backoffTime);
-              } else {
-                throw apiError; // Exhausted retries or a different API error
+              // Upload Stitched Image to Destination Folder
+              const targetDestId = destFolderId || resolvedSourceId;
+              const stitchedFileObj = new File([stitchedBlob], stitchedFilename, { type: 'image/jpeg' });
+              const driveUploadRes = await uploadFileToDrive(token, stitchedFileObj, { folderId: targetDestId });
+              
+              if (driveUploadRes?.id) {
+                mergedFileId = driveUploadRes.id;
+                mergedDriveLink = `https://drive.google.com/file/d/${driveUploadRes.id}/view`;
+                addLog(`[Pair ${i + 1}/${pairs.length}] Merged image uploaded to Drive Destination Folder!`, 'success');
               }
+            } catch (stitchErr) {
+              console.error('Image stitching/upload failed:', stitchErr);
             }
           }
 
-          if (!success || !pipelineResult) {
-            throw new Error('Ingestion Pipeline failed to return structured data.');
-          }
-
-          // Map extracted data to local partner/contact schema
-          const ext = pipelineResult.extracted_data || {};
-          const result = {
-            partner: {
-              name: ext.company_name || ext.partner?.name || `Draft_${file.name.split('.')[0]}`,
-              uen: ext.uen || ext.partner?.uen || '',
-              address: ext.address || ext.partner?.address || '',
-              country: ext.country || ext.partner?.country || 'Singapore',
-              city: ext.city || ext.partner?.city || '',
-              postal_code: ext.postal_code || ext.partner?.postal_code || '',
-              email: ext.email || ext.partner?.email || '',
-              phone: (ext.phone_numbers && ext.phone_numbers[0]) || ext.partner?.phone || '',
-              website: ext.website || ext.partner?.website || '',
-              brands: ext.brands || ext.partner?.brands || '',
-              business_scope: ext.business_scope || ext.partner?.business_scope || '',
-              notes: ext.notes || ext.partner?.notes || ''
-            },
-            contact: {
-              name: ext.contact_person || ext.contact?.name || '',
-              email: ext.email || ext.contact?.email || '',
-              handphone: (ext.phone_numbers && ext.phone_numbers[0]) || ext.contact?.handphone || '',
-              post: ext.designation || ext.contact?.post || '',
-              department: ext.department || ext.contact?.department || 'Other'
-            }
-          };
-
-          addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Pipeline routing: ${pipelineResult.confidence_metrics?.pipeline_action}. Confidence: ${pipelineResult.confidence_metrics?.confidence_score}. Company: "${result.partner.name}".`, 'ai');
-
-          // Safety check: duplicate company name + contact email
-          const isNameEmailDuplicate = existingDraftsList.some(p => 
-              p.name && result.partner.name &&
-              p.name.toLowerCase().trim() === result.partner.name.toLowerCase().trim() &&
-              p.email1 && result.partner.email &&
-              p.email1.toLowerCase().trim() === result.partner.email.toLowerCase().trim()
-          );
-
-          if (isNameEmailDuplicate) {
-              addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Skipping: Duplicate partner by name & email ("${result.partner.name}").`, 'warning');
-              indexedFileIds.add(file.id);
-              await delay(600);
-              continue;
-          }
-
-          addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Writing Draft record into Supabase...`, 'db');
-
-          // Save Partner Draft
+          // Save Partner Record in Supabase
           const draftPartner = await savePartner({
-            name: result.partner.name || file.name.split('.')[0],
-            weblink: result.partner.website || '',
-            country: result.partner.country || 'Singapore',
-            city: result.partner.city || '',
-            address: result.partner.address || '',
-            phone1: result.partner.phone || '',
-            email1: result.partner.email || '',
-            uen: result.partner.uen || '',
-            info: `GoogleDrive File ID: ${file.id}. Extracted via Groq Vision OCR.`,
-            company_id: profile?.company_id,
+            name: partnerName,
+            weblink: ext.website || ext.partner?.website || 'www.celron.net',
+            country: ext.country || ext.partner?.country || 'Singapore',
+            city: ext.city || ext.partner?.city || '',
+            address: ext.address || ext.partner?.address || '',
+            phone1: (ext.phone_numbers && ext.phone_numbers[0]) || ext.phone || ext.partner?.phone || '',
+            email1: ext.email || ext.partner?.email || '',
+            uen: ext.uen || ext.partner?.uen || '',
+            brands: ext.brands || ext.partner?.brands || '',
+            business_scope: ext.business_scope || ext.partner?.business_scope || '',
+            notes: ext.notes || ext.partner?.notes || '',
+            google_drive_link: mergedDriveLink,
+            business_card_url: `https://drive.google.com/file/d/${frontFile.id}/view`,
+            business_card_back_url: backFile ? `https://drive.google.com/file/d/${backFile.id}/view` : '',
+            gdrive_folder_id: destFolderId || resolvedSourceId,
             status: 'pending_approval',
-            types: result.partner.types || ['Supplier'],
-            brand: result.partner.brands || '',
-            brands: result.partner.brands || '',
-            business_scope: result.partner.business_scope || '',
-            notes: result.partner.notes || ''
+            company_id: profile?.company_id,
+            types: ['Supplier'],
+            info: `File ID: ${mergedFileId || frontFile.id} | Front: ${frontFile.id}${backFile ? ` | Back: ${backFile.id}` : ''}`
           });
 
-          // Save Contact Draft linked to Partner Draft
+          // Save Contact Record in Supabase
           const draftContact = await saveContact({
-            name: result.contact.name || 'Unknown Contact',
-            email: result.contact.email || `pending_${Date.now()}@example.com`,
-            handphone: result.contact.handphone || '',
-            post: result.contact.post || 'Representative',
-            department: result.contact.department || 'Operations',
+            name: contactName || 'Representative Draft',
+            email: ext.contact?.email || ext.email || '',
+            handphone: (ext.phone_numbers && ext.phone_numbers[0]) || ext.contact?.handphone || '',
+            phone: ext.contact?.direct_line || ext.phone || '',
+            post: ext.contact?.post || ext.designation || 'Representative',
+            department: ext.contact?.department || 'Operations',
             partnerId: draftPartner.id,
             company_id: profile?.company_id,
+            business_card_url: `https://drive.google.com/file/d/${frontFile.id}/view`,
+            business_card_back_url: backFile ? `https://drive.google.com/file/d/${backFile.id}/view` : '',
             info: `Linked to Draft Partner ID: ${draftPartner.id}`
           });
 
-          // Add to memory list and update UI state in real-time
-          const fullDraftPartner = { ...draftPartner, contacts: [draftContact] };
-          existingDraftsList.push(fullDraftPartner);
-          setPendingDrafts(prev => [fullDraftPartner, ...prev]);
-          indexedFileIds.add(file.id);
+          const fullDraft = { ...draftPartner, contacts: [draftContact] };
+          setPendingDrafts(prev => [fullDraft, ...prev]);
 
-          addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Saved Draft successfully.`, 'success');
-
-          // Standard pacing delay to stay safely under rate limits
+          addLog(`[Pair ${i + 1}/${pairs.length}] Saved Draft for "${partnerName}" (${contactName || 'Representative'}) to Supabase.`, 'success');
           await delay(600);
 
-        } catch (cardError) {
-          console.error(`Failed to process ${file.name}:`, cardError);
-          addLog(`[Card ${i + 1}/${unprocessedFiles.length}] Error processing file: ${cardError.message}`, 'error');
-          // Delay before next file even on failure to avoid rate limit spikes
+        } catch (pairErr) {
+          console.error(`Failed to process card pair ${frontFile.name}:`, pairErr);
+          addLog(`[Pair ${i + 1}/${pairs.length}] Error: ${pairErr.message}`, 'error');
           await delay(800);
         }
       }
 
-      addLog('All cards processed! Pre-indexing phase finished.', 'success');
-      toast.success('Sync complete! All cards pre-filled as database drafts.');
+      addLog('All exhibition card pairs processed & stitched cleanly!', 'success');
+      toast.success('Batch Processing & Card Pairing Complete!');
       loadDraftsQueue();
 
     } catch (syncError) {
@@ -661,7 +604,6 @@ export default function AiDriveCardParser() {
   const handleSelectDraft = (draft) => {
     setSelectedDraft(draft);
     
-    // Set editable partner fields
     setEditedPartner({
       id: draft.id,
       name: draft.name || '',
@@ -678,10 +620,12 @@ export default function AiDriveCardParser() {
       brand: draft.brand || '',
       brands: draft.brands || '',
       business_scope: draft.business_scope || '',
-      notes: draft.notes || ''
+      notes: draft.notes || '',
+      google_drive_link: draft.google_drive_link || '',
+      business_card_url: draft.business_card_url || '',
+      business_card_back_url: draft.business_card_back_url || ''
     });
 
-    // Extract draft representative (first contact in draft relation)
     const representative = draft.contacts?.[0] || {};
     setEditedContact({
       id: representative.id || '',
@@ -698,14 +642,12 @@ export default function AiDriveCardParser() {
   const handleApproveDraft = async () => {
     setIsSavingApproval(true);
     try {
-      // 1. Commit Partner - updating status to 'new' to activate it in core directory
-      toast.loading('Activating Partner profile...', { id: 'approve' });
+      toast.loading('Activating Partner profile in database...', { id: 'approve' });
       const approvedPartner = await savePartner({
         ...editedPartner,
-        status: 'new' // Marks it active
+        status: 'new' // Active partner
       });
 
-      // 2. Commit Contact
       if (editedContact.id) {
         await saveContact({
           ...editedContact,
@@ -718,7 +660,7 @@ export default function AiDriveCardParser() {
         });
       }
 
-      // 3. Move Google Drive File if destination folder is chosen
+      // Move Drive File to destination folder if selected
       const fileId = getDriveFileId(editedPartner.info);
       const token = googleAccessToken || localStorage.getItem('google_access_token');
       if (fileId && token && destFolderId) {
@@ -728,7 +670,6 @@ export default function AiDriveCardParser() {
           toast.success('Drive file moved to target folder.', { id: 'approve-move' });
         } catch (moveErr) {
           console.error('Failed to move file:', moveErr);
-          toast.error('Failed to move file: ' + moveErr.message);
         }
       }
 
@@ -761,6 +702,12 @@ export default function AiDriveCardParser() {
   const getDriveFileId = (infoString) => {
     if (!infoString) return '';
     const match = infoString.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
+    return match ? match[1] : '';
+  };
+
+  const getDriveBackFileId = (infoString) => {
+    if (!infoString) return '';
+    const match = infoString.match(/Back:\s*([a-zA-Z0-9_-]+)/i);
     return match ? match[1] : '';
   };
 
@@ -824,65 +771,49 @@ export default function AiDriveCardParser() {
                 AI Google Drive Card Scanner
               </h1>
             </div>
-            <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.95rem' }}>Index folders of business cards automatically with OpenAI Vision OCR and verify them instantly</p>
+            <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.95rem' }}>Batch exhibition card scanner with multi-model AI routing &amp; side-by-side card stitching</p>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <a 
-            href="https://platform.deepseek.com/usage" 
-            target="_blank" 
-            rel="noreferrer" 
-            className="btn btn-secondary" 
-            style={{ 
-              display: 'inline-flex', 
-              alignItems: 'center', 
-              gap: '8px', 
-              textDecoration: 'none',
-              background: '#fff',
-              border: '1px solid #e2e8f0',
-              padding: '10px 16px',
-              borderRadius: '10px',
-              fontSize: '0.9rem',
-              fontWeight: 600,
-              color: '#475569',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+
+        {/* AI Provider Switcher Toolbar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#fff', padding: '8px 16px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+          <Cpu size={18} color="#7c3aed" />
+          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155' }}>AI Vision Engine:</span>
+          <select
+            value={selectedAiProvider}
+            onChange={(e) => {
+              setSelectedAiProvider(e.target.value);
+              localStorage.setItem('gdrive_scanner_ai_provider', e.target.value);
+              toast.success(`Switched AI Engine to: ${e.target.value}`);
+            }}
+            style={{
+              padding: '6px 12px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#faf5ff',
+              color: '#7c3aed',
+              fontWeight: 700,
+              fontSize: '0.85rem',
+              outline: 'none',
+              cursor: 'pointer'
             }}
           >
-            <Sparkles size={16} style={{ color: '#0d6efd' }} /> DeepSeek Platform
-          </a>
-          <a 
-            href="https://console.groq.com/keys" 
-            target="_blank" 
-            rel="noreferrer" 
-            className="btn btn-secondary" 
-            style={{ 
-              display: 'inline-flex', 
-              alignItems: 'center', 
-              gap: '8px', 
-              textDecoration: 'none',
-              background: '#fff',
-              border: '1px solid #e2e8f0',
-              padding: '10px 16px',
-              borderRadius: '10px',
-              fontSize: '0.9rem',
-              fontWeight: 600,
-              color: '#475569',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-            }}
-          >
-            <Sparkles size={16} style={{ color: '#f59e0b' }} /> Groq Console
-          </a>
+            <option value="Gemini">AI Studio (Gemini 2.5 Flash)</option>
+            <option value="Ollama">Ollama (Local Vision)</option>
+            <option value="DeepSeek">DeepSeek API</option>
+            <option value="Groq">Groq Console API</option>
+          </select>
         </div>
       </header>
 
-      {/* TOP CONTROL GRID: Google Drive Connection Settings & Logs */}
+      {/* TOP CONTROL GRID: Dynamic Google Drive Source & Destination Management */}
       <div style={{ display: 'grid', gridTemplateColumns: isSyncing ? '1fr 1.2fr' : '1.2fr 0.8fr', gap: '24px', marginBottom: '32px' }}>
         
-        {/* Drive Connection Card */}
+        {/* Drive Configuration Card */}
         <div className="glass-panel" style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '24px', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
             <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1e293b', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Globe size={18} color="#7c3aed" /> Google Drive Configuration
+              <Globe size={18} color="#7c3aed" /> Dynamic Source &amp; Destination Management
             </h2>
             <span style={{ 
               background: isDriveConnected ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', 
@@ -912,38 +843,62 @@ export default function AiDriveCardParser() {
             </div>
           ) : (
             <div>
+              {/* Dynamic Source Folder Selector */}
               <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '6px' }}>Folder Directory Shared Link / ID</label>
-                <input 
-                  type="text" 
-                  className="form-input"
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
-                  value={folderLink}
-                  onChange={(e) => setFolderLink(e.target.value)}
-                  placeholder="https://drive.google.com/drive/folders/..."
-                />
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '6px' }}>
+                  Source Folder (Raw Scans Repository, e.g., MarineExpo-Raw-Material)
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input 
+                    type="text" 
+                    className="form-input"
+                    style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
+                    value={sourceFolderLink}
+                    onChange={(e) => setSourceFolderLink(e.target.value)}
+                    placeholder="Source Folder Link or ID..."
+                  />
+                  <button
+                    onClick={() => setFolderPickerModal({ isOpen: true, mode: 'source' })}
+                    style={{ background: '#f3e8ff', border: '1px solid #d8b4fe', color: '#7c3aed', padding: '10px 14px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
+                  >
+                    <HardDrive size={16} /> Browse Tree
+                  </button>
+                </div>
               </div>
 
-              {isDriveConnected && subfolders.length > 0 && (
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '6px' }}>Move Approved Cards To (Destination folder)</label>
+              {/* Dynamic Destination Folder Selector */}
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#64748b', marginBottom: '6px' }}>
+                  Destination Folder (Merged Composite Output, e.g., Merged_Bus_Cards)
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
                   <select 
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', background: '#fff', fontSize: '0.9rem' }}
+                    style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', background: '#fff', fontSize: '0.9rem' }}
                     value={destFolderId}
                     onChange={(e) => {
+                      const selected = subfolders.find(f => f.id === e.target.value);
                       setDestFolderId(e.target.value);
+                      setDestFolderName(selected ? selected.name : 'Destination Folder');
                       localStorage.setItem('gdrive_scanner_dest_folder', e.target.value);
+                      if (selected) localStorage.setItem('gdrive_scanner_dest_name', selected.name);
                     }}
                   >
-                    <option value="">-- Do Not Move (Keep in Raw_Bus_Cards) --</option>
+                    <option value="">-- Keep in Source Folder --</option>
                     {subfolders.map(f => (
                       <option key={f.id} value={f.id}>{f.name}</option>
                     ))}
                   </select>
+                  <button
+                    onClick={() => setFolderPickerModal({ isOpen: true, mode: 'dest' })}
+                    style={{ background: '#e0f2fe', border: '1px solid #7dd3fc', color: '#0284c7', padding: '10px 14px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
+                  >
+                    <HardDrive size={16} /> Pick Folder
+                  </button>
                 </div>
-              )}
+              </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              {/* Action Buttons Toolbar */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '12px' }}>
                 <input 
                   type="file" 
                   ref={mobileUploadInputRef} 
@@ -957,117 +912,51 @@ export default function AiDriveCardParser() {
                   disabled={!isDriveConnected || isSyncing}
                   style={{ 
                     background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)', 
-                    color: '#ffffff', 
-                    border: 'none', 
-                    padding: '10px 18px', 
-                    borderRadius: '8px', 
-                    fontWeight: 700, 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '6px',
-                    boxShadow: '0 2px 6px rgba(99, 102, 241, 0.3)',
-                    transition: 'all 0.2s'
+                    color: '#ffffff', border: 'none', padding: '10px 18px', borderRadius: '8px', 
+                    fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
+                    boxShadow: '0 2px 6px rgba(99, 102, 241, 0.3)'
                   }}
-                  title="Upload business cards via WhatsApp Web, Clipboard, Camera or Local files into destination folder"
                 >
                   <Sparkles size={16} /> Smart Upload Hub
                 </button>
                 <button 
                   onClick={() => mobileUploadInputRef.current?.click()}
                   disabled={!isDriveConnected || uploadingMobileFile || isSyncing}
-                  style={{ 
-                    background: '#fdf4ff', 
-                    border: '1px solid #f3d8f5', 
-                    color: '#a855f7', 
-                    padding: '10px 16px', 
-                    borderRadius: '8px', 
-                    fontWeight: 600, 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '6px',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseOver={e => e.currentTarget.style.background = '#fae8ff'}
-                  onMouseOut={e => e.currentTarget.style.background = '#fdf4ff'}
-                  title="Capture card photo with phone camera and upload directly"
+                  style={{ background: '#fdf4ff', border: '1px solid #f3d8f5', color: '#a855f7', padding: '10px 16px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
                 >
                   <Camera size={16} /> {uploadingMobileFile ? 'Uploading...' : 'Upload Photo'}
                 </button>
                 <button 
-                  onClick={() => setQrModal({ isOpen: true, folderId: folderId, folderName: 'Raw_Bus_Cards' })}
-                  disabled={!isDriveConnected || !folderLink}
-                  style={{ 
-                    background: '#f0fdf4', 
-                    border: '1px solid #bbf7d0', 
-                    color: '#16a34a', 
-                    padding: '10px 16px', 
-                    borderRadius: '8px', 
-                    fontWeight: 600, 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '6px',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseOver={e => e.currentTarget.style.background = '#dcfce7'}
-                  onMouseOut={e => e.currentTarget.style.background = '#f0fdf4'}
-                  title="Open Mobile Upload Gateway to upload business cards from your phone"
+                  onClick={() => setQrModal({ isOpen: true, folderId: sourceFolderId, folderName: sourceFolderName })}
+                  disabled={!isDriveConnected}
+                  style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#16a34a', padding: '10px 16px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
                 >
                   <QrCode size={16} /> Mobile Scan
                 </button>
                 <button 
                   onClick={handleOpenFolder}
-                  disabled={!folderLink}
-                  style={{ 
-                    background: '#fff', 
-                    border: '1px solid #7c3aed', 
-                    color: '#7c3aed', 
-                    padding: '10px 16px', 
-                    borderRadius: '8px', 
-                    fontWeight: 600, 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '6px',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseOver={e => e.currentTarget.style.background = 'rgba(124, 58, 237, 0.05)'}
-                  onMouseOut={e => e.currentTarget.style.background = '#fff'}
+                  disabled={!sourceFolderLink}
+                  style={{ background: '#fff', border: '1px solid #7c3aed', color: '#7c3aed', padding: '10px 16px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
                 >
-                  <ExternalLink size={16} /> Open Folder
-                </button>
-                <button 
-                  onClick={handleConnectGoogle}
-                  style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#475569', padding: '10px 16px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-                >
-                  <RefreshCw size={16} /> Reconnect
+                  <ExternalLink size={16} /> Open Source Folder
                 </button>
                 <button 
                   onClick={triggerFolderSync}
-                  disabled={isSyncing || !folderLink}
+                  disabled={isSyncing || !sourceFolderLink}
                   style={{ 
                     background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)', 
-                    color: '#fff', 
-                    border: 'none', 
-                    padding: '10px 24px', 
-                    borderRadius: '8px', 
-                    fontWeight: 700, 
-                    cursor: isSyncing ? 'not-allowed' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    opacity: isSyncing ? 0.6 : 1
+                    color: '#fff', border: 'none', padding: '10px 24px', borderRadius: '8px', 
+                    fontWeight: 700, cursor: isSyncing ? 'not-allowed' : 'pointer',
+                    display: 'flex', alignItems: 'center', gap: '8px', opacity: isSyncing ? 0.6 : 1
                   }}
                 >
                   {isSyncing ? (
                     <>
-                      <Loader2 size={16} className="animate-spin" /> Indexing folder...
+                      <Loader2 size={16} className="animate-spin" /> Batch Processing Cards...
                     </>
                   ) : (
                     <>
-                      <Play size={16} /> Sync &amp; Pre-Index Folder
+                      <Play size={16} /> Pair &amp; Batch Sync Cards
                     </>
                   )}
                 </button>
@@ -1077,10 +966,10 @@ export default function AiDriveCardParser() {
         </div>
 
         {/* Sync Pipeline Console Logs */}
-        <div className="glass-panel" style={{ background: '#1e293b', padding: '24px', borderRadius: '16px', color: '#cbd5e1', display: 'flex', flexDirection: 'column', height: '240px' }}>
+        <div className="glass-panel" style={{ background: '#1e293b', padding: '24px', borderRadius: '16px', color: '#cbd5e1', display: 'flex', flexDirection: 'column', height: '260px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
             <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#f8fafc', textTransform: 'uppercase', tracking: '1px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <CircleDot size={14} className={isSyncing ? "text-purple-400 animate-pulse" : "text-slate-500"} /> Background Pre-indexing Pipeline
+              <CircleDot size={14} className={isSyncing ? "text-purple-400 animate-pulse" : "text-slate-500"} /> Multi-Model Card Pairing Pipeline
             </span>
             {isSyncing && (
               <span style={{ fontSize: '0.8rem', background: '#3b82f6', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
@@ -1091,7 +980,7 @@ export default function AiDriveCardParser() {
           
           <div style={{ flex: 1, overflowY: 'auto', background: '#0f172a', padding: '12px', borderRadius: '8px', fontFamily: 'monospace', fontSize: '0.8rem', lineHeight: '1.5' }}>
             {syncLogs.length === 0 ? (
-              <span style={{ color: '#64748b' }}>Console idle. Click "Sync & Pre-Index Folder" to discover new business cards.</span>
+              <span style={{ color: '#64748b' }}>Console idle. Select source/destination folders &amp; click "Pair &amp; Batch Sync Cards".</span>
             ) : (
               syncLogs.map((log, idx) => (
                 <div key={idx} style={{ 
@@ -1150,26 +1039,9 @@ export default function AiDriveCardParser() {
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
                 style={{
-                  padding: '10px 36px 10px 12px',
-                  borderRadius: '10px',
-                  border: '1px solid #e2e8f0',
-                  fontSize: '0.85rem',
-                  fontWeight: 600,
-                  color: '#475569',
-                  background: '#fff',
-                  outline: 'none',
-                  cursor: 'pointer',
-                  appearance: 'none',
-                  WebkitAppearance: 'none',
-                  backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>")`,
-                  backgroundRepeat: 'no-repeat',
-                  backgroundPosition: 'right 12px center',
-                  backgroundSize: '16px',
-                  transition: 'border-color 0.2s',
-                  minWidth: '150px'
+                  padding: '10px 36px 10px 12px', borderRadius: '10px', border: '1px solid #e2e8f0',
+                  fontSize: '0.85rem', fontWeight: 600, color: '#475569', background: '#fff', outline: 'none', cursor: 'pointer'
                 }}
-                onFocus={e => e.target.style.borderColor = '#7c3aed'}
-                onBlur={e => e.target.style.borderColor = '#e2e8f0'}
               >
                 <option value="az">A-Z</option>
                 <option value="za">Z-A</option>
@@ -1184,23 +1056,13 @@ export default function AiDriveCardParser() {
                 placeholder="Search by name, contact, UEN..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                style={{ 
-                  width: '100%', 
-                  padding: '10px 12px 10px 40px', 
-                  borderRadius: '10px', 
-                  border: '1px solid #e2e8f0', 
-                  fontSize: '0.85rem',
-                  outline: 'none',
-                  transition: 'border-color 0.2s'
-                }}
-                onFocus={e => e.target.style.borderColor = '#7c3aed'}
-                onBlur={e => e.target.style.borderColor = '#e2e8f0'}
+                style={{ width: '100%', padding: '10px 12px 10px 40px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '0.85rem', outline: 'none' }}
               />
             </div>
           </div>
         </div>
 
-        {/* Tab Content: Review Queue List */}
+        {/* Tab Content */}
         {loadingDrafts ? (
           <div style={{ textAlign: 'center', padding: '48px 0', color: '#64748b' }}>
             <Loader2 size={36} className="animate-spin text-purple-600" style={{ margin: '0 auto 12px auto' }} />
@@ -1211,18 +1073,13 @@ export default function AiDriveCardParser() {
             <div style={{ textAlign: 'center', padding: '64px 32px', background: '#fafafb', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
               <CheckSquare size={48} color="#94a3b8" style={{ margin: '0 auto 16px auto' }} />
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#475569', margin: '0 0 4px 0' }}>Perfect Sync! Review Queue Empty</h3>
-              <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>All business cards in Google Drive have been pre-indexed and approved. Click "Sync Folder" to scan for new uploads!</p>
-            </div>
-          ) : sortedPendingDrafts.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '64px 32px', background: '#fafafb', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
-              <Search size={48} color="#94a3b8" style={{ margin: '0 auto 16px auto' }} />
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#475569', margin: '0 0 4px 0' }}>No Cards Found</h3>
-              <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>No pending drafts match your search query "{searchQuery}".</p>
+              <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>All business cards in Google Drive have been pre-indexed and approved. Click "Pair &amp; Batch Sync Cards" to scan for new uploads!</p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: '20px' }}>
               {sortedPendingDrafts.map((draft) => {
-                const driveId = getDriveFileId(draft.info);
+                const frontDriveId = getDriveFileId(draft.info);
+                const backDriveId = getDriveBackFileId(draft.info);
                 const rep = draft.contacts?.[0] || {};
                 
                 return (
@@ -1244,16 +1101,16 @@ export default function AiDriveCardParser() {
                   >
                     {/* Visual Card Image Preview */}
                     <div style={{ position: 'relative', height: '160px', background: '#0f172a', display: 'flex', borderBottom: '1px solid #e2e8f0' }}>
-                      {driveId && googleAccessToken ? (
-                        <DriveImage fileId={driveId} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
+                      {frontDriveId && googleAccessToken ? (
+                        <DriveImage fileId={frontDriveId} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
                       ) : (
                         <div style={{ margin: 'auto', textAlign: 'center', color: '#475569', fontSize: '0.85rem' }}>
                           <ImageIcon size={32} style={{ margin: '0 auto 8px auto', display: 'block' }} />
                           Card Preview Restricted
                         </div>
                       )}
-                      <span style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(234, 179, 8, 0.9)', color: '#fff', padding: '3px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 700 }}>
-                        PENDING REVIEW
+                      <span style={{ position: 'absolute', top: '10px', right: '10px', background: backDriveId ? '#7c3aed' : 'rgba(234, 179, 8, 0.9)', color: '#fff', padding: '3px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 700 }}>
+                        {backDriveId ? 'STITCHED PAIR' : 'PENDING REVIEW'}
                       </span>
                       <button
                         onClick={(e) => {
@@ -1261,26 +1118,11 @@ export default function AiDriveCardParser() {
                           handleDeleteDraft(draft.id);
                         }}
                         style={{
-                          position: 'absolute',
-                          top: '10px',
-                          left: '10px',
-                          background: 'rgba(239, 68, 68, 0.9)',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: '8px',
-                          width: '30px',
-                          height: '30px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          cursor: 'pointer',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                          transition: 'background 0.2s',
-                          zIndex: 10
+                          position: 'absolute', top: '10px', left: '10px', background: 'rgba(239, 68, 68, 0.9)', color: '#fff',
+                          border: 'none', borderRadius: '8px', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          cursor: 'pointer', zIndex: 10
                         }}
-                        onMouseOver={e => e.currentTarget.style.background = '#dc2626'}
-                        onMouseOut={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.9)'}
-                        title="Delete this draft"
+                        title="Delete draft"
                       >
                         <Trash2 size={15} />
                       </button>
@@ -1315,60 +1157,52 @@ export default function AiDriveCardParser() {
             </div>
           )
         ) : (
-          /* Active Partners List */
-          sortedActivePartners.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '64px 32px', background: '#fafafb', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
-              <Search size={48} color="#94a3b8" style={{ margin: '0 auto 16px auto' }} />
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#475569', margin: '0 0 4px 0' }}>No Partners Found</h3>
-              <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>No active partners match your search query "{searchQuery}".</p>
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
-              {sortedActivePartners.map((partner) => (
-                <div 
-                  key={partner.id}
-                  style={{ 
-                    background: '#fff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '20px', 
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between'
-                  }}
-                >
-                  <div>
-                    <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1e293b', margin: '0 0 6px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <Building2 size={18} color="#7c3aed" /> {partner.name}
-                    </h4>
-                    <span style={{ background: '#ecfdf5', color: '#047857', padding: '3px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 600, display: 'inline-block', marginBottom: '12px' }}>
-                      ACTIVE PARTNER
-                    </span>
-                    <p style={{ margin: '0 0 8px 0', color: '#64748b', fontSize: '0.85rem' }}>{partner.address || 'Singapore'}</p>
-                    {partner.weblink && (
-                      <a href={partner.weblink.startsWith('http') ? partner.weblink : `https://${partner.weblink}`} target="_blank" rel="noreferrer" style={{ fontSize: '0.8rem', color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', marginBottom: '12px' }}>
-                        <Globe size={12} /> {partner.weblink}
-                      </a>
-                    )}
-                  </div>
-
-                  <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <Users size={16} color="#64748b" />
-                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                      {partner.contacts?.length || 0} representative(s) linked
-                    </span>
-                  </div>
+          /* Active Directory List */
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
+            {sortedActivePartners.map((partner) => (
+              <div 
+                key={partner.id}
+                style={{ 
+                  background: '#fff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '20px', 
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between'
+                }}
+              >
+                <div>
+                  <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1e293b', margin: '0 0 6px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Building2 size={18} color="#7c3aed" /> {partner.name}
+                  </h4>
+                  <span style={{ background: '#ecfdf5', color: '#047857', padding: '3px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 600, display: 'inline-block', marginBottom: '12px' }}>
+                    ACTIVE PARTNER
+                  </span>
+                  <p style={{ margin: '0 0 8px 0', color: '#64748b', fontSize: '0.85rem' }}>{partner.address || 'Singapore'}</p>
+                  {partner.weblink && (
+                    <a href={partner.weblink.startsWith('http') ? partner.weblink : `https://${partner.weblink}`} target="_blank" rel="noreferrer" style={{ fontSize: '0.8rem', color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', marginBottom: '12px' }}>
+                      <Globe size={12} /> {partner.weblink}
+                    </a>
+                  )}
                 </div>
-              ))}
-            </div>
-          )
+
+                <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <Users size={16} color="#64748b" />
+                  <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                    {partner.contacts?.length || 0} representative(s) linked
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
 
       </main>
 
-      {/* DETAILED DOUBLE-PANEL MODALreview/drawer */}
+      {/* DETAILED DOUBLE-PANEL REVIEW MODAL */}
       {selectedDraft && (
         <div style={{ 
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.65)', 
           display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '24px', backdropFilter: 'blur(4px)'
         }}>
           <div style={{ 
-            background: '#fff', borderRadius: '24px', width: '100%', maxWidth: '1200px', height: '90vh', 
+            background: '#fff', borderRadius: '24px', width: '100%', maxWidth: '1240px', height: '92vh', 
             display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' 
           }}>
             
@@ -1379,8 +1213,8 @@ export default function AiDriveCardParser() {
                   <Edit2 size={20} />
                 </span>
                 <div>
-                  <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>Review Scanned Card Draft</h3>
-                  <p style={{ margin: '2px 0 0 0', color: '#64748b', fontSize: '0.85rem' }}>Perform visual verification, make profile modifications, and approve to database</p>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>Review Scanned Card Pair Draft</h3>
+                  <p style={{ margin: '2px 0 0 0', color: '#64748b', fontSize: '0.85rem' }}>Visual verification, multi-image side-by-side card preview &amp; field confirmation</p>
                 </div>
               </div>
               <button 
@@ -1391,92 +1225,85 @@ export default function AiDriveCardParser() {
               </button>
             </div>
 
-            {/* Modal Double-Panel Content */}
+            {/* Modal Content */}
             <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1.1fr 1fr', overflow: 'hidden', background: '#f8fafc' }}>
               
-              {/* LEFT PANEL: High-Definition Scanned Image Viewer */}
-              <div style={{ padding: '32px', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '16px' }}>
-                  <ImageIcon size={16} /> ORIGINAL SCANNED CARD
-                </div>
-                
-                <div style={{ 
-                  flex: 1, background: '#0f172a', borderRadius: '16px', display: 'flex', overflow: 'hidden', 
-                  border: '1.5px solid #e2e8f0', padding: '16px', boxShadow: 'inset 0 4px 10px rgba(0,0,0,0.4)' 
-                }}>
-                  {getDriveFileId(selectedDraft.info) && googleAccessToken ? (
-                    <DriveImage 
-                      fileId={getDriveFileId(selectedDraft.info)} 
-                      accessToken={googleAccessToken} 
-                      style={{ width: '100%', height: '100%' }} 
-                    />
-                  ) : (
-                    <div style={{ margin: 'auto', color: '#64748b', textAlign: 'center' }}>
-                      Image preview restricted
-                    </div>
+              {/* LEFT PANEL: High-Definition Front & Back Image Viewer */}
+              <div style={{ padding: '24px', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <ImageIcon size={16} /> SCANNED FRONT &amp; BACK CARDS
+                  </span>
+                  {editedPartner.google_drive_link && (
+                    <a href={editedPartner.google_drive_link} target="_blank" rel="noreferrer" style={{ color: '#2563eb', fontSize: '0.8rem', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <ExternalLink size={12} /> View Merged File in Drive
+                    </a>
                   )}
                 </div>
                 
-                <div style={{ marginTop: '16px', background: '#faf9fe', border: '1px solid #e2e8f0', padding: '12px', borderRadius: '12px', fontSize: '0.8rem', color: '#7c3aed', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                {/* Front Side Preview */}
+                <div style={{ marginBottom: '16px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '2px 8px', borderRadius: '6px', display: 'inline-block', marginBottom: '6px' }}>
+                    FRONT SIDE (Contact &amp; Company)
+                  </span>
+                  <div style={{ height: '200px', background: '#0f172a', borderRadius: '12px', overflow: 'hidden', border: '1px solid #cbd5e1' }}>
+                    {getDriveFileId(selectedDraft.info) && googleAccessToken ? (
+                      <DriveImage fileId={getDriveFileId(selectedDraft.info)} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
+                    ) : (
+                      <div style={{ margin: 'auto', color: '#64748b', textAlign: 'center', padding: '40px' }}>Front Card Preview</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Back Side Preview */}
+                {getDriveBackFileId(selectedDraft.info) && (
+                  <div style={{ marginBottom: '16px' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0284c7', background: '#e0f2fe', padding: '2px 8px', borderRadius: '6px', display: 'inline-block', marginBottom: '6px' }}>
+                      BACK SIDE (Products &amp; Scope)
+                    </span>
+                    <div style={{ height: '200px', background: '#0f172a', borderRadius: '12px', overflow: 'hidden', border: '1px solid #cbd5e1' }}>
+                      {googleAccessToken ? (
+                        <DriveImage fileId={getDriveBackFileId(selectedDraft.info)} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
+                      ) : (
+                        <div style={{ margin: 'auto', color: '#64748b', textAlign: 'center', padding: '40px' }}>Back Card Preview</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                <div style={{ marginTop: 'auto', background: '#faf9fe', border: '1px solid #e2e8f0', padding: '12px', borderRadius: '12px', fontSize: '0.8rem', color: '#7c3aed', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
                   <Info size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
-                  <span>The forms on the right have been pre-filled via OpenAI's Vision OCR model and ACRA UEN directory fallbacks. Verify all values match the printed business card accurately.</span>
+                  <span>The company profile and contact info on the right were correlated via multi-image vision analysis. Verify and approve to activate in database.</span>
                 </div>
               </div>
 
               {/* RIGHT PANEL: Edit Forms Panel */}
-              <div style={{ padding: '32px', overflowY: 'auto', height: '100%' }}>
+              <div style={{ padding: '24px', overflowY: 'auto', height: '100%' }}>
                 
-                {/* Form Group 1: Company Profile (Partner) */}
-                <div style={{ marginBottom: '32px', background: '#fff', border: '1px solid #e2e8f0', padding: '24px', borderRadius: '16px' }}>
+                {/* Partner Form */}
+                <div style={{ marginBottom: '24px', background: '#fff', border: '1px solid #e2e8f0', padding: '20px', borderRadius: '16px' }}>
                   <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1e293b', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <Building2 size={16} color="#7c3aed" /> 1. PARTNER PROFILE (COMPANY)
                   </h4>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                    <div style={{ gridColumn: 'span 2' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', margin: 0 }}>Company Name *</label>
-                        {editedPartner.name && (
-                          <a 
-                            href={`https://www.google.com/search?q=${encodeURIComponent(editedPartner.name)}`} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            style={{ fontSize: '0.75rem', color: '#2563eb', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
-                          >
-                            <Search size={12} /> Google Search
-                          </a>
-                        )}
-                      </div>
-                      <input 
-                        type="text" 
-                        style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
-                        value={editedPartner.name}
-                        onChange={(e) => setEditedPartner(prev => ({ ...prev, name: e.target.value }))}
-                      />
-                    </div>
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Company Name *</label>
+                    <input 
+                      type="text" 
+                      style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
+                      value={editedPartner.name}
+                      onChange={(e) => setEditedPartner(prev => ({ ...prev, name: e.target.value }))}
+                    />
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                     <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', margin: 0 }}>Singapore UEN</label>
-                        {editedPartner.uen && (
-                          <a 
-                            href={`https://www.sgpbusiness.com/search?q=${encodeURIComponent(editedPartner.uen)}`} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            style={{ fontSize: '0.75rem', color: '#7c3aed', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
-                          >
-                            <ExternalLink size={12} /> SgpBusiness Search
-                          </a>
-                        )}
-                      </div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>UEN</label>
                       <input 
                         type="text" 
                         style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
                         value={editedPartner.uen}
                         onChange={(e) => setEditedPartner(prev => ({ ...prev, uen: e.target.value }))}
-                        placeholder="e.g. 201436227C"
                       />
                     </div>
                     <div>
@@ -1486,12 +1313,11 @@ export default function AiDriveCardParser() {
                         style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
                         value={editedPartner.weblink}
                         onChange={(e) => setEditedPartner(prev => ({ ...prev, weblink: e.target.value }))}
-                        placeholder="e.g. www.ark.sg"
                       />
                     </div>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                     <div>
                       <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Office Email</label>
                       <input 
@@ -1512,110 +1338,46 @@ export default function AiDriveCardParser() {
                     </div>
                   </div>
 
-                  <div style={{ marginBottom: '16px' }}>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Physical HQ Address</label>
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>HQ Address</label>
                     <textarea 
                       rows={2}
-                      style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem', fontFamily: 'sans-serif' }}
+                      style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
                       value={editedPartner.address}
                       onChange={(e) => setEditedPartner(prev => ({ ...prev, address: e.target.value }))}
                     />
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '16px' }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Country</label>
-                      <input 
-                        type="text" 
-                        style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
-                        value={editedPartner.country}
-                        onChange={(e) => setEditedPartner(prev => ({ ...prev, country: e.target.value }))}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>City</label>
-                      <input 
-                        type="text" 
-                        style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
-                        value={editedPartner.city}
-                        onChange={(e) => setEditedPartner(prev => ({ ...prev, city: e.target.value }))}
-                      />
-                    </div>
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Product Details / Business Scope (Extracted from Back Side)</label>
+                    <textarea 
+                      rows={2}
+                      style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
+                      value={editedPartner.business_scope || ''}
+                      onChange={(e) => setEditedPartner(prev => ({ ...prev, business_scope: e.target.value }))}
+                    />
                   </div>
-
-                  <div style={{ margin: '24px 0 16px 0', borderTop: '1px solid #f1f5f9', paddingTop: '20px' }}>
-                    <h5 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#475569', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Layers size={14} color="#7c3aed" /> Product &amp; Brands Details
-                    </h5>
-                    
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px', marginBottom: '16px' }}>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Brands Represented</label>
-                        <input 
-                          type="text" 
-                          placeholder="e.g. Fluke, Megger, Raychem"
-                          style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
-                          value={editedPartner.brands || ''}
-                          onChange={(e) => setEditedPartner(prev => ({ ...prev, brands: e.target.value, brand: e.target.value }))}
-                        />
-                      </div>
-                      
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Business Scope / Product Description</label>
-                        <textarea 
-                          rows={2}
-                          placeholder="e.g. Electrical calibration laboratory, supplier of marine test equipment"
-                          style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem', fontFamily: 'sans-serif' }}
-                          value={editedPartner.business_scope || ''}
-                          onChange={(e) => setEditedPartner(prev => ({ ...prev, business_scope: e.target.value }))}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ margin: '24px 0 16px 0', borderTop: '1px solid #f1f5f9', paddingTop: '20px' }}>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '8px' }}>Partner Notes (Rich Text Builder)</label>
-                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
-                      <ReactQuill
-                        theme="snow"
-                        value={editedPartner.notes || ''}
-                        onChange={(content) => setEditedPartner(prev => ({ ...prev, notes: content }))}
-                        modules={{
-                          toolbar: [
-                            ['bold', 'italic', 'underline', 'strike'],
-                            [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-                            ['link'],
-                            ['clean']
-                          ]
-                        }}
-                        style={{ height: '150px', marginBottom: '40px' }}
-                      />
-                    </div>
-                  </div>
-
                 </div>
 
-                {/* Form Group 2: Representative Profile (Contact) */}
-                <div style={{ marginBottom: '32px', background: '#fff', border: '1px solid #e2e8f0', padding: '24px', borderRadius: '16px' }}>
+                {/* Contact Form */}
+                <div style={{ marginBottom: '24px', background: '#fff', border: '1px solid #e2e8f0', padding: '20px', borderRadius: '16px' }}>
                   <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1e293b', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <User size={16} color="#a855f7" /> 2. REPRESENTATIVE PROFILE (CONTACT)
                   </h4>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                    <div style={{ gridColumn: 'span 2' }}>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Full Name *</label>
-                      <input 
-                        type="text" 
-                        style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
-                        value={editedContact.name}
-                        onChange={(e) => setEditedContact(prev => ({ ...prev, name: e.target.value }))}
-                      />
-                    </div>
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Full Name *</label>
+                    <input 
+                      type="text" 
+                      style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
+                      value={editedContact.name}
+                      onChange={(e) => setEditedContact(prev => ({ ...prev, name: e.target.value }))}
+                    />
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                    <div style={{ gridColumn: 'span 2' }}>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Personal Professional Email</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Email</label>
                       <input 
                         type="text" 
                         style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
@@ -1623,11 +1385,8 @@ export default function AiDriveCardParser() {
                         onChange={(e) => setEditedContact(prev => ({ ...prev, email: e.target.value }))}
                       />
                     </div>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Direct Mobile (Handphone)</label>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Handphone / Mobile</label>
                       <input 
                         type="text" 
                         style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
@@ -1635,8 +1394,11 @@ export default function AiDriveCardParser() {
                         onChange={(e) => setEditedContact(prev => ({ ...prev, handphone: e.target.value }))}
                       />
                     </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Job Designation / Title</label>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Designation / Title</label>
                       <input 
                         type="text" 
                         style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
@@ -1644,76 +1406,49 @@ export default function AiDriveCardParser() {
                         onChange={(e) => setEditedContact(prev => ({ ...prev, post: e.target.value }))}
                       />
                     </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Department</label>
+                      <select 
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem', background: '#fff' }}
+                        value={editedContact.department}
+                        onChange={(e) => setEditedContact(prev => ({ ...prev, department: e.target.value }))}
+                      >
+                        <option value="Management">Management</option>
+                        <option value="Sales">Sales</option>
+                        <option value="Technical">Technical</option>
+                        <option value="Operations">Operations</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
                   </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Department</label>
-                    <select 
-                      style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem', background: '#fff' }}
-                      value={editedContact.department}
-                      onChange={(e) => setEditedContact(prev => ({ ...prev, department: e.target.value }))}
-                    >
-                      <option value="Management">Management</option>
-                      <option value="Sales">Sales</option>
-                      <option value="Technical">Technical</option>
-                      <option value="Operations">Operations</option>
-                      <option value="Finance">Finance</option>
-                      <option value="Safety">Safety</option>
-                      <option value="Other">Other</option>
-                    </select>
-                  </div>
-
                 </div>
 
-                {/* Approve & Delete Operations Block */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', borderTop: '1px solid #e2e8f0', paddingTop: '20px' }}>
+                {/* Actions Footer */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
                   <button 
                     onClick={() => handleDeleteDraft(selectedDraft.id)}
-                    style={{ 
-                      background: '#fff', border: '1px solid #ef4444', color: '#ef4444', padding: '12px 20px', borderRadius: '8px', 
-                      fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' 
-                    }}
+                    style={{ background: '#fff', border: '1px solid #ef4444', color: '#ef4444', padding: '10px 18px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
                   >
-                    <Trash2 size={18} /> Delete Draft
+                    <Trash2 size={16} /> Delete Draft
                   </button>
 
-                  <div style={{ display: 'flex', gap: '16px' }}>
+                  <div style={{ display: 'flex', gap: '12px' }}>
                     <button 
                       onClick={() => setSelectedDraft(null)}
-                      style={{ 
-                        background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#475569', padding: '12px 24px', borderRadius: '8px', 
-                        fontWeight: 600, cursor: 'pointer' 
-                      }}
+                      style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#475569', padding: '10px 20px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}
                     >
                       Cancel
                     </button>
                     <button 
                       onClick={handleApproveDraft}
-                      disabled={isSavingApproval || !editedPartner.name || !editedContact.name}
+                      disabled={isSavingApproval || !editedPartner.name}
                       style={{ 
-                        background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)', 
-                        color: '#fff', 
-                        border: 'none', 
-                        padding: '12px 32px', 
-                        borderRadius: '8px', 
-                        fontWeight: 700, 
-                        cursor: isSavingApproval ? 'not-allowed' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        boxShadow: '0 4px 10px rgba(34, 197, 94, 0.3)',
-                        opacity: isSavingApproval ? 0.6 : 1
+                        background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)', color: '#fff', border: 'none', 
+                        padding: '10px 28px', borderRadius: '8px', fontWeight: 700, cursor: isSavingApproval ? 'not-allowed' : 'pointer',
+                        display: 'flex', alignItems: 'center', gap: '8px', opacity: isSavingApproval ? 0.6 : 1
                       }}
                     >
-                      {isSavingApproval ? (
-                        <>
-                          <Loader2 size={18} className="animate-spin" /> Saving...
-                        </>
-                      ) : (
-                        <>
-                          <Check size={18} /> Approve &amp; Save
-                        </>
-                      )}
+                      {isSavingApproval ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Approve &amp; Save
                     </button>
                   </div>
                 </div>
@@ -1726,15 +1461,38 @@ export default function AiDriveCardParser() {
         </div>
       )}
 
-      {/* QR Code Modal for Mobile Upload Gateway */}
+      {/* Drive Folder Picker Modal */}
+      <DriveFolderPickerModal
+        isOpen={folderPickerModal.isOpen}
+        onClose={() => setFolderPickerModal({ isOpen: false, mode: 'source' })}
+        title={folderPickerModal.mode === 'source' ? 'Select Source Card Folder' : 'Select Destination Output Folder'}
+        initialFolderId={folderPickerModal.mode === 'source' ? sourceFolderId : destFolderId}
+        accessToken={googleAccessToken}
+        onSelectFolder={(folder) => {
+          if (folderPickerModal.mode === 'source') {
+            setSourceFolderId(folder.id);
+            setSourceFolderName(folder.name);
+            setSourceFolderLink(`https://drive.google.com/drive/folders/${folder.id}`);
+            localStorage.setItem('gdrive_scanner_source_folder', folder.id);
+            localStorage.setItem('gdrive_scanner_source_name', folder.name);
+            toast.success(`Selected Source Folder: ${folder.name}`);
+          } else {
+            setDestFolderId(folder.id);
+            setDestFolderName(folder.name);
+            localStorage.setItem('gdrive_scanner_dest_folder', folder.id);
+            localStorage.setItem('gdrive_scanner_dest_name', folder.name);
+            toast.success(`Selected Destination Folder: ${folder.name}`);
+          }
+        }}
+      />
+
+      {/* QR Code Modal for Mobile Upload */}
       {qrModal.isOpen && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-          <div className="glass-panel animate-scale-up" style={{ background: '#fff', color: '#1e293b', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)', textAlign: 'center', position: 'relative' }}>
+          <div style={{ background: '#fff', maxWidth: '400px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', textAlign: 'center', position: 'relative' }}>
             <button 
               onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
-              style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
-              onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
-              onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
+              style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
             >
               <X size={24} />
             </button>
@@ -1744,37 +1502,22 @@ export default function AiDriveCardParser() {
             </div>
 
             <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Mobile Upload Gateway</h3>
-            <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: '1.4' }}>
-              Scan this QR code with your smartphone camera to upload files directly to your <strong>{qrModal.folderName}</strong> folder.
+            <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px' }}>
+              Scan QR code to upload business card photos directly to <strong>{qrModal.folderName}</strong>.
             </p>
 
-            {!qrModal.folderId ? (
-              <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                <Loader2 size={36} className="animate-spin text-primary" />
-                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 500 }}>Connecting Google Drive...</span>
-              </div>
-            ) : (
-              <div>
-                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block', marginBottom: '24px' }}>
-                  <img 
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
-                      `${window.location.origin}/upload-media?folderId=${qrModal.folderId}&token=${googleAccessToken || localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent(qrModal.folderName)}`
-                    )}`}
-                    alt="Upload QR Code"
-                    style={{ width: '200px', height: '200px', display: 'block' }}
-                  />
-                </div>
-
-                <div style={{ fontSize: '0.8rem', color: '#94a3b8', background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
-                  <Info size={14} style={{ flexShrink: 0 }} />
-                  <span>Session active. QR code is valid for temporary uploading.</span>
-                </div>
-              </div>
-            )}
+            <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px', border: '1px dashed #cbd5e1', display: 'inline-block', marginBottom: '24px' }}>
+              <img 
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
+                  `${window.location.origin}/upload-media?folderId=${qrModal.folderId}&token=${googleAccessToken || localStorage.getItem('google_access_token')}&jobName=${encodeURIComponent(qrModal.folderName)}`
+                )}`}
+                alt="Upload QR Code"
+                style={{ width: '200px', height: '200px', display: 'block' }}
+              />
+            </div>
 
             <button 
-              className="btn btn-primary" 
-              style={{ width: '100%', marginTop: '24px', padding: '12px', borderRadius: '12px', fontWeight: 700 }}
+              style={{ width: '100%', background: '#7c3aed', color: '#fff', border: 'none', padding: '12px', borderRadius: '12px', fontWeight: 700, cursor: 'pointer' }}
               onClick={() => setQrModal({ isOpen: false, folderId: null, folderName: '' })}
             >
               Done
@@ -1787,8 +1530,8 @@ export default function AiDriveCardParser() {
         <SmartUploadPanel
           isOpen={showSmartUpload}
           onClose={() => setShowSmartUpload(false)}
-          activeFolderId={destFolderId || folderId}
-          activeFolderName={subfolders.find(f => f.id === destFolderId)?.name || 'Raw_Bus_Cards'}
+          activeFolderId={sourceFolderId}
+          activeFolderName={sourceFolderName}
           documentType="Business Card Image"
           accept="image/*,.pdf"
           onSelect={handleSmartUploadSelect}

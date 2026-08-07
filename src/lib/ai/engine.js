@@ -6,12 +6,15 @@ import { callServerAiProxy } from './serverProxyClient.js';
 // CORE DYNAMIC FALLBACK ROUTER
 // -----------------------------
 
-export async function runWithFallback(prompt, useSmart = false, history = [], tools = null, image = null, useJson = true) {
+export async function runWithFallback(prompt, useSmart = false, history = [], tools = null, image = null, useJson = true, images = null) {
     const enabledProviders = getEnabledProvidersInPriority();
 
     if (enabledProviders.length === 0) {
         throw new Error("No AI providers are enabled in Settings. Please enable at least one provider (e.g. Gemini, Claude) in Settings > AI Providers.");
     }
+
+    const imageList = Array.isArray(images) && images.length > 0 ? images : (image ? [image] : []);
+    const isVision = imageList.length > 0;
 
     const errors = [];
     for (const provider of enabledProviders) {
@@ -28,7 +31,7 @@ export async function runWithFallback(prompt, useSmart = false, history = [], to
         let result = null;
 
         // Vision task compatibility check: route text fallback if non-supporting model handles image
-        if (image && provider.name !== 'Gemini' && provider.name !== 'OpenAI' && provider.name !== 'Claude' && provider.name !== 'OpenRouter') {
+        if (isVision && provider.name !== 'Gemini' && provider.name !== 'OpenAI' && provider.name !== 'Claude' && provider.name !== 'Ollama' && provider.name !== 'OpenRouter') {
             console.warn(`[AI Engine] Provider "${provider.name}" may not support vision payloads. Skipping for image extraction task.`);
             continue;
         }
@@ -45,16 +48,16 @@ export async function runWithFallback(prompt, useSmart = false, history = [], to
                     // Ollama runs on the operator's own machine (no key, not proxyable);
                     // a personally-configured key is always used directly from the browser.
                     if (provider.name === 'Gemini') {
-                        result = await executeGeminiRequest(provider, decryptedKey, prompt, history, useJson, image, controller.signal);
+                        result = await executeGeminiRequest(provider, decryptedKey, prompt, history, useJson, image, controller.signal, imageList);
                     } else if (provider.name === 'Claude') {
-                        result = await executeClaudeRequest(provider, decryptedKey, prompt, history, useJson, image, controller.signal);
+                        result = await executeClaudeRequest(provider, decryptedKey, prompt, history, useJson, image, controller.signal, imageList);
                     } else {
-                        result = await executeOpenAICompatibleRequest(provider, decryptedKey, prompt, history, useJson, image, controller.signal);
+                        result = await executeOpenAICompatibleRequest(provider, decryptedKey, prompt, history, useJson, image, controller.signal, imageList);
                     }
                 } else {
                     // No personal key configured: route through the backend, which
                     // holds the operator's own provider keys server-side only.
-                    result = await callServerAiProxy(provider.name.toLowerCase(), prompt, history, useJson, image, provider.modelName);
+                    result = await callServerAiProxy(provider.name.toLowerCase(), prompt, history, useJson, image, provider.modelName, imageList);
                 }
                 success = true;
                 clearTimeout(timeoutId);
