@@ -5,7 +5,8 @@ import {
   ArrowLeft, CheckCircle2, Trash2, Users, Loader2, Info, Search, HelpCircle,
   UploadCloud, Image as ImageIcon, Database, RefreshCw, Layers, CheckSquare,
   AlertCircle, ChevronRight, Edit2, Play, CircleDot, ExternalLink,
-  Smartphone, QrCode, Camera, Cpu, HardDrive, ArrowRightLeft, ImagePlus, RotateCcw
+  Smartphone, QrCode, Camera, Cpu, HardDrive, ArrowRightLeft, ImagePlus, RotateCcw,
+  Grid, SlidersHorizontal, ListFilter, ArrowDownUp
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getPartners, getPendingPartners, savePartner, saveContact, deletePartner } from '../lib/store';
@@ -20,60 +21,76 @@ import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import SmartUploadPanel from '../components/upload/SmartUploadPanel';
 
-// Secure Custom Drive Image Renderer bypassing CORS limits
+// Secure Custom Drive Image Renderer with Resilient Fallback
 const DriveImage = ({ fileId, accessToken, style, className }) => {
   const [src, setSrc] = useState('');
   const [loading, setLoading] = useState(true);
+  const [useFallback, setUseFallback] = useState(false);
 
   useEffect(() => {
-    if (!fileId || !accessToken) return;
-    
+    if (!fileId) return;
     let isMounted = true;
     setLoading(true);
+    setUseFallback(false);
 
-    fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    })
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to load image');
-        return res.blob();
+    const token = accessToken || localStorage.getItem('google_access_token');
+    
+    if (token) {
+      fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+        headers: { 'Authorization': `Bearer ${token}` }
       })
-      .then(blob => {
-        if (isMounted) {
-          const url = URL.createObjectURL(blob);
-          setSrc(url);
-          setLoading(false);
-        }
-      })
-      .catch(err => {
-        console.error('Error loading Drive image:', err);
-        if (isMounted) setLoading(false);
-      });
+        .then(res => {
+          if (!res.ok) throw new Error('Drive API image fetch failed');
+          return res.blob();
+        })
+        .then(blob => {
+          if (isMounted) {
+            const url = URL.createObjectURL(blob);
+            setSrc(url);
+            setLoading(false);
+          }
+        })
+        .catch(err => {
+          if (isMounted) {
+            setUseFallback(true);
+            setSrc(`https://drive.google.com/thumbnail?id=${fileId}&sz=w600`);
+            setLoading(false);
+          }
+        });
+    } else {
+      setUseFallback(true);
+      setSrc(`https://drive.google.com/thumbnail?id=${fileId}&sz=w600`);
+      setLoading(false);
+    }
 
     return () => {
       isMounted = false;
-      if (src) URL.revokeObjectURL(src);
+      if (src && src.startsWith('blob:')) URL.revokeObjectURL(src);
     };
   }, [fileId, accessToken]);
 
   if (loading) {
     return (
-      <div style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', color: '#94a3b8' }} className={className}>
-        <Loader2 size={20} className="animate-spin" />
+      <div style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f172a', color: '#94a3b8' }} className={className}>
+        <Loader2 size={18} className="animate-spin" />
       </div>
     );
   }
 
-  if (!src) {
-    return (
-      <div style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', color: '#64748b' }} className={className}>
-        <AlertCircle size={20} style={{ marginRight: '6px' }} />
-        <span>Failed to load card</span>
-      </div>
-    );
-  }
-
-  return <img src={src} style={{ ...style, objectFit: 'contain' }} className={className} alt="Business Card Scanned" />;
+  return (
+    <img 
+      src={src} 
+      onError={(e) => {
+        if (!useFallback) {
+          setUseFallback(true);
+          e.target.src = `https://drive.google.com/thumbnail?id=${fileId}&sz=w600`;
+        }
+      }}
+      style={{ ...style, objectFit: 'contain' }} 
+      className={className} 
+      alt="Business Card Scanned" 
+    />
+  );
 };
 
 export default function AiDriveCardParser() {
@@ -119,7 +136,12 @@ export default function AiDriveCardParser() {
   // Interactive Review & Manual Card Pairing State
   const [selectedDraft, setSelectedDraft] = useState(null);
   const [selectedBackFileId, setSelectedBackFileId] = useState('');
+  const [stitchLayout, setStitchLayout] = useState('side-by-side'); // 'side-by-side' | 'vertical'
+  const [backCardSearch, setBackCardSearch] = useState('');
+  const [backCardFilterMode, setBackCardFilterMode] = useState('sequential'); // 'sequential' | 'all'
+  const [isGridExplorerOpen, setIsGridExplorerOpen] = useState(false);
   const [isReparsingPair, setIsReparsingPair] = useState(false);
+
   const [editedPartner, setEditedPartner] = useState({
     name: '', weblink: '', country: 'Singapore', city: '', address: '', phone1: '', email1: '', uen: '', types: ['Supplier'],
     brand: '', brands: '', business_scope: '', notes: '', google_drive_link: '', business_card_url: '', business_card_back_url: ''
@@ -176,7 +198,7 @@ export default function AiDriveCardParser() {
       const query = `'${folderId}' in parents and trashed = false and (` +
         `mimeType contains 'image/' or name contains '.jpg' or name contains '.jpeg' or name contains '.png' or name contains '.webp'` +
         `)`;
-      const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime)&pageSize=100`;
+      const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime)&pageSize=500`;
       const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
       if (res.ok) {
         const data = await res.json();
@@ -361,7 +383,7 @@ export default function AiDriveCardParser() {
             `name contains '.jpg' or name contains '.jpeg' or name contains '.png' or name contains '.webp'` +
             `)`;
 
-          const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100${pageToken ? `&pageToken=${pageToken}` : ''}`;
+          const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=500${pageToken ? `&pageToken=${pageToken}` : ''}`;
           const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
 
           if (!res.ok) break;
@@ -402,8 +424,10 @@ export default function AiDriveCardParser() {
 
       [...existingDraftsList, ...activePartnersList].forEach(p => {
         if (p.info) {
-          const match = p.info.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
-          if (match) indexedFileIds.add(match[1]);
+          const matchFront = p.info.match(/Front:\s*([a-zA-Z0-9_-]+)/i);
+          if (matchFront) indexedFileIds.add(matchFront[1]);
+          const matchFileId = p.info.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
+          if (matchFileId) indexedFileIds.add(matchFileId[1]);
           indexedFileIds.add(p.info);
         }
       });
@@ -534,7 +558,7 @@ export default function AiDriveCardParser() {
               addLog(`[Card ${i + 1}/${pairs.length}] Stitching Front & Back cards into composite image...`, 'info');
               const { blob: stitchedBlob, filename: stitchedFilename } = await stitchCardImages(
                 frontBase64, backBase64,
-                { companyName: partnerName, contactName: contactName, layout: 'side-by-side' }
+                { companyName: partnerName, contactName: contactName, layout: stitchLayout }
               );
 
               const targetDestId = destFolderId || resolvedSourceId;
@@ -551,7 +575,7 @@ export default function AiDriveCardParser() {
             }
           }
 
-          // Save Partner Record
+          // Save Partner Record (with explicit Front: and Back: file IDs in info)
           const draftPartner = await savePartner({
             name: partnerName,
             weblink: ext.website || ext.partner?.website || 'www.celron.net',
@@ -571,7 +595,7 @@ export default function AiDriveCardParser() {
             status: 'pending_approval',
             company_id: profile?.company_id,
             types: ['Supplier'],
-            info: `File ID: ${mergedFileId || frontFile.id} | Front: ${frontFile.id}${backFile ? ` | Back: ${backFile.id}` : ''}`
+            info: `Front: ${frontFile.id}${backFile ? ` | Back: ${backFile.id}` : ''} | File ID: ${mergedFileId || frontFile.id}`
           });
 
           // Save Contact Record
@@ -615,6 +639,27 @@ export default function AiDriveCardParser() {
     }
   };
 
+  // Helper getters for explicit Front and Back file IDs
+  const getDriveFrontFileId = (infoString) => {
+    if (!infoString) return '';
+    const frontMatch = infoString.match(/Front:\s*([a-zA-Z0-9_-]+)/i);
+    if (frontMatch) return frontMatch[1];
+    const fileIdMatch = infoString.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
+    return fileIdMatch ? fileIdMatch[1] : '';
+  };
+
+  const getDriveBackFileId = (infoString) => {
+    if (!infoString) return '';
+    const match = infoString.match(/Back:\s*([a-zA-Z0-9_-]+)/i);
+    return match ? match[1] : '';
+  };
+
+  const getDriveFileId = (infoString) => {
+    if (!infoString) return '';
+    const match = infoString.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
+    return match ? match[1] : '';
+  };
+
   // -------------------------------------------------------------
   // INTERACTIVE REVIEW & MANUAL BACK CARD PAIRING / RE-PARSING
   // -------------------------------------------------------------
@@ -622,9 +667,11 @@ export default function AiDriveCardParser() {
     setSelectedDraft(draft);
     
     // Extract current front and back file IDs
-    const frontId = getDriveFileId(draft.info);
+    const frontId = getDriveFrontFileId(draft.info);
     const backId = getDriveBackFileId(draft.info);
     setSelectedBackFileId(backId || '');
+    setBackCardSearch('');
+    setBackCardFilterMode('sequential');
 
     setEditedPartner({
       id: draft.id,
@@ -671,7 +718,7 @@ export default function AiDriveCardParser() {
   // RE-PARSE CARD PAIR WITH AI & RE-STITCH CANVAS
   const handleReparseCardPair = async () => {
     if (!selectedDraft) return;
-    const frontFileId = getDriveFileId(selectedDraft.info);
+    const frontFileId = getDriveFrontFileId(selectedDraft.info);
     const backFileId = selectedBackFileId;
 
     if (!frontFileId) {
@@ -742,15 +789,15 @@ export default function AiDriveCardParser() {
       const partnerName = ext.company_name || ext.partner?.name || editedPartner.name;
       const contactName = ext.contact?.name || ext.contact_person || editedContact.name;
 
-      // 4. Stitch Canvas Image Side-by-Side
+      // 4. Stitch Canvas Image (Side-by-Side or Stacked)
       let mergedDriveLink = '';
       let mergedFileId = null;
 
       if (backBase64) {
-        toast.loading('Stitching front & selected back cards into composite image...', { id: 'reparse' });
+        toast.loading(`Stitching front & back cards (${stitchLayout === 'vertical' ? 'Stacked' : 'Side-by-Side'})...`, { id: 'reparse' });
         const { blob: stitchedBlob, filename: stitchedFilename } = await stitchCardImages(
           frontBase64, backBase64,
-          { companyName: partnerName, contactName: contactName, layout: 'side-by-side' }
+          { companyName: partnerName, contactName: contactName, layout: stitchLayout }
         );
 
         const targetDestId = destFolderId || sourceFolderId;
@@ -778,7 +825,7 @@ export default function AiDriveCardParser() {
         notes: ext.notes || ext.partner?.notes || editedPartner.notes || '',
         google_drive_link: mergedDriveLink || editedPartner.google_drive_link,
         business_card_back_url: backFileId ? `https://drive.google.com/file/d/${backFileId}/view` : '',
-        info: `File ID: ${mergedFileId || frontFileId} | Front: ${frontFileId}${backFileId ? ` | Back: ${backFileId}` : ''}`
+        info: `Front: ${frontFileId}${backFileId ? ` | Back: ${backFileId}` : ''} | File ID: ${mergedFileId || frontFileId}`
       };
 
       const updatedContact = {
@@ -869,19 +916,28 @@ export default function AiDriveCardParser() {
     }
   };
 
-  const getDriveFileId = (infoString) => {
-    if (!infoString) return '';
-    const match = infoString.match(/File ID:\s*([a-zA-Z0-9_-]+)/i);
-    return match ? match[1] : '';
-  };
+  // Computed candidate back cards for 500+ fast search & sequential filtering
+  const currentFrontFileId = selectedDraft ? getDriveFrontFileId(selectedDraft.info) : '';
+  const frontFileIdx = folderImageFiles.findIndex(f => f.id === currentFrontFileId);
 
-  const getDriveBackFileId = (infoString) => {
-    if (!infoString) return '';
-    const match = infoString.match(/Back:\s*([a-zA-Z0-9_-]+)/i);
-    return match ? match[1] : '';
-  };
+  const availableBackCards = folderImageFiles
+    .filter(img => img.id !== currentFrontFileId) // Exclude front image itself
+    .filter(img => {
+      if (!backCardSearch.trim()) return true;
+      const query = backCardSearch.toLowerCase().trim();
+      return (img.name || '').toLowerCase().includes(query) || (img.id || '').toLowerCase().includes(query);
+    })
+    .filter((img) => {
+      if (backCardFilterMode === 'all' || backCardSearch.trim()) return true;
+      // Sequential mode: show files within ±10 index positions of front file in the folder!
+      if (frontFileIdx !== -1) {
+        const imgIdx = folderImageFiles.findIndex(f => f.id === img.id);
+        return Math.abs(imgIdx - frontFileIdx) <= 10;
+      }
+      return true;
+    });
 
-  // Filter & Sort computed values
+  // Filter & Sort computed values for dashboard
   const filteredPendingDrafts = pendingDrafts.filter(draft => {
     const rep = draft.contacts?.[0] || {};
     const query = searchQuery.toLowerCase();
@@ -941,7 +997,7 @@ export default function AiDriveCardParser() {
                 AI Google Drive Card Scanner
               </h1>
             </div>
-            <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.95rem' }}>Batch exhibition card scanner with multi-model AI routing &amp; interactive manual back card pairing</p>
+            <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.95rem' }}>Batch exhibition card scanner with multi-model AI routing &amp; fast 500-card manual pairing</p>
           </div>
         </div>
 
@@ -1248,7 +1304,7 @@ export default function AiDriveCardParser() {
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: '20px' }}>
               {sortedPendingDrafts.map((draft) => {
-                const frontDriveId = getDriveFileId(draft.info);
+                const frontDriveId = getDriveFrontFileId(draft.info);
                 const backDriveId = getDriveBackFileId(draft.info);
                 const rep = draft.contacts?.[0] || {};
                 
@@ -1365,28 +1421,54 @@ export default function AiDriveCardParser() {
 
       </main>
 
-      {/* DETAILED DOUBLE-PANEL REVIEW MODAL WITH MANUAL BACK CARD PAIRING CAROUSEL */}
+      {/* DETAILED DOUBLE-PANEL REVIEW MODAL WITH FAST MANUAL PAIRING & STITCH LAYOUT OPTIONS */}
       {selectedDraft && (
         <div style={{ 
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.65)', 
           display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '24px', backdropFilter: 'blur(4px)'
         }}>
           <div style={{ 
-            background: '#fff', borderRadius: '24px', width: '100%', maxWidth: '1280px', height: '94vh', 
+            background: '#fff', borderRadius: '24px', width: '100%', maxWidth: '1320px', height: '95vh', 
             display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' 
           }}>
             
             {/* Modal Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 28px', borderBottom: '1px solid #e2e8f0', background: '#fff' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 28px', borderBottom: '1px solid #e2e8f0', background: '#fff' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{ background: 'rgba(124, 58, 237, 0.08)', padding: '10px', borderRadius: '12px', color: '#7c3aed', display: 'flex' }}>
                   <Edit2 size={20} />
                 </span>
                 <div>
                   <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>Review Scanned Card Pair Draft</h3>
-                  <p style={{ margin: '2px 0 0 0', color: '#64748b', fontSize: '0.85rem' }}>Select matching back card from folder, re-parse with AI &amp; confirm details</p>
+                  <p style={{ margin: '2px 0 0 0', color: '#64748b', fontSize: '0.85rem' }}>Select matching back card from folder, customize stitch layout &amp; re-parse with AI</p>
                 </div>
               </div>
+
+              {/* Stitch Layout Selector */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#f8fafc', padding: '6px 12px', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569' }}>Stitch Layout:</span>
+                <button
+                  onClick={() => setStitchLayout('side-by-side')}
+                  style={{
+                    padding: '5px 12px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', border: 'none',
+                    background: stitchLayout === 'side-by-side' ? '#7c3aed' : '#e2e8f0',
+                    color: stitchLayout === 'side-by-side' ? '#fff' : '#475569'
+                  }}
+                >
+                  Side-by-Side ↔
+                </button>
+                <button
+                  onClick={() => setStitchLayout('vertical')}
+                  style={{
+                    padding: '5px 12px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', border: 'none',
+                    background: stitchLayout === 'vertical' ? '#7c3aed' : '#e2e8f0',
+                    color: stitchLayout === 'vertical' ? '#fff' : '#475569'
+                  }}
+                >
+                  Stacked (Vertical) ↕
+                </button>
+              </div>
+
               <button 
                 onClick={() => setSelectedDraft(null)}
                 style={{ background: '#f1f5f9', border: 'none', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', cursor: 'pointer' }}
@@ -1396,15 +1478,15 @@ export default function AiDriveCardParser() {
             </div>
 
             {/* Modal Content */}
-            <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1.15fr 1fr', overflow: 'hidden', background: '#f8fafc' }}>
+            <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1.2fr 1fr', overflow: 'hidden', background: '#f8fafc' }}>
               
-              {/* LEFT PANEL: HD Image Viewer + Manual Back Card Carousel Picker */}
-              <div style={{ padding: '24px', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
+              {/* LEFT PANEL: HD Image Viewer + Fast 500-Card Carousel & Grid Explorer */}
+              <div style={{ padding: '20px 24px', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
                 
                 {/* Section Title */}
-                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <ImageIcon size={16} /> CARD PAIR PREVIEW &amp; STITCHING
+                    <ImageIcon size={16} /> CARD PAIR PREVIEW ({stitchLayout === 'vertical' ? 'Stacked Layout' : 'Side-by-Side'})
                   </span>
                   {editedPartner.google_drive_link && (
                     <a href={editedPartner.google_drive_link} target="_blank" rel="noreferrer" style={{ color: '#2563eb', fontSize: '0.8rem', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -1413,37 +1495,37 @@ export default function AiDriveCardParser() {
                   )}
                 </div>
                 
-                {/* Front Side Card Frame */}
-                <div style={{ marginBottom: '16px' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '2px 8px', borderRadius: '6px', display: 'inline-block', marginBottom: '6px' }}>
-                    FRONT SIDE (System Selected Contact)
+                {/* Front Side Card Frame (Only Raw Single Front Scan) */}
+                <div style={{ marginBottom: '12px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', padding: '2px 8px', borderRadius: '6px', display: 'inline-block', marginBottom: '4px' }}>
+                    FRONT SIDE (Original Raw Scan)
                   </span>
-                  <div style={{ height: '180px', background: '#0f172a', borderRadius: '12px', overflow: 'hidden', border: '1px solid #cbd5e1' }}>
-                    {getDriveFileId(selectedDraft.info) && googleAccessToken ? (
-                      <DriveImage fileId={getDriveFileId(selectedDraft.info)} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
+                  <div style={{ height: '160px', background: '#0f172a', borderRadius: '12px', overflow: 'hidden', border: '1px solid #cbd5e1' }}>
+                    {getDriveFrontFileId(selectedDraft.info) && googleAccessToken ? (
+                      <DriveImage fileId={getDriveFrontFileId(selectedDraft.info)} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
                     ) : (
-                      <div style={{ margin: 'auto', color: '#64748b', textAlign: 'center', padding: '40px' }}>Front Card Preview</div>
+                      <div style={{ margin: 'auto', color: '#64748b', textAlign: 'center', padding: '30px' }}>Front Card Preview</div>
                     )}
                   </div>
                 </div>
 
                 {/* Back Side Card Frame */}
-                <div style={{ marginBottom: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <div style={{ marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                     <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0284c7', background: '#e0f2fe', padding: '2px 8px', borderRadius: '6px' }}>
-                      BACK SIDE (Selected Back Image)
+                      BACK SIDE (Selected Back Scan)
                     </span>
                     {selectedBackFileId !== getDriveBackFileId(selectedDraft.info) && (
                       <span style={{ fontSize: '0.75rem', color: '#d97706', fontWeight: 700 }}>
-                        • Back card selection changed
+                        • Selection Updated
                       </span>
                     )}
                   </div>
-                  <div style={{ height: '180px', background: '#0f172a', borderRadius: '12px', overflow: 'hidden', border: '1px solid #cbd5e1' }}>
-                    {selectedBackFileId && googleAccessToken ? (
+                  <div style={{ height: '160px', background: '#0f172a', borderRadius: '12px', overflow: 'hidden', border: '1px solid #cbd5e1' }}>
+                    {selectedBackFileId ? (
                       <DriveImage fileId={selectedBackFileId} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
                     ) : (
-                      <div style={{ margin: 'auto', color: '#94a3b8', textAlign: 'center', padding: '40px', fontSize: '0.85rem' }}>
+                      <div style={{ margin: 'auto', color: '#94a3b8', textAlign: 'center', padding: '30px', fontSize: '0.85rem' }}>
                         No back side card selected (Single card mode)
                       </div>
                     )}
@@ -1451,60 +1533,118 @@ export default function AiDriveCardParser() {
                 </div>
 
                 {/* ------------------------------------------------------------- */}
-                {/* MANUAL BACK CARD SELECTOR CAROUSEL */}
+                {/* FAST 500-IMAGE CAROUSEL & SEARCH PANEL */}
                 {/* ------------------------------------------------------------- */}
-                <div style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '16px', borderRadius: '14px', marginBottom: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <div style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '14px', borderRadius: '14px', marginBottom: '12px' }}>
+                  
+                  {/* Selector Header & Controls */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '8px' }}>
                     <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <ImagePlus size={16} color="#7c3aed" /> SELECT BACK SIDE CARD FROM FOLDER:
+                      <ImagePlus size={16} color="#7c3aed" /> SELECT BACK SIDE CARD ({folderImageFiles.length} folder images):
                     </span>
+                    
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        onClick={() => setIsGridExplorerOpen(true)}
+                        style={{ background: '#e0f2fe', border: '1px solid #7dd3fc', color: '#0284c7', padding: '4px 8px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <Grid size={13} /> 500-Grid Explorer
+                      </button>
+                      <button
+                        onClick={() => setSelectedBackFileId('')}
+                        style={{ 
+                          background: selectedBackFileId === '' ? '#f3e8ff' : '#f1f5f9', 
+                          border: selectedBackFileId === '' ? '1px solid #d8b4fe' : '1px solid #cbd5e1', 
+                          color: selectedBackFileId === '' ? '#7c3aed' : '#64748b', 
+                          padding: '4px 8px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' 
+                        }}
+                      >
+                        Single Card (No Back)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Filter Modes & Instant Search Box */}
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
+                      <input 
+                        type="text" 
+                        placeholder={`Fast Search 500 card images by file name / number...`}
+                        value={backCardSearch}
+                        onChange={(e) => setBackCardSearch(e.target.value)}
+                        style={{ width: '100%', padding: '6px 10px 6px 30px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.8rem', outline: 'none' }}
+                      />
+                      {backCardSearch && (
+                        <button 
+                          onClick={() => setBackCardSearch('')}
+                          style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+
                     <button
-                      onClick={() => setSelectedBackFileId('')}
-                      style={{ 
-                        background: selectedBackFileId === '' ? '#f3e8ff' : '#f1f5f9', 
-                        border: selectedBackFileId === '' ? '1px solid #d8b4fe' : '1px solid #cbd5e1', 
-                        color: selectedBackFileId === '' ? '#7c3aed' : '#64748b', 
-                        padding: '4px 10px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' 
+                      onClick={() => setBackCardFilterMode('sequential')}
+                      style={{
+                        padding: '6px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', border: 'none', whiteSpace: 'nowrap',
+                        background: backCardFilterMode === 'sequential' && !backCardSearch ? '#7c3aed' : '#f1f5f9',
+                        color: backCardFilterMode === 'sequential' && !backCardSearch ? '#fff' : '#64748b'
+                      }}
+                      title="Show card scans taken immediately before/after front card"
+                    >
+                      ⭐ Sequential (±10 Scans)
+                    </button>
+                    <button
+                      onClick={() => setBackCardFilterMode('all')}
+                      style={{
+                        padding: '6px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', border: 'none', whiteSpace: 'nowrap',
+                        background: backCardFilterMode === 'all' || backCardSearch ? '#7c3aed' : '#f1f5f9',
+                        color: backCardFilterMode === 'all' || backCardSearch ? '#fff' : '#64748b'
                       }}
                     >
-                      Single Card (No Back)
+                      All ({folderImageFiles.length})
                     </button>
                   </div>
 
                   {/* Horizontal Scroll Thumbnail Strip */}
                   <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '8px', scrollbarWidth: 'thin' }}>
-                    {folderImageFiles.length === 0 ? (
-                      <div style={{ fontSize: '0.8rem', color: '#94a3b8', padding: '12px' }}>
-                        Loading folder thumbnails...
+                    {availableBackCards.length === 0 ? (
+                      <div style={{ fontSize: '0.8rem', color: '#94a3b8', padding: '12px', textAlign: 'center', width: '100%' }}>
+                        {backCardSearch ? `No images matching "${backCardSearch}"` : 'Loading folder card thumbnails...'}
                       </div>
                     ) : (
-                      folderImageFiles
-                        .filter(img => img.id !== getDriveFileId(selectedDraft.info)) // Exclude front image itself
-                        .map(img => {
-                          const isSelected = img.id === selectedBackFileId;
-                          return (
-                            <div
-                              key={img.id}
-                              onClick={() => setSelectedBackFileId(img.id)}
-                              style={{
-                                flexShrink: 0, width: '110px', height: '75px', background: '#0f172a',
-                                borderRadius: '8px', overflow: 'hidden', cursor: 'pointer',
-                                border: isSelected ? '2.5px solid #7c3aed' : '1px solid #cbd5e1',
-                                position: 'relative', transition: 'all 0.15s',
-                                boxShadow: isSelected ? '0 0 10px rgba(124, 58, 237, 0.4)' : 'none'
-                              }}
-                            >
-                              {googleAccessToken && (
-                                <DriveImage fileId={img.id} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
-                              )}
-                              {isSelected && (
-                                <div style={{ position: 'absolute', top: '4px', right: '4px', background: '#7c3aed', color: '#fff', borderRadius: '50%', width: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                  <Check size={12} />
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })
+                      availableBackCards.map(img => {
+                        const isSelected = img.id === selectedBackFileId;
+                        const originalIdx = folderImageFiles.findIndex(f => f.id === img.id);
+                        return (
+                          <div
+                            key={img.id}
+                            onClick={() => setSelectedBackFileId(img.id)}
+                            style={{
+                              flexShrink: 0, width: '115px', height: '75px', background: '#0f172a',
+                              borderRadius: '8px', overflow: 'hidden', cursor: 'pointer',
+                              border: isSelected ? '2.5px solid #7c3aed' : '1px solid #cbd5e1',
+                              position: 'relative', transition: 'all 0.15s',
+                              boxShadow: isSelected ? '0 0 10px rgba(124, 58, 237, 0.4)' : 'none'
+                            }}
+                            title={`Scan #${originalIdx + 1}: ${img.name}`}
+                          >
+                            <DriveImage fileId={img.id} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
+                            
+                            <span style={{ position: 'absolute', bottom: '2px', left: '2px', background: 'rgba(0,0,0,0.75)', color: '#fff', fontSize: '0.65rem', padding: '1px 4px', borderRadius: '4px' }}>
+                              #{originalIdx + 1}
+                            </span>
+
+                            {isSelected && (
+                              <div style={{ position: 'absolute', top: '4px', right: '4px', background: '#7c3aed', color: '#fff', borderRadius: '50%', width: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <Check size={12} />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
                     )}
                   </div>
 
@@ -1513,7 +1653,7 @@ export default function AiDriveCardParser() {
                     onClick={handleReparseCardPair}
                     disabled={isReparsingPair}
                     style={{
-                      width: '100%', marginTop: '12px',
+                      width: '100%', marginTop: '10px',
                       background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)',
                       color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '8px',
                       fontWeight: 700, fontSize: '0.85rem', cursor: isReparsingPair ? 'not-allowed' : 'pointer',
@@ -1523,20 +1663,16 @@ export default function AiDriveCardParser() {
                   >
                     {isReparsingPair ? (
                       <>
-                        <Loader2 size={16} className="animate-spin" /> AI Re-parsing &amp; Re-stitching Pair...
+                        <Loader2 size={16} className="animate-spin" /> AI Re-parsing &amp; Re-stitching ({stitchLayout})...
                       </>
                     ) : (
                       <>
-                        <Sparkles size={16} /> Re-Parse Selected Pair with AI &amp; Re-Stitch Canvas
+                        <Sparkles size={16} /> Re-Parse Selected Pair with AI &amp; Re-Stitch Canvas ({stitchLayout})
                       </>
                     )}
                   </button>
                 </div>
 
-                <div style={{ background: '#faf9fe', border: '1px solid #e2e8f0', padding: '12px', borderRadius: '12px', fontSize: '0.8rem', color: '#7c3aed', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                  <Info size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
-                  <span>Select any back-side scan from the thumbnail carousel above and click "Re-Parse Selected Pair with AI" to re-extract company details &amp; products scope cleanly.</span>
-                </div>
               </div>
 
               {/* RIGHT PANEL: Edit Forms Panel */}
@@ -1717,6 +1853,88 @@ export default function AiDriveCardParser() {
 
               </div>
 
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* 500-IMAGE THUMBNAIL GRID EXPLORER MODAL */}
+      {isGridExplorerOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(6px)', zIndex: 2000, display: 'flex', flexDirection: 'column', padding: '32px' }}>
+          <div style={{ background: '#fff', borderRadius: '24px', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
+            
+            {/* Modal Header */}
+            <div style={{ padding: '20px 32px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
+              <div>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Grid size={22} color="#7c3aed" /> 500-Card Folder Image Explorer
+                </h3>
+                <p style={{ margin: '2px 0 0 0', color: '#64748b', fontSize: '0.85rem' }}>Select matching back card scan out of {folderImageFiles.length} images in folder</p>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ position: 'relative', width: '320px' }}>
+                  <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                  <input 
+                    type="text" 
+                    placeholder="Search all 500 card images..."
+                    value={backCardSearch}
+                    onChange={(e) => setBackCardSearch(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px 8px 38px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.85rem', outline: 'none' }}
+                  />
+                </div>
+
+                <button 
+                  onClick={() => setIsGridExplorerOpen(false)}
+                  style={{ background: '#f1f5f9', border: 'none', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', cursor: 'pointer' }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* Grid Container */}
+            <div style={{ flex: 1, padding: '24px', overflowY: 'auto', background: '#0f172a' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '16px' }}>
+                {folderImageFiles
+                  .filter(img => img.id !== currentFrontFileId)
+                  .filter(img => {
+                    if (!backCardSearch.trim()) return true;
+                    return (img.name || '').toLowerCase().includes(backCardSearch.toLowerCase().trim());
+                  })
+                  .map((img) => {
+                    const isSelected = img.id === selectedBackFileId;
+                    const idx = folderImageFiles.findIndex(f => f.id === img.id);
+                    return (
+                      <div
+                        key={img.id}
+                        onClick={() => {
+                          setSelectedBackFileId(img.id);
+                          setIsGridExplorerOpen(false);
+                          toast.success(`Selected Back Card #${idx + 1} (${img.name})`);
+                        }}
+                        style={{
+                          height: '125px', background: '#1e293b', borderRadius: '12px', overflow: 'hidden', cursor: 'pointer',
+                          border: isSelected ? '3px solid #7c3aed' : '1px solid #334155', position: 'relative',
+                          transition: 'all 0.15s'
+                        }}
+                        onMouseOver={e => e.currentTarget.style.borderColor = '#a855f7'}
+                        onMouseOut={e => e.currentTarget.style.borderColor = isSelected ? '#7c3aed' : '#334155'}
+                      >
+                        <DriveImage fileId={img.id} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
+                        <span style={{ position: 'absolute', bottom: '6px', left: '6px', background: 'rgba(15,23,42,0.85)', color: '#fff', fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                          #{idx + 1}
+                        </span>
+                        {isSelected && (
+                          <div style={{ position: 'absolute', top: '6px', right: '6px', background: '#7c3aed', color: '#fff', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Check size={14} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
 
           </div>
