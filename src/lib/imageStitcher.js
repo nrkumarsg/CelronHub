@@ -23,7 +23,7 @@ function loadImage(src) {
  */
 export async function stitchCardImages(frontSrc, backSrc = null, options = {}) {
   const {
-    layout = 'side-by-side', // 'side-by-side' | 'stacked'
+    layout = 'vertical', // 'vertical' (stacked top & bottom default for easy mobile viewing) | 'side-by-side'
     padding = 24,
     gap = 20,
     headerHeight = 50,

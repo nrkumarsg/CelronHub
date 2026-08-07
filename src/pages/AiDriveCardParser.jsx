@@ -139,7 +139,7 @@ export default function AiDriveCardParser() {
   // Interactive Review & Manual Card Pairing State
   const [selectedDraft, setSelectedDraft] = useState(null);
   const [selectedBackFileId, setSelectedBackFileId] = useState('');
-  const [stitchLayout, setStitchLayout] = useState('side-by-side'); // 'side-by-side' | 'vertical'
+  const [stitchLayout, setStitchLayout] = useState('vertical'); // 'vertical' (stacked top & bottom default for mobile) | 'side-by-side'
   const [backCardSearch, setBackCardSearch] = useState('');
   const [backCardFilterMode, setBackCardFilterMode] = useState('sequential'); // 'sequential' | 'all'
   const [isGridExplorerOpen, setIsGridExplorerOpen] = useState(false);
@@ -1452,24 +1452,26 @@ export default function AiDriveCardParser() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#f8fafc', padding: '6px 12px', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
                 <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569' }}>Stitch Layout:</span>
                 <button
-                  onClick={() => setStitchLayout('side-by-side')}
-                  style={{
-                    padding: '5px 12px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', border: 'none',
-                    background: stitchLayout === 'side-by-side' ? '#7c3aed' : '#e2e8f0',
-                    color: stitchLayout === 'side-by-side' ? '#fff' : '#475569'
-                  }}
-                >
-                  Side-by-Side ↔
-                </button>
-                <button
                   onClick={() => setStitchLayout('vertical')}
                   style={{
                     padding: '5px 12px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', border: 'none',
                     background: stitchLayout === 'vertical' ? '#7c3aed' : '#e2e8f0',
                     color: stitchLayout === 'vertical' ? '#fff' : '#475569'
                   }}
+                  title="Recommended for Mobile Phone Scrolling (Top & Bottom)"
                 >
-                  Stacked (Vertical) ↕
+                  📱 Stacked (Top &amp; Bottom) ↕
+                </button>
+                <button
+                  onClick={() => setStitchLayout('side-by-side')}
+                  style={{
+                    padding: '5px 12px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', border: 'none',
+                    background: stitchLayout === 'side-by-side' ? '#7c3aed' : '#e2e8f0',
+                    color: stitchLayout === 'side-by-side' ? '#fff' : '#475569'
+                  }}
+                  title="Side-by-Side Horizontal Layout"
+                >
+                  Side-by-Side ↔
                 </button>
               </div>
 
