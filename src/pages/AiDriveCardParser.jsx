@@ -21,53 +21,56 @@ import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import SmartUploadPanel from '../components/upload/SmartUploadPanel';
 
-// Secure Custom Drive Image Renderer with Resilient Fallback
-const DriveImage = ({ fileId, accessToken, style, className }) => {
+// Secure Custom Drive Image Renderer using Google's CDN Thumbnail URLs
+const DriveImage = ({ fileId, thumbnailLink, accessToken, style, className }) => {
   const [src, setSrc] = useState('');
   const [loading, setLoading] = useState(true);
-  const [useFallback, setUseFallback] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    if (!fileId) return;
+    if (!fileId && !thumbnailLink) return;
     let isMounted = true;
     setLoading(true);
-    setUseFallback(false);
 
+    // 1. High Resolution Google Drive CDN Thumbnail (Zero CORS / Zero Auth blocking)
+    if (thumbnailLink) {
+      const hiResUrl = thumbnailLink.replace(/=s\d+/, '=s600');
+      setSrc(hiResUrl);
+      setLoading(false);
+      return;
+    }
+
+    // 2. Drive LH3 Public Image CDN
+    if (fileId) {
+      setSrc(`https://lh3.googleusercontent.com/d/${fileId}=s600`);
+      setLoading(false);
+    }
+
+    // 3. Fallback: Authenticated Fetch if LH3 fails
     const token = accessToken || localStorage.getItem('google_access_token');
-    
-    if (token) {
+    if (fileId && token && retryCount > 0) {
       fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
         .then(res => {
-          if (!res.ok) throw new Error('Drive API image fetch failed');
+          if (!res.ok) throw new Error('Fetch failed');
           return res.blob();
         })
         .then(blob => {
           if (isMounted) {
-            const url = URL.createObjectURL(blob);
-            setSrc(url);
+            setSrc(URL.createObjectURL(blob));
             setLoading(false);
           }
         })
-        .catch(err => {
-          if (isMounted) {
-            setUseFallback(true);
-            setSrc(`https://drive.google.com/thumbnail?id=${fileId}&sz=w600`);
-            setLoading(false);
-          }
+        .catch(() => {
+          if (isMounted) setLoading(false);
         });
-    } else {
-      setUseFallback(true);
-      setSrc(`https://drive.google.com/thumbnail?id=${fileId}&sz=w600`);
-      setLoading(false);
     }
 
     return () => {
       isMounted = false;
-      if (src && src.startsWith('blob:')) URL.revokeObjectURL(src);
     };
-  }, [fileId, accessToken]);
+  }, [fileId, thumbnailLink, accessToken, retryCount]);
 
   if (loading) {
     return (
@@ -81,8 +84,8 @@ const DriveImage = ({ fileId, accessToken, style, className }) => {
     <img 
       src={src} 
       onError={(e) => {
-        if (!useFallback) {
-          setUseFallback(true);
+        if (retryCount === 0 && fileId) {
+          setRetryCount(1);
           e.target.src = `https://drive.google.com/thumbnail?id=${fileId}&sz=w600`;
         }
       }}
@@ -198,7 +201,7 @@ export default function AiDriveCardParser() {
       const query = `'${folderId}' in parents and trashed = false and (` +
         `mimeType contains 'image/' or name contains '.jpg' or name contains '.jpeg' or name contains '.png' or name contains '.webp'` +
         `)`;
-      const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime)&pageSize=500`;
+      const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime,thumbnailLink,webContentLink)&pageSize=500`;
       const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
       if (res.ok) {
         const data = await res.json();
@@ -383,7 +386,7 @@ export default function AiDriveCardParser() {
             `name contains '.jpg' or name contains '.jpeg' or name contains '.png' or name contains '.webp'` +
             `)`;
 
-          const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=500${pageToken ? `&pageToken=${pageToken}` : ''}`;
+          const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,thumbnailLink,webContentLink)&pageSize=500${pageToken ? `&pageToken=${pageToken}` : ''}`;
           const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
 
           if (!res.ok) break;
@@ -1307,7 +1310,8 @@ export default function AiDriveCardParser() {
                 const frontDriveId = getDriveFrontFileId(draft.info);
                 const backDriveId = getDriveBackFileId(draft.info);
                 const rep = draft.contacts?.[0] || {};
-                
+                const cardThumb = folderImageFiles.find(f => f.id === frontDriveId)?.thumbnailLink;
+
                 return (
                   <div 
                     key={draft.id}
@@ -1327,8 +1331,8 @@ export default function AiDriveCardParser() {
                   >
                     {/* Visual Card Image Preview */}
                     <div style={{ position: 'relative', height: '160px', background: '#0f172a', display: 'flex', borderBottom: '1px solid #e2e8f0' }}>
-                      {frontDriveId && googleAccessToken ? (
-                        <DriveImage fileId={frontDriveId} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
+                      {frontDriveId ? (
+                        <DriveImage fileId={frontDriveId} thumbnailLink={cardThumb} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
                       ) : (
                         <div style={{ margin: 'auto', textAlign: 'center', color: '#475569', fontSize: '0.85rem' }}>
                           <ImageIcon size={32} style={{ margin: '0 auto 8px auto', display: 'block' }} />
@@ -1501,8 +1505,13 @@ export default function AiDriveCardParser() {
                     FRONT SIDE (Original Raw Scan)
                   </span>
                   <div style={{ height: '160px', background: '#0f172a', borderRadius: '12px', overflow: 'hidden', border: '1px solid #cbd5e1' }}>
-                    {getDriveFrontFileId(selectedDraft.info) && googleAccessToken ? (
-                      <DriveImage fileId={getDriveFrontFileId(selectedDraft.info)} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
+                    {getDriveFrontFileId(selectedDraft.info) ? (
+                      <DriveImage 
+                        fileId={getDriveFrontFileId(selectedDraft.info)} 
+                        thumbnailLink={folderImageFiles.find(f => f.id === getDriveFrontFileId(selectedDraft.info))?.thumbnailLink}
+                        accessToken={googleAccessToken} 
+                        style={{ width: '100%', height: '100%' }} 
+                      />
                     ) : (
                       <div style={{ margin: 'auto', color: '#64748b', textAlign: 'center', padding: '30px' }}>Front Card Preview</div>
                     )}
@@ -1523,7 +1532,12 @@ export default function AiDriveCardParser() {
                   </div>
                   <div style={{ height: '160px', background: '#0f172a', borderRadius: '12px', overflow: 'hidden', border: '1px solid #cbd5e1' }}>
                     {selectedBackFileId ? (
-                      <DriveImage fileId={selectedBackFileId} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
+                      <DriveImage 
+                        fileId={selectedBackFileId} 
+                        thumbnailLink={folderImageFiles.find(f => f.id === selectedBackFileId)?.thumbnailLink}
+                        accessToken={googleAccessToken} 
+                        style={{ width: '100%', height: '100%' }} 
+                      />
                     ) : (
                       <div style={{ margin: 'auto', color: '#94a3b8', textAlign: 'center', padding: '30px', fontSize: '0.85rem' }}>
                         No back side card selected (Single card mode)
@@ -1631,7 +1645,12 @@ export default function AiDriveCardParser() {
                             }}
                             title={`Scan #${originalIdx + 1}: ${img.name}`}
                           >
-                            <DriveImage fileId={img.id} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
+                            <DriveImage 
+                              fileId={img.id} 
+                              thumbnailLink={img.thumbnailLink} 
+                              accessToken={googleAccessToken} 
+                              style={{ width: '100%', height: '100%' }} 
+                            />
                             
                             <span style={{ position: 'absolute', bottom: '2px', left: '2px', background: 'rgba(0,0,0,0.75)', color: '#fff', fontSize: '0.65rem', padding: '1px 4px', borderRadius: '4px' }}>
                               #{originalIdx + 1}
@@ -1922,7 +1941,12 @@ export default function AiDriveCardParser() {
                         onMouseOver={e => e.currentTarget.style.borderColor = '#a855f7'}
                         onMouseOut={e => e.currentTarget.style.borderColor = isSelected ? '#7c3aed' : '#334155'}
                       >
-                        <DriveImage fileId={img.id} accessToken={googleAccessToken} style={{ width: '100%', height: '100%' }} />
+                        <DriveImage 
+                          fileId={img.id} 
+                          thumbnailLink={img.thumbnailLink} 
+                          accessToken={googleAccessToken} 
+                          style={{ width: '100%', height: '100%' }} 
+                        />
                         <span style={{ position: 'absolute', bottom: '6px', left: '6px', background: 'rgba(15,23,42,0.85)', color: '#fff', fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
                           #{idx + 1}
                         </span>
