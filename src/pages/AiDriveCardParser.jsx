@@ -1703,8 +1703,21 @@ export default function AiDriveCardParser() {
                     <Building2 size={16} color="#7c3aed" /> 1. PARTNER PROFILE (COMPANY)
                   </h4>
 
+                  {/* Company Name Field with Instant Google Search Button */}
                   <div style={{ marginBottom: '12px' }}>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Company Name *</label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <label style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Company Name *</label>
+                      {editedPartner.name && (
+                        <button
+                          type="button"
+                          onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(editedPartner.name)}`, '_blank')}
+                          style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', padding: '2px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          title="Search Company Name on Google in a new window"
+                        >
+                          <Search size={11} /> Google Search Company
+                        </button>
+                      )}
+                    </div>
                     <input 
                       type="text" 
                       style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
@@ -1714,8 +1727,25 @@ export default function AiDriveCardParser() {
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                    
+                    {/* UEN Field with ACRA / Google UEN Search Button */}
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>UEN</label>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                        <label style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>UEN</label>
+                        {editedPartner.name && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const query = editedPartner.uen ? `${editedPartner.uen} ${editedPartner.name} ACRA Singapore` : `${editedPartner.name} Singapore UEN ACRA`;
+                              window.open(`https://www.google.com/search?q=${encodeURIComponent(query)}`, '_blank');
+                            }}
+                            style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', color: '#7c3aed', padding: '2px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                            title="Lookup UEN / ACRA business entity on Google in a new window"
+                          >
+                            <Search size={11} /> Search ACRA / UEN
+                          </button>
+                        )}
+                      </div>
                       <input 
                         type="text" 
                         style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
@@ -1723,8 +1753,26 @@ export default function AiDriveCardParser() {
                         onChange={(e) => setEditedPartner(prev => ({ ...prev, uen: e.target.value }))}
                       />
                     </div>
+
+                    {/* Website Link Field with Open Site Button */}
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Website Link</label>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                        <label style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Website Link</label>
+                        {editedPartner.weblink && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              let url = editedPartner.weblink.trim();
+                              if (!url.startsWith('http')) url = `https://${url}`;
+                              window.open(url, '_blank');
+                            }}
+                            style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#059669', padding: '2px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                            title="Open website in new window"
+                          >
+                            <ExternalLink size={11} /> Open Site
+                          </button>
+                        )}
+                      </div>
                       <input 
                         type="text" 
                         style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
@@ -1755,8 +1803,24 @@ export default function AiDriveCardParser() {
                     </div>
                   </div>
 
+                  {/* HQ Address with Google Maps Button */}
                   <div style={{ marginBottom: '12px' }}>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>HQ Address</label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <label style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>HQ Address</label>
+                      {(editedPartner.address || editedPartner.name) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const query = `${editedPartner.name} ${editedPartner.address}`;
+                            window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`, '_blank');
+                          }}
+                          style={{ background: '#fff7ed', border: '1px solid #fed7aa', color: '#ea580c', padding: '2px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          title="Search HQ Address on Google Maps in a new window"
+                        >
+                          <Globe size={11} /> Google Maps Search
+                        </button>
+                      )}
+                    </div>
                     <textarea 
                       rows={2}
                       style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
