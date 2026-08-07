@@ -196,18 +196,46 @@ export default function AiDriveCardParser() {
     }
   };
 
-  const loadFolderImages = async (folderId, token) => {
-    if (!folderId || !token) return;
+  const loadFolderImages = async (rootFolderId, token) => {
+    if (!rootFolderId || !token) return;
     try {
-      const query = `'${folderId}' in parents and trashed = false and (` +
-        `mimeType contains 'image/' or name contains '.jpg' or name contains '.jpeg' or name contains '.png' or name contains '.webp'` +
-        `)`;
-      const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime,thumbnailLink,webContentLink)&pageSize=500`;
-      const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (res.ok) {
-        const data = await res.json();
-        setFolderImageFiles(data.files || []);
+      const foldersToScan = [rootFolderId];
+      const scannedFolders = new Set();
+      const allImageFiles = [];
+
+      while (foldersToScan.length > 0 && scannedFolders.size < 50) {
+        const currentId = foldersToScan.shift();
+        if (scannedFolders.has(currentId)) continue;
+        scannedFolders.add(currentId);
+
+        let pageToken = null;
+        do {
+          const query = `'${currentId}' in parents and trashed = false and (` +
+            `mimeType = 'application/vnd.google-apps.folder' or ` +
+            `mimeType contains 'image/' or ` +
+            `name contains '.jpg' or name contains '.jpeg' or name contains '.png' or name contains '.webp'` +
+            `)`;
+          const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,thumbnailLink,webContentLink)&pageSize=500${pageToken ? `&pageToken=${pageToken}` : ''}`;
+          const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+          if (!res.ok) break;
+
+          const data = await res.json();
+          const filesInFolder = data.files || [];
+
+          for (const f of filesInFolder) {
+            if (f.mimeType === 'application/vnd.google-apps.folder') {
+              if (!scannedFolders.has(f.id) && !foldersToScan.includes(f.id)) {
+                foldersToScan.push(f.id);
+              }
+            } else {
+              allImageFiles.push(f);
+            }
+          }
+          pageToken = data.nextPageToken || null;
+        } while (pageToken);
       }
+
+      setFolderImageFiles(allImageFiles);
     } catch (err) {
       console.error('Failed to load folder images:', err);
     }
