@@ -144,6 +144,7 @@ export default function AiDriveCardParser() {
   const [backCardFilterMode, setBackCardFilterMode] = useState('sequential'); // 'sequential' | 'all'
   const [isGridExplorerOpen, setIsGridExplorerOpen] = useState(false);
   const [isReparsingPair, setIsReparsingPair] = useState(false);
+  const [showOllamaGuideModal, setShowOllamaGuideModal] = useState(false);
 
   const [editedPartner, setEditedPartner] = useState({
     name: '', weblink: '', country: 'Singapore', city: '', address: '', phone1: '', email1: '', uen: '', types: ['Supplier'],
@@ -1032,6 +1033,13 @@ export default function AiDriveCardParser() {
             <option value="DeepSeek">DeepSeek API</option>
             <option value="Groq">Groq Console API</option>
           </select>
+          <button
+            onClick={() => setShowOllamaGuideModal(true)}
+            style={{ background: '#f3e8ff', border: '1px solid #d8b4fe', color: '#7c3aed', padding: '6px 10px', borderRadius: '8px', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+            title="View procedure to setup local Ollama AI parser & push data to cloud"
+          >
+            <HelpCircle size={14} /> Ollama Setup Guide
+          </button>
         </div>
       </header>
 
@@ -2108,6 +2116,90 @@ export default function AiDriveCardParser() {
           accept="image/*,.pdf"
           onSelect={handleSmartUploadSelect}
         />
+      )}
+
+      {/* OLLAMA LOCAL AI SETUP & CLOUD PUSH GUIDE MODAL */}
+      {showOllamaGuideModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '24px' }}>
+          <div style={{ background: '#fff', maxWidth: '750px', width: '100%', padding: '32px', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', position: 'relative', maxHeight: '90vh', overflowY: 'auto' }}>
+            <button 
+              onClick={() => setShowOllamaGuideModal(false)}
+              style={{ position: 'absolute', top: '20px', right: '20px', background: '#f1f5f9', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', cursor: 'pointer' }}
+            >
+              <X size={18} />
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
+              <span style={{ background: '#7c3aed', color: '#fff', padding: '10px', borderRadius: '12px', display: 'flex' }}>
+                <Cpu size={24} />
+              </span>
+              <div>
+                <h3 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>Ollama Local AI Parser &amp; Cloud Push Procedure</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.85rem', color: '#64748b' }}>100% Free Local AI Parsing on your machine + Automatic Cloud Push (Supabase &amp; Google Drive)</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', padding: '16px', borderRadius: '12px' }}>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '0.95rem', fontWeight: 800, color: '#4c1d95' }}>1. How Local Ollama + Cloud Push Works</h4>
+                <p style={{ margin: 0, fontSize: '0.85rem', color: '#475569', lineHeight: '1.6' }}>
+                  When you select <strong>Ollama (Local Vision)</strong> in AI Card Scanner, card images are analyzed locally on your computer hardware via Ollama (e.g. <code>llama3.2-vision</code>). Zero paid cloud API credits required!
+                  Once extracted, CelronHub automatically pushes the parsed partner profile, contacts, and merged card images directly to your <strong>Supabase Cloud Database</strong> and <strong>Google Drive Destination Folder</strong>.
+                </p>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div style={{ background: '#fff', border: '1px solid #e9d5ff', padding: '16px', borderRadius: '12px' }}>
+                  <div style={{ fontWeight: 800, color: '#7c3aed', fontSize: '0.9rem', marginBottom: '8px' }}>Step 1: Install &amp; Download Model</div>
+                  <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '0.82rem', color: '#475569', lineHeight: '1.6' }}>
+                    <li>Install Ollama from <a href="https://ollama.com" target="_blank" rel="noreferrer" style={{ color: '#7c3aed', fontWeight: 700 }}>ollama.com</a></li>
+                    <li>Open terminal and run:</li>
+                    <li style={{ listStyleType: 'none', margin: '4px 0' }}>
+                      <code style={{ background: '#0f172a', color: '#38bdf8', padding: '4px 8px', borderRadius: '6px', fontSize: '0.78rem', display: 'block', fontFamily: 'monospace' }}>
+                        ollama pull llama3.2-vision
+                      </code>
+                    </li>
+                  </ol>
+                </div>
+
+                <div style={{ background: '#fff', border: '1px solid #e9d5ff', padding: '16px', borderRadius: '12px' }}>
+                  <div style={{ fontWeight: 800, color: '#7c3aed', fontSize: '0.9rem', marginBottom: '8px' }}>Step 2: Start Ollama with CORS Enabled</div>
+                  <div style={{ fontSize: '0.82rem', color: '#475569', lineHeight: '1.6' }}>
+                    Allow browser connections by running:
+                    <div style={{ background: '#0f172a', color: '#c084fc', padding: '6px 10px', borderRadius: '6px', fontSize: '0.75rem', fontFamily: 'monospace', margin: '4px 0 0 0' }}>
+                      # Windows PowerShell:<br/>
+                      $env:OLLAMA_ORIGINS="*"; ollama serve<br/><br/>
+                      # Mac / Linux Terminal:<br/>
+                      OLLAMA_ORIGINS="*" ollama serve
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', padding: '12px 16px', borderRadius: '12px', fontSize: '0.82rem', color: '#c2410c', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Info size={16} />
+                <span>
+                  <strong>Need Paid Cloud APIs?</strong> If your computer doesn't have a dedicated GPU or if you prefer high-speed cloud processing, simply choose <strong>AI Studio (Gemini 2.5 Flash)</strong>, <strong>DeepSeek API</strong>, or <strong>Groq Console API</strong> from the dropdown menu!
+                </span>
+              </div>
+            </div>
+
+            <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <a 
+                href="/settings" 
+                style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#475569', padding: '10px 18px', borderRadius: '10px', fontWeight: 600, fontSize: '0.85rem', textDecoration: 'none' }}
+              >
+                Configure in Settings
+              </a>
+              <button 
+                onClick={() => setShowOllamaGuideModal(false)}
+                style={{ background: '#7c3aed', color: '#fff', border: 'none', padding: '10px 24px', borderRadius: '10px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+              >
+                Got It!
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
