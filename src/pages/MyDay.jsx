@@ -17,6 +17,7 @@ import { getStoredToken, isTokenValid, connectGoogleAPI, performOCR } from '../l
 import { uploadFileToDrive, getOrCreateFolder, listFolderContent } from '../lib/driveService';
 import FolderTargetSelector from '../components/myday/FolderTargetSelector';
 import SmartUploadPanel from '../components/upload/SmartUploadPanel';
+import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
 
 // ─── Stage Configuration ────────────────────────────────────────────────────
@@ -1386,6 +1387,81 @@ function MyDayInner() {
                                 style={{ width: '100%', padding: '8px 14px', borderRadius: 8, background: '#f59e0b', border: 'none', color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'all 0.15s' }}>
                                 View Vendor Payables (Bills Portal) <ArrowRight size={13} />
                             </button>
+                        </div>
+
+                        {/* ── Mobile App Access & Process Info Card ────────────────────── */}
+                        <div style={{
+                            background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+                            borderRadius: 14,
+                            border: '1px solid #334155',
+                            padding: '16px 18px',
+                            color: '#fff',
+                            boxShadow: '0 8px 24px rgba(0,0,0,0.25)'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, borderBottom: '1px solid #334155', paddingBottom: 10 }}>
+                                <Smartphone size={16} color="#60a5fa" />
+                                <span style={{ fontWeight: 800, fontSize: 13, color: '#f8fafc', letterSpacing: '0.02em' }}>
+                                    📱 Mobile App Access &amp; Process Info
+                                </span>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                                {/* QR Code Container */}
+                                <div style={{ background: '#fff', padding: 8, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                    <QRCodeSVG value={(typeof window !== 'undefined' ? window.location.origin : 'https://celronhub.vercel.app') + '/my-day'} size={88} level="M" />
+                                </div>
+
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 6, fontWeight: 500 }}>
+                                        Mobile App Access URL (Scan QR or type on phone browser):
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
+                                        <input
+                                            readOnly
+                                            value={(typeof window !== 'undefined' ? window.location.origin : 'https://celronhub.vercel.app') + '/my-day'}
+                                            style={{
+                                                flex: 1,
+                                                minWidth: 0,
+                                                background: '#090d16',
+                                                border: '1px solid #334155',
+                                                borderRadius: 6,
+                                                padding: '6px 8px',
+                                                color: '#60a5fa',
+                                                fontFamily: 'monospace',
+                                                fontSize: 11,
+                                                outline: 'none'
+                                            }}
+                                        />
+                                        <button
+                                            onClick={() => {
+                                                const url = (typeof window !== 'undefined' ? window.location.origin : 'https://celronhub.vercel.app') + '/my-day';
+                                                navigator.clipboard.writeText(url);
+                                                toast.success('📋 Mobile URL copied!');
+                                            }}
+                                            style={{
+                                                padding: '6px 10px',
+                                                borderRadius: 6,
+                                                background: '#334155',
+                                                border: 'none',
+                                                color: '#fff',
+                                                fontSize: 11,
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                                whiteSpace: 'nowrap',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 4
+                                            }}
+                                        >
+                                            📋 Copy URL
+                                        </button>
+                                    </div>
+                                    <div style={{ fontSize: 10, color: '#64748b', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                                        <span>Host: <strong>CELRON-HUB</strong></span>
+                                        <span>Mode: <strong>Vercel Production</strong></span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
