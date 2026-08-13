@@ -16,6 +16,8 @@ import { AIFileClassifier } from './AIFileClassifier';
 import { DuplicateChecker } from './DuplicateChecker';
 import { listFolderContent } from '../../lib/driveService';
 import { getStoredToken } from '../../lib/googleAuthService';
+import FolderTargetSelector from '../myday/FolderTargetSelector';
+import { getDocumentSettings } from '../../lib/store';
 
 const DEFAULT_GDRIVE_FOLDER_ID = '1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w';
 const DEFAULT_GDRIVE_FOLDER_URL = `https://drive.google.com/drive/folders/${DEFAULT_GDRIVE_FOLDER_ID}?usp=drive_link`;
@@ -79,9 +81,11 @@ export default function SmartUploadPanel({
     // Simulated Downloads state
     const [downloadFiles, setDownloadFiles] = useState([]);
     
-    // Drag indicator state
-    const [isDraggingOver, setIsDraggingOver] = useState(false);
-    
+    // Target Drive Folder state
+    const [targetFolder, setTargetFolder] = useState(null);
+    const [showFolderSelector, setShowFolderSelector] = useState(false);
+    const [documentSettings, setDocumentSettings] = useState(null);
+
     const fileInputRef = useRef(null);
 
     // Load Local Store data on mount/open
@@ -93,6 +97,7 @@ export default function SmartUploadPanel({
             setLastOpened(RecentFilesStore.getLastOpenedFolder(documentType));
             loadMockDownloads();
             loadGoogleDriveFiles();
+            getDocumentSettings().then(setDocumentSettings).catch(console.error);
         }
     }, [isOpen, documentType, initialTab]);
 
@@ -354,7 +359,10 @@ export default function SmartUploadPanel({
         if (!fileToUpload) return;
 
         // Classify metadata suggestions using local AI
-        const suggestions = AIFileClassifier.classify(fileToUpload.name);
+        const suggestions = AIFileClassifier.classify(fileToUpload.name) || {};
+        if (targetFolder) {
+            suggestions.targetFolder = targetFolder;
+        }
 
         // Save entry in the local upload store history
         RecentFilesStore.saveUpload({
@@ -363,7 +371,8 @@ export default function SmartUploadPanel({
             documentType: documentType,
             hash: stagedFileHash,
             category: suggestions?.category || 'General',
-            company: suggestions?.manufacturer || ''
+            company: suggestions?.manufacturer || '',
+            targetFolder: targetFolder?.path || ''
         });
 
         // Callback
@@ -597,6 +606,37 @@ export default function SmartUploadPanel({
                     </button>
                 )}
             </div>
+
+            {/* Target Drive Saving Folder Selector Banner */}
+            <div style={{ padding: '8px 20px', background: '#f0fdf4', borderBottom: '1px solid #bbf7d0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Folder size={16} color="#10b981" />
+                    <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#065f46' }}>Target Saving Folder:</span>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#047857', background: '#ffffff', padding: '2px 10px', borderRadius: '6px', border: '1px solid #a7f3d0' }}>
+                        {targetFolder ? targetFolder.path : `${activeFolderName || 'System Workspace'} (${documentType || 'Manuals'})`}
+                    </span>
+                </div>
+                <button 
+                    onClick={() => setShowFolderSelector(!showFolderSelector)}
+                    style={{ background: '#10b981', border: 'none', color: '#fff', fontSize: '0.75rem', fontWeight: 700, padding: '4px 12px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
+                >
+                    <Folder size={12} /> {showFolderSelector ? 'Close Selector' : '📁 Change Target Folder'}
+                </button>
+            </div>
+
+            {/* Expanded Folder Picker Layer */}
+            {showFolderSelector && (
+                <div style={{ padding: '14px 20px', background: '#ffffff', borderBottom: '2px solid #6366f1', boxShadow: '0 6px 20px rgba(0,0,0,0.06)', zIndex: 10 }}>
+                    <FolderTargetSelector
+                        settings={documentSettings}
+                        onSelect={(folder) => {
+                            setTargetFolder(folder);
+                            setShowFolderSelector(false);
+                        }}
+                        onCancel={() => setShowFolderSelector(false)}
+                    />
+                </div>
+            )}
 
             {/* Body Area */}
             <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>

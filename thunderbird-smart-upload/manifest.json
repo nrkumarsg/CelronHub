@@ -16,6 +16,9 @@
     "identity",
     "accountsRead",
     "messagesRead",
+    "messagesUpdate",
+    "messagesMove",
+    "downloads",
     "alarms",
     "notifications",
     "<all_urls>"
@@ -26,8 +29,7 @@
   },
   "compose_action": {
     "default_icon": "icons/icon32.png",
-    "default_title": "Open Smart Upload Tool",
-    "default_popup": "index.html"
+    "default_title": "Open Smart Upload Tool"
   },
   "browser_action": {
     "default_icon": "icons/icon32.png",

@@ -61,6 +61,7 @@ import FormsDirectory from './pages/FormsDirectory';
 import FormEditor from './pages/FormEditor';
 import CalibrationLab from './pages/CalibrationLab';
 import SmartAssistant from './pages/workflows/SmartAssistant';
+import MyDay from './pages/MyDay';
 import FloatSupplierOrder from './pages/workflows/FloatSupplierOrder';
 import CommercialWallPage from './pages/CommercialWallPage';
 import SearchResults from './pages/SearchResults';
@@ -312,6 +313,7 @@ function App() {
               <Routes location={normalizedLocation}>
               {/* Base Dashboard (Accessible if logged in and active, handled by wildcard ProtectedRoute) */}
               <Route path="/" element={<ProtectedRoute><IndexRoute /></ProtectedRoute>} />
+              <Route path="/my-day" element={<ProtectedRoute><MyDay /></ProtectedRoute>} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/dashboard/job-workflow" element={<ProtectedRoute><JobWorkflow /></ProtectedRoute>} />
               <Route path="/dashboard/workflow-wizard" element={<ProtectedRoute><WorkflowWizard /></ProtectedRoute>} />

@@ -3,7 +3,7 @@ import {
     Search, X, Clock, Clipboard, Download, Cloud, Monitor, 
     AlertCircle, FileText, CheckCircle, Pin, Folder, Star, 
     Sparkles, ShieldAlert, FileImage, FileCode, Keyboard,
-    Smartphone, QrCode, Image as ImageIcon, Loader2, Camera, RefreshCw, ExternalLink
+    Smartphone, QrCode, Image as ImageIcon, Loader2, Camera, RefreshCw, ExternalLink, MessageSquare
 } from 'lucide-react';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
@@ -146,7 +146,7 @@ export default function SmartUploadPanel({
             setRecentFiles(RecentFilesStore.getUploads(documentType));
             setFavorites(RecentFilesStore.getFavoriteFolders(documentType));
             setLastOpened(RecentFilesStore.getLastOpenedFolder(documentType));
-            loadMockDownloads();
+            loadRealDownloads();
             loadGoogleDriveFiles();
         }
     }, [isOpen, documentType, initialTab]);
@@ -255,14 +255,38 @@ export default function SmartUploadPanel({
         }, 'image/png');
     };
 
-    const loadMockDownloads = () => {
-        const mockPdfs = [
-            { id: 'dl1', name: 'Delivery Order_DO-2606-6083.pdf', size: 1048576 * 1.4, date: new Date().toISOString() },
-            { id: 'dl2', name: 'ChatGPT Image Jul 22, 2026_09_51_50 PM.png', size: 1024 * 650, date: new Date().toISOString() },
-            { id: 'dl3', name: 'ABB_ACS880_Manual_v2.pdf', size: 1048576 * 8.4, date: new Date(Date.now() - 1000 * 60 * 10).toISOString() },
-            { id: 'dl4', name: 'Siemens_G120_UserGuide.pdf', size: 1048576 * 5.2, date: new Date(Date.now() - 1000 * 60 * 45).toISOString() }
-        ];
-        setDownloadFiles(mockPdfs);
+    // Thunderbird's downloads API only exposes metadata (name/size/date/path) —
+    // it cannot return real file bytes. So this lists your ACTUAL recent
+    // downloads (fixing the old hardcoded mock list), but selecting one still
+    // opens the native file picker (via triggerNativeFileInput) so the file we
+    // attach/insert has real content instead of a fake placeholder blob.
+    const loadRealDownloads = async () => {
+        const tb = typeof messenger !== 'undefined' ? messenger : (typeof browser !== 'undefined' ? browser : null);
+        if (!tb || !tb.downloads || typeof tb.downloads.search !== 'function') {
+            setDownloadFiles([]);
+            return;
+        }
+        try {
+            const results = await tb.downloads.search({ orderBy: ['-startTime'], limit: 20 });
+            const items = (results || [])
+                .filter((d) => d.state === 'complete' && d.exists !== false && d.filename)
+                .slice(0, 15)
+                .map((d) => {
+                    const path = d.filename || '';
+                    const name = path.split(/[\\/]/).pop() || path;
+                    return {
+                        id: String(d.id),
+                        name,
+                        size: d.fileSize || d.totalBytes || 0,
+                        date: d.startTime || d.endTime || new Date().toISOString(),
+                        fullPath: path
+                    };
+                });
+            setDownloadFiles(items);
+        } catch (err) {
+            console.error('[SmartUploadPanel] Failed to read Downloads folder:', err);
+            setDownloadFiles([]);
+        }
     };
 
     const [isGdriveAuthenticated, setIsGdriveAuthenticated] = useState(true);
@@ -371,14 +395,20 @@ export default function SmartUploadPanel({
         resetStagedState();
     };
 
-    const handleSelectRecent = (recent, mode = 'attachment') => {
-        const mockFile = new File([new Blob(['Content sample'])], recent.name, { type: 'application/pdf' });
-        onSelect(mockFile, mode);
+    // "Recent" only stores upload HISTORY (name/category) in local storage, not
+    // the original file bytes or a live handle to it — the browser doesn't let
+    // an extension keep that across sessions. So re-selecting a recent entry
+    // opens the native file picker to fetch its real content, same as Downloads.
+    const handleSelectRecent = (recent) => {
+        triggerNativeFileInput();
     };
 
-    const handleSelectMockDownload = (mockDl, mode = 'attachment') => {
-        const mockFile = new File([new Blob(['Download content sample'])], mockDl.name, { type: 'application/pdf' });
-        onSelect(mockFile, mode);
+    // Thunderbird's downloads API can't hand us the file's real bytes (metadata
+    // only), so selecting a listed download opens the native OS file picker —
+    // which defaults to the Downloads folder — so the user just confirms the
+    // exact file shown here and we stage its REAL content, not a fake blob.
+    const handleSelectDownloadItem = (dl) => {
+        triggerNativeFileInput();
     };
 
     const [downloadingDriveId, setDownloadingDriveId] = useState(null);
@@ -686,6 +716,17 @@ export default function SmartUploadPanel({
                         >
                             <Camera size={15} /> Camera Photo
                         </button>
+                        <button
+                            onClick={() => { setActiveTab('whatsapp'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '8px 10px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600,
+                                background: activeTab === 'whatsapp' ? '#25D366' : 'transparent',
+                                color: activeTab === 'whatsapp' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.2s'
+                            }}
+                        >
+                            <MessageSquare size={15} /> WhatsApp Upload
+                        </button>
 
                         <div style={{ marginTop: 'auto', borderTop: '1px solid #e2e8f0', paddingTop: '10px', fontSize: '0.72rem', color: '#94a3b8' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px', fontWeight: 600 }}>
@@ -779,27 +820,33 @@ export default function SmartUploadPanel({
                             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                                 <div style={{ fontSize: '0.8rem', color: '#64748b', background: '#eff6ff', padding: '10px 14px', borderRadius: '10px', border: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
                                     <AlertCircle size={14} style={{ flexShrink: 0 }} />
-                                    <span>Select a recently downloaded document to attach to Thunderbird email.</span>
+                                    <span>Your real recent downloads. Click one to open the file picker (defaults to Downloads) and confirm it — Thunderbird only lets extensions read download names, not file bytes directly.</span>
                                 </div>
 
                                 <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    {downloadFiles.map(dl => (
-                                        <div 
+                                    {downloadFiles.length === 0 ? (
+                                        <div style={{ textAlign: 'center', padding: '40px 0', color: '#94a3b8', fontSize: '0.85rem' }}>
+                                            <Download size={32} style={{ opacity: 0.3, marginBottom: '8px', margin: '0 auto' }} />
+                                            No recent downloads found. Use "Browse Computer" below instead.
+                                        </div>
+                                    ) : downloadFiles.map(dl => (
+                                        <div
                                             key={dl.id}
-                                            onClick={() => handleSelectMockDownload(dl)}
-                                            style={{ 
-                                                display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', 
+                                            onClick={() => handleSelectDownloadItem(dl)}
+                                            title={dl.fullPath}
+                                            style={{
+                                                display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px',
                                                 background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem'
                                             }}
                                             onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
                                             onMouseLeave={e => e.currentTarget.style.background = '#fff'}
                                         >
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                                <Download size={18} color="#0ea5e9" />
-                                                <strong>{dl.name}</strong>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
+                                                <Download size={18} color="#0ea5e9" style={{ flexShrink: 0 }} />
+                                                <strong style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dl.name}</strong>
                                             </div>
-                                            <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
-                                                {Math.round(dl.size / (1024 * 102.4)) / 10} MB
+                                            <span style={{ fontSize: '0.75rem', color: '#94a3b8', flexShrink: 0, marginLeft: '10px' }}>
+                                                {dl.size ? `${Math.round(dl.size / (1024 * 102.4)) / 10} MB` : ''}
                                             </span>
                                         </div>
                                     ))}
@@ -1215,6 +1262,100 @@ export default function SmartUploadPanel({
                             </div>
                         )}
 
+                        {/* 9. WHATSAPP UPLOAD TAB */}
+                        {activeTab === 'whatsapp' && (
+                            <div
+                                tabIndex={0}
+                                onPaste={handlePaste}
+                                style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%', outline: 'none' }}
+                            >
+                                <div style={{
+                                    background: 'linear-gradient(135deg, rgba(37, 211, 102, 0.12) 0%, rgba(18, 140, 126, 0.12) 100%)',
+                                    border: '1px solid rgba(37, 211, 102, 0.3)',
+                                    borderRadius: '16px',
+                                    padding: '14px 18px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: '14px',
+                                    flexWrap: 'wrap'
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                        <div style={{ background: '#25D366', color: '#fff', padding: '10px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(37, 211, 102, 0.3)' }}>
+                                            <MessageSquare size={22} />
+                                        </div>
+                                        <div>
+                                            <h4 style={{ margin: '0 0 2px 0', fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' }}>
+                                                WhatsApp Smart Upload
+                                            </h4>
+                                            <span style={{ fontSize: '0.75rem', color: '#475569' }}>
+                                                Drag PDFs or photos from WhatsApp Web into your Thunderbird draft
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <a
+                                        href="https://web.whatsapp.com"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{
+                                            background: '#25D366', color: '#ffffff', padding: '8px 14px', borderRadius: '8px',
+                                            fontSize: '0.8rem', fontWeight: 700, textDecoration: 'none', display: 'inline-flex',
+                                            alignItems: 'center', gap: '6px', boxShadow: '0 2px 6px rgba(37, 211, 102, 0.3)'
+                                        }}
+                                    >
+                                        Open WhatsApp Web <ExternalLink size={12} />
+                                    </a>
+                                </div>
+
+                                <div
+                                    onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
+                                    onDragLeave={() => setIsDraggingOver(false)}
+                                    onDrop={(e) => {
+                                        e.preventDefault();
+                                        setIsDraggingOver(false);
+                                        if (e.dataTransfer.files[0]) {
+                                            handleFileStaged(e.dataTransfer.files[0]);
+                                        }
+                                    }}
+                                    style={{
+                                        flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+                                        border: isDraggingOver ? '2px dashed #25D366' : '2px dashed #a7f3d0', borderRadius: '16px',
+                                        background: isDraggingOver ? '#ecfdf5' : '#f0fdf4', padding: '24px 20px', transition: 'all 0.2s',
+                                        textAlign: 'center', minHeight: '180px'
+                                    }}
+                                >
+                                    <div style={{ background: '#dcfce7', color: '#15803d', padding: '12px', borderRadius: '50%', marginBottom: '10px' }}>
+                                        <MessageSquare size={26} />
+                                    </div>
+                                    <h4 style={{ margin: '0 0 6px 0', fontSize: '0.95rem', fontWeight: 800, color: '#14532d' }}>
+                                        Drop WhatsApp Files Here
+                                    </h4>
+                                    <p style={{ margin: '0 0 12px 0', fontSize: '0.78rem', color: '#166534', maxWidth: '400px', lineHeight: '1.4' }}>
+                                        Open <strong>WhatsApp Web</strong> alongside Thunderbird. Drag a photo or PDF from your chat into this zone, or copy it in WhatsApp (<code style={{ background: 'rgba(255,255,255,0.6)', padding: '1px 4px', borderRadius: '3px' }}>Ctrl+C</code>) and click here then press <code style={{ background: 'rgba(255,255,255,0.6)', padding: '1px 4px', borderRadius: '3px' }}>Ctrl+V</code>.
+                                    </p>
+                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                        <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', background: '#25D366', color: '#fff' }}>
+                                            📱 Personal WhatsApp
+                                        </span>
+                                        <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', background: '#128C7E', color: '#fff' }}>
+                                            💼 Business WhatsApp
+                                        </span>
+                                        <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', background: '#059669', color: '#fff' }}>
+                                            ⚡ PDF / PNG / JPG
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div style={{
+                                    background: '#ecfdf5', color: '#065f46', border: '1px solid #a7f3d0', borderRadius: '10px',
+                                    padding: '8px 12px', fontSize: '0.74rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px'
+                                }}>
+                                    <CheckCircle size={14} /> Destination: Auto-attaches to Thunderbird Email Compose Draft
+                                </div>
+                            </div>
+                        )}
+
                         {/* Staged File Preview Area */}
                         {stagedFile && (
                             <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #cbd5e1', position: 'relative' }}>
@@ -1267,8 +1408,8 @@ export default function SmartUploadPanel({
                             onClick={() => handleConfirmSelection(stagedFile, 'body')}
                             style={{ 
                                 padding: '10px 18px', 
-                                background: stagedFile ? '#f1f5f9' : '#f1f5f9', 
-                                color: stagedFile ? '#4338ca' : '#94a3b8', 
+                                background: stagedFile ? '#eef2ff' : '#f1f5f9',
+                                color: stagedFile ? '#4338ca' : '#94a3b8',
                                 border: '1px solid #c7d2fe', 
                                 borderRadius: '10px', 
                                 cursor: stagedFile ? 'pointer' : 'not-allowed', 

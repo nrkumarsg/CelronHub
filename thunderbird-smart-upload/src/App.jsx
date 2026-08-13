@@ -15,9 +15,16 @@ export default function App() {
       const tbMessenger = typeof messenger !== 'undefined' ? messenger : (typeof browser !== 'undefined' ? browser : null);
 
       if (tbMessenger && tbMessenger.tabs && tbMessenger.compose) {
-        // Query active compose window
-        const tabs = await tbMessenger.tabs.query({ active: true, currentWindow: true });
-        const activeTab = tabs && tabs.length > 0 ? tabs[0] : null;
+        // This tool now runs in its own detached window (see background.js),
+        // so "currentWindow" here is the tool's window, not the compose
+        // window — the compose tab id is passed in via the URL instead.
+        const composeTabIdParam = new URLSearchParams(window.location.search).get('composeTabId');
+        let activeTab = composeTabIdParam ? { id: Number(composeTabIdParam) } : null;
+
+        if (!activeTab) {
+          const tabs = await tbMessenger.tabs.query({ active: true, currentWindow: true });
+          activeTab = tabs && tabs.length > 0 ? tabs[0] : null;
+        }
 
         if (activeTab && activeTab.id) {
           if (mode === 'body') {

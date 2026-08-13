@@ -130,6 +130,11 @@ export default function Sidebar() {
                     <>
                         <span className="nav-group-header">Core Hubs</span>
                         
+                        <NavLink to="/my-day" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="My Day — Daily Command Center">
+                            <span style={{ fontSize: 18, lineHeight: 1 }}>📅</span>
+                            <span className="nav-text" style={{ fontWeight: 800, color: location.pathname === '/my-day' ? '#ffffff' : '#a5b4fc' }}>My Day</span>
+                        </NavLink>
+
                         <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end title="Dashboard">
                             <LayoutDashboard size={20} color="#94a3b8" />
                             <span className="nav-text">Dashboard</span>

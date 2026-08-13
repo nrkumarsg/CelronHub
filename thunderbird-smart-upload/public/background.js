@@ -1,8 +1,58 @@
-// Auto-opens the Smart Upload Tool popup whenever a new compose window appears.
+// The Smart Upload Tool runs in a detached window rather than a toolbar
+// popup: toolbar popups in Thunderbird auto-close as soon as they lose focus,
+// which is exactly what happens when the native OS file picker (used to
+// grab real bytes for a Downloads/Recent selection) takes focus — killing
+// the panel's JS state before the file could be attached. A detached
+// window stays open regardless of focus, so the file picker no longer
+// destroys the in-progress selection.
+const openSmartUploadTools = new Map(); // composeTabId -> windowId
+
+async function openSmartUploadWindow(composeTab) {
+  if (!composeTab) return;
+  const existingWindowId = openSmartUploadTools.get(composeTab.id);
+  if (existingWindowId != null) {
+    try {
+      await messenger.windows.update(existingWindowId, { focused: true });
+      return;
+    } catch (err) {
+      // Window was closed without us noticing; fall through and reopen.
+      openSmartUploadTools.delete(composeTab.id);
+    }
+  }
+
+  try {
+    const popupWindow = await messenger.windows.create({
+      url: `index.html?composeTabId=${composeTab.id}`,
+      type: 'popup',
+      width: 836,
+      height: 640,
+    });
+    openSmartUploadTools.set(composeTab.id, popupWindow.id);
+  } catch (err) {
+    console.error('[SmartUpload] Failed to open tool window:', err);
+  }
+}
+
+messenger.windows.onRemoved.addListener((windowId) => {
+  for (const [composeTabId, openWindowId] of openSmartUploadTools) {
+    if (openWindowId === windowId) {
+      openSmartUploadTools.delete(composeTabId);
+      break;
+    }
+  }
+});
+
+messenger.composeAction.onClicked.addListener((tab) => {
+  openSmartUploadWindow(tab);
+});
+
+// Auto-opens the Smart Upload Tool whenever a new compose window appears.
 messenger.windows.onCreated.addListener(async (win) => {
   if (win.type !== 'messageCompose') return;
   try {
-    await messenger.composeAction.openPopup({ windowId: win.id });
+    const tabs = await messenger.tabs.query({ windowId: win.id });
+    const composeTab = tabs && tabs[0];
+    await openSmartUploadWindow(composeTab);
   } catch (err) {
     console.error('[SmartUpload] Auto-open failed:', err);
   }

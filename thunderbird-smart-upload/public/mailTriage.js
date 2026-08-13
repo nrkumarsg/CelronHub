@@ -38,10 +38,33 @@
     return !!addr && IGNORE_SENDER_REGEX.test(addr);
   }
 
+  // Newer Thunderbird versions report special folders via `specialUse`
+  // (an array, e.g. ['inbox']) and may leave the older singular `type`
+  // field unset. Some third-party/IMAP folders also just never populate
+  // either — fall back to matching the folder name.
+  function isFolderOfType(folder, type) {
+    if (!folder) return false;
+    if (folder.type === type) return true;
+    if (Array.isArray(folder.specialUse) && folder.specialUse.includes(type)) return true;
+    if (type === 'inbox' && /^inbox$/i.test(folder.name || '')) return true;
+    if (type === 'sent' && /^sent/i.test(folder.name || '')) return true;
+    if (type === 'junk' && /^(junk|spam)/i.test(folder.name || '')) return true;
+    return false;
+  }
+
+  function findFolderOfType(folders, type) {
+    return (folders || []).find((f) => isFolderOfType(f, type));
+  }
+
+  // messenger.messages.list() with no options returns messages in an
+  // UNSPECIFIED default order (often folder/UID order, not date order).
+  // On a long-lived IMAP inbox that's typically oldest-first, so capping at
+  // maxItems without an explicit sort silently grabs the oldest messages —
+  // missing all recent/unread mail entirely. Always request newest-first.
   async function listRecentMessages(folder, maxItems) {
     const results = [];
     try {
-      let page = await messenger.messages.list(folder);
+      let page = await messenger.messages.list(folder, { sortType: 'date', sortOrder: 'descending' });
       results.push(...page.messages);
       let guard = 0;
       while (page.id && results.length < maxItems && guard < 8) {
@@ -50,9 +73,42 @@
         guard++;
       }
     } catch (err) {
-      console.error('[MailTriage] listRecentMessages failed for folder', folder && folder.path, err);
+      // Older Thunderbird builds may not support the sort options — retry
+      // once without them rather than losing the whole folder's messages.
+      try {
+        let page = await messenger.messages.list(folder);
+        results.push(...page.messages);
+        let guard = 0;
+        while (page.id && results.length < maxItems && guard < 8) {
+          page = await messenger.messages.continueList(page.id);
+          results.push(...page.messages);
+          guard++;
+        }
+      } catch (err2) {
+        console.error('[MailTriage] listRecentMessages failed for folder', folder && folder.path, err2);
+      }
     }
     results.sort((a, b) => new Date(b.date) - new Date(a.date));
+    return results.slice(0, maxItems);
+  }
+
+  // Directly queries for unread messages so they're never missed just
+  // because they fall outside the most-recent-N window used elsewhere —
+  // e.g. an old unread newsletter sitting far down a huge inbox.
+  async function listUnreadMessages(folder, maxItems) {
+    const results = [];
+    try {
+      let page = await messenger.messages.query({ folder, unread: true });
+      results.push(...page.messages);
+      let guard = 0;
+      while (page.id && results.length < maxItems && guard < 8) {
+        page = await messenger.messages.continueList(page.id);
+        results.push(...page.messages);
+        guard++;
+      }
+    } catch (err) {
+      console.error('[MailTriage] listUnreadMessages failed for folder', folder && folder.path, err);
+    }
     return results.slice(0, maxItems);
   }
 
@@ -84,15 +140,40 @@
   }
 
   async function scanAccount(account, options) {
-    const inboxFolder = (account.folders || []).find((f) => f.type === 'inbox');
-    const sentFolder = (account.folders || []).find((f) => f.type === 'sent');
+    const inboxFolder = findFolderOfType(account.folders, 'inbox');
+    const sentFolder = findFolderOfType(account.folders, 'sent');
+    const junkFolder = findFolderOfType(account.folders, 'junk');
+
+    const diagnostics = {
+      accountName: account.name,
+      folderNames: (account.folders || []).map((f) => `${f.name}[${f.type || (f.specialUse || []).join(',') || '?'}]`),
+      inboxPath: inboxFolder ? inboxFolder.path : null,
+      sentPath: sentFolder ? sentFolder.path : null,
+    };
 
     const now = Date.now();
     const lookbackCutoff = now - options.lookbackDays * 86400000;
     const newCutoff = now - options.newReceivedDays * 86400000;
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayCutoff = todayStart.getTime();
 
-    const inboxMessages = inboxFolder ? await listRecentMessages(inboxFolder, options.maxMessagesPerFolder) : [];
+    const recentMessages = inboxFolder ? await listRecentMessages(inboxFolder, options.maxMessagesPerFolder) : [];
+    const unreadMessages = inboxFolder ? await listUnreadMessages(inboxFolder, options.maxMessagesPerFolder) : [];
     const sentMessages = sentFolder ? await listRecentMessages(sentFolder, options.maxMessagesPerFolder) : [];
+
+    // Merge the "most recent N" fetch with a dedicated unread-only query so
+    // unread mail is never missed just because it sits outside that window.
+    const inboxById = new Map();
+    for (const m of recentMessages) inboxById.set(m.id, m);
+    for (const m of unreadMessages) inboxById.set(m.id, m);
+    const inboxMessages = [...inboxById.values()].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    diagnostics.inboxFetched = recentMessages.length;
+    diagnostics.unreadQueryFetched = unreadMessages.length;
+    diagnostics.inboxMerged = inboxMessages.length;
+    diagnostics.inboxUnreadFetched = inboxMessages.filter((m) => !m.read).length;
+    diagnostics.sentFetched = sentMessages.length;
 
     const recentInbox = inboxMessages.filter((m) => new Date(m.date).getTime() >= lookbackCutoff);
     const recentSent = sentMessages.filter((m) => new Date(m.date).getTime() >= lookbackCutoff);
@@ -101,6 +182,24 @@
     for (const m of recentInbox) {
       if (!m.read && new Date(m.date).getTime() >= newCutoff && !isIgnoredAddress(m.author)) {
         newReceived.push(toItem(m, account, 'inbox'));
+      }
+    }
+
+    // Today & Unread: every inbox message received today, plus every unread
+    // inbox message regardless of age (not limited to lookbackDays/newReceivedDays).
+    const todayUnread = [];
+    for (const m of inboxMessages) {
+      if (isIgnoredAddress(m.author)) continue;
+      const msgTime = new Date(m.date).getTime();
+      const isToday = msgTime >= todayCutoff;
+      const isUnread = !m.read;
+      if (isToday || isUnread) {
+        todayUnread.push({
+          ...toItem(m, account, 'inbox'),
+          isToday,
+          isUnread,
+          junkFolderPath: junkFolder ? junkFolder.path : null,
+        });
       }
     }
 
@@ -140,7 +239,7 @@
       }
     }
 
-    return { newReceived, unanswered, awaitingReply };
+    return { newReceived, unanswered, awaitingReply, todayUnread, diagnostics };
   }
 
   async function scanAllMailboxes(userOptions) {
@@ -151,8 +250,10 @@
       newReceived: [],
       unanswered: [],
       awaitingReply: [],
+      todayUnread: [],
       scannedAt: new Date().toISOString(),
       accountsScanned: [],
+      diagnostics: [],
       options,
     };
 
@@ -162,15 +263,19 @@
         aggregate.newReceived.push(...result.newReceived);
         aggregate.unanswered.push(...result.unanswered);
         aggregate.awaitingReply.push(...result.awaitingReply);
+        aggregate.todayUnread.push(...result.todayUnread);
         aggregate.accountsScanned.push(account.name);
+        aggregate.diagnostics.push(result.diagnostics);
       } catch (err) {
         console.error('[MailTriage] scanAccount failed for', account.name, err);
+        aggregate.diagnostics.push({ accountName: account.name, error: err?.message || String(err) });
       }
     }
 
     aggregate.newReceived.sort((a, b) => new Date(b.date) - new Date(a.date));
     aggregate.unanswered.sort((a, b) => new Date(b.date) - new Date(a.date));
     aggregate.awaitingReply.sort((a, b) => b.daysWaiting - a.daysWaiting);
+    aggregate.todayUnread.sort((a, b) => new Date(b.date) - new Date(a.date));
 
     return aggregate;
   }
