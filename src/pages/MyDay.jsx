@@ -144,7 +144,7 @@ function ActivityRow({ job, onNavigate }) {
         return 0;
     })();
 
-    const currentStage = STAGES[currentStageIdx];
+    const currentStage = STAGES[currentStageIdx] || STAGES[0];
     const dayAge = getDayAge(job.issueDate || job.created_at);
     const isUrgent = job.followUpDays >= 3;
     const isWarning = job.followUpDays >= 1 && job.followUpDays < 3;
@@ -393,10 +393,12 @@ function PaymentEntryForm({ jobs, onSave, onCancel, captureFile, onFileChange, f
     const accentColor = isIn ? '#22c55e' : '#f97316';
     const accentBg    = isIn ? '#f0fdf4' : '#fff7ed';
 
-    const filteredJobs = jobs.filter(j =>
-        jobSearch.trim() === '' ||
-        j.jobNo.toLowerCase().includes(jobSearch.toLowerCase()) ||
-        j.customer.toLowerCase().includes(jobSearch.toLowerCase())
+    const filteredJobs = (jobs || []).filter(j =>
+        !j ? false : (
+            jobSearch.trim() === '' ||
+            String(j.jobNo || '').toLowerCase().includes(jobSearch.toLowerCase()) ||
+            String(j.customer || '').toLowerCase().includes(jobSearch.toLowerCase())
+        )
     ).slice(0, 6);
 
     const handleSubmit = async () => {
@@ -586,7 +588,10 @@ export default function MyDay() {
 
     // ─── Data Loading ──────────────────────────────────────────────────────
     const loadData = useCallback(async () => {
-        if (!profile?.company_id) return;
+        if (!profile?.company_id) {
+            setLoading(false);
+            return;
+        }
         try {
             setLoading(true);
             const [docSettings, { data: docs }] = await Promise.all([
@@ -929,15 +934,16 @@ export default function MyDay() {
     }, {});
 
     const filteredJobs = currentTabJobs.filter(j => {
+        if (!j) return false;
         if (stageFilter !== 'ALL' && getJobStageKey(j) !== stageFilter) {
             return false;
         }
         if (pipelineSearch) {
             const q = pipelineSearch.toLowerCase();
-            return j.jobNo.toLowerCase().includes(q) ||
-                   j.customer.toLowerCase().includes(q) ||
-                   (j.description && j.description.toLowerCase().includes(q)) ||
-                   (j.customerPoNo && j.customerPoNo.toLowerCase().includes(q));
+            return String(j.jobNo || '').toLowerCase().includes(q) ||
+                   String(j.customer || '').toLowerCase().includes(q) ||
+                   (j.description && String(j.description).toLowerCase().includes(q)) ||
+                   (j.customerPoNo && String(j.customerPoNo).toLowerCase().includes(q));
         }
         return true;
     });
@@ -976,10 +982,10 @@ export default function MyDay() {
                     {/* Quick Stats Row */}
                     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                         {[
-                            { label: 'Action Needed', value: todayStats.overdue, color: '#f87171', icon: AlertCircle },
-                            { label: "Today's Orders", value: todayStats.orders, color: '#34d399', icon: Package },
-                            { label: 'Quotes Sent', value: todayStats.quotes, color: '#fbbf24', icon: FileText },
-                            { label: "Today's Profit", value: `SGD ${todayStats.profit.toFixed(0)}`, color: '#818cf8', icon: TrendingUp },
+                            { label: 'Action Needed', value: todayStats?.overdue || 0, color: '#f87171', icon: AlertCircle },
+                            { label: "Today's Orders", value: todayStats?.orders || 0, color: '#34d399', icon: Package },
+                            { label: 'Quotes Sent', value: todayStats?.quotes || 0, color: '#fbbf24', icon: FileText },
+                            { label: "Today's Profit", value: `SGD ${((todayStats && typeof todayStats.profit === 'number') ? todayStats.profit : 0).toFixed(0)}`, color: '#818cf8', icon: TrendingUp },
                         ].map(stat => {
                             const Icon = stat.icon;
                             return (
@@ -1403,5 +1409,42 @@ export default function MyDay() {
                 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
             `}</style>
         </div>
+    );
+}
+
+// ─── Error Boundary Wrapper to Prevent White Screen ─────────────────────────
+class MyDayErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
+    static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+    }
+    componentDidCatch(error, errorInfo) {
+        console.error('MyDay ErrorBoundary caught error:', error, errorInfo);
+    }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div style={{ maxWidth: 800, margin: '40px auto', padding: '30px', background: '#fff', borderRadius: 16, border: '1px solid #fecaca', boxShadow: '0 4px 20px rgba(0,0,0,0.05)', textAlign: 'center' }}>
+                    <AlertCircle size={40} color="#ef4444" style={{ margin: '0 auto 12px' }} />
+                    <h2 style={{ color: '#991b1b', fontSize: 20, margin: '0 0 8px' }}>My Day Display Notice</h2>
+                    <p style={{ color: '#7f1d1d', fontSize: 13, margin: '0 0 20px' }}>{this.state.error?.message || 'An unexpected rendering error occurred.'}</p>
+                    <button onClick={() => window.location.reload()} style={{ padding: '10px 24px', borderRadius: 8, background: '#6366f1', color: '#fff', border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+                        Refresh Dashboard
+                    </button>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
+export function MyDayWithBoundary(props) {
+    return (
+        <MyDayErrorBoundary>
+            <MyDay {...props} />
+        </MyDayErrorBoundary>
     );
 }
