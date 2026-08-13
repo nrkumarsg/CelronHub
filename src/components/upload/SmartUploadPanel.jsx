@@ -71,6 +71,8 @@ export default function SmartUploadPanel({
     const [previewUrl, setPreviewUrl] = useState('');
     const [isCalculatingHash, setIsCalculatingHash] = useState(false);
     
+    const [isDraggingOver, setIsDraggingOver] = useState(false);
+    
     // Duplicate warning state
     const [duplicateRecord, setDuplicateRecord] = useState(null);
     
