@@ -6,7 +6,7 @@ import {
     Truck, DollarSign, BookOpen, Loader2, X, ChevronRight, ChevronDown,
     RotateCcw, Archive, RefreshCw, Search, Zap, Bell, Calendar,
     ArrowRight, ExternalLink, MoreVertical, Sparkles, Building2,
-    MessageSquare, Award, Ruler, Image, QrCode, Folder, Filter
+    MessageSquare, Award, Ruler, Image, QrCode, Folder, Filter, Cloud
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -544,8 +544,8 @@ function PaymentEntryForm({ jobs, onSave, onCancel, captureFile, onFileChange, f
     );
 }
 
-// ─── Main MyDay Component ───────────────────────────────────────────────────
-export default function MyDay() {
+// ─── Main MyDay Inner Component ─────────────────────────────────────────────
+function MyDayInner() {
     const navigate = useNavigate();
     const { profile } = useAuth();
 
@@ -1441,10 +1441,10 @@ class MyDayErrorBoundary extends React.Component {
     }
 }
 
-export function MyDayWithBoundary(props) {
+export default function MyDay(props) {
     return (
         <MyDayErrorBoundary>
-            <MyDay {...props} />
+            <MyDayInner {...props} />
         </MyDayErrorBoundary>
     );
 }
