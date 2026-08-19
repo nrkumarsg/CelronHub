@@ -52,19 +52,22 @@ export default function DriveExplorer({ initialFolderId = null, folderName = nul
             if (!accessToken) throw new Error("Google Drive not connected");
 
             const roots = await initializeVault(accessToken, profile.company_id);
+            const rootId = roots?.celronRootId || '1kCdb5celO1Ubo3SQZWCYj96eEmc1VAeJ';
             
-            // Initial view: Main Tiers
-            const initialItems = [
-                { id: roots.timeBasedId, name: '01. TIME_BASED', type: 'folder', icon: <Clock size={20} color="#3b82f6" />, description: 'Jobs & Year-wise records' },
-                { id: roots.permanentId, name: '02. PERMANENT_RECORDS', type: 'folder', icon: <Shield size={20} color="#10b981" />, description: 'Company legal & master docs' },
-                { id: roots.shortTermId, name: '03. SHORT_TERM_PROJECTS', type: 'folder', icon: <Calendar size={20} color="#f59e0b" />, description: 'Active project materials' },
-                { id: roots.corpVaultId, name: '04. CORPORATE_VAULT', type: 'folder', icon: <Briefcase size={20} color="#8b5cf6" />, description: 'Standards & Stationery' },
-                { id: roots.inventoryId, name: '05. INVENTORY_CATALOG', type: 'folder', icon: <HardDrive size={20} color="#ef4444" />, description: 'Product photos & sheets' },
-                { id: roots.scansInboxId, name: '99. SCANS_INBOX', type: 'folder', icon: <Smartphone size={20} color="#6366f1" />, description: 'Incoming scans from phone' }
-            ];
+            // List live items under CELRONHUB root
+            const files = await listFolderContent(accessToken, rootId);
+            setItems(files.map(f => ({
+                id: f.id,
+                name: f.name,
+                type: f.mimeType === 'application/vnd.google-apps.folder' ? 'folder' : 'file',
+                mimeType: f.mimeType,
+                webViewLink: f.webViewLink,
+                thumbnailLink: f.thumbnailLink,
+                size: f.size,
+                modifiedTime: f.modifiedTime
+            })));
             
-            setItems(initialItems);
-            setPath([{ id: roots.celronRootId, name: 'CELRONHUB' }]);
+            setPath([{ id: rootId, name: 'CELRONHUB' }]);
         } catch (err) {
             console.error('Explorer setup error:', err);
             setError(err.message);

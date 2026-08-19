@@ -4,9 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import { getPartners, getContacts } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import StageReminders from '../components/dashboard/StageReminders';
-import TodoReminder from '../components/dashboard/TodoReminder';
-import SystemReminders from '../components/dashboard/SystemReminders';
 import GDriveConnectionTray from '../components/common/GDriveConnectionTray';
 
 export default function Dashboard() {
@@ -665,11 +662,6 @@ export default function Dashboard() {
                     </div>
                 </div>
             )}
-
-            {/* AI Workflow Action Reminders */}
-            {!searchTerm && <SystemReminders />}
-            {!searchTerm && <TodoReminder />}
-            {!searchTerm && <StageReminders />}
 
             {searchTerm && (
                 <div className="glass-panel">

@@ -369,6 +369,7 @@ function App() {
               {/* Workflows & Universal Finder Module */}
               <Route path="/unified-supplier-hub" element={<ProtectedRoute><UnifiedSupplierHub /></ProtectedRoute>} />
               <Route path="/workflows/jobs-dashboard" element={<ProtectedRoute><JobsDashboard /></ProtectedRoute>} />
+              <Route path="/workflows/jobs_dashboard" element={<ProtectedRoute><JobsDashboard /></ProtectedRoute>} />
               <Route path="/workflows/whiteboard" element={<ProtectedRoute><JobsWhiteboard /></ProtectedRoute>} />
               <Route path="/workflows" element={<ProtectedRoute><WorkflowV2Board /></ProtectedRoute>} />
               <Route path="/enquiries" element={<ProtectedRoute><EnquiryList /></ProtectedRoute>} />

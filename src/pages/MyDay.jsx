@@ -1141,6 +1141,19 @@ function MyDayInner() {
                         </div>
                     </div>
 
+                    {/* ── Embedded Smart Document Upload ─────────────────── */}
+                    <div style={{ marginTop: 20, marginBottom: 16 }}>
+                        <SmartUploadPanel
+                            embedded={true}
+                            isOpen={true}
+                            initialTab="recent"
+                            documentType="manual"
+                            activeFolderId={settings?.gdrive_celron_root_id || settings?.google_drive_folder_id}
+                            activeFolderName={settings?.company_name || 'System Workspace'}
+                            onSelect={handleHubFileSelected}
+                        />
+                    </div>
+
                     {/* ── Follow-Up Queue ───────────────────────────────── */}
                     {followUps.length > 0 && (
                         <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e2e8f0', marginTop: 16, overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
