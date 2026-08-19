@@ -1438,25 +1438,29 @@ export default function JobsDashboard() {
                                             <Trash2 size={16} />
                                         </button>
 
-                                        {/* Review Link */}
+                                        {/* Eagle View / Review Link */}
                                         <button
                                             onClick={() => {
-                                                const masterId = job.masterJob?.id || job.allDocs[0]?.id;
-                                                if (masterId) navigate(`/workflows/editor/job/${masterId}`);
+                                                const masterId = job.masterJob?.id || job.allDocs[0]?.id || job.jobNo;
+                                                if (masterId) navigate(`/workflows/job-eagle-view/${masterId}`);
                                             }}
                                             style={{ 
-                                                background: 'transparent', 
+                                                background: 'linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%)', 
                                                 border: 'none', 
-                                                color: 'var(--accent)', 
-                                                fontWeight: 700, 
+                                                color: '#ffffff', 
+                                                fontWeight: 800, 
                                                 cursor: 'pointer',
                                                 display: 'flex',
                                                 alignItems: 'center',
-                                                gap: '4px',
-                                                fontSize: '0.9rem'
+                                                gap: '6px',
+                                                fontSize: '0.85rem',
+                                                padding: '6px 14px',
+                                                borderRadius: '10px',
+                                                boxShadow: '0 2px 6px rgba(79, 70, 229, 0.25)'
                                             }}
+                                            title="Open Dedicated Eagle View Page"
                                         >
-                                            Review <ArrowRight size={16} />
+                                            Eagle View <ArrowRight size={16} />
                                         </button>
                                     </div>
                                 </div>

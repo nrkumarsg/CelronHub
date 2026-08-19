@@ -88,6 +88,7 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
     
     // Check if we should hide prices (for DO and PKL)
     const isDeliveryDoc = document_type?.toUpperCase().includes('DELIVERY') || document_type?.toUpperCase().includes('PACKING');
+    const isPurchaseOrder = document_type?.toUpperCase().includes('PURCHASE') || document_type?.toUpperCase().includes('PO') || document_type?.toUpperCase().includes('SUPPLIER');
 
     const isAnithaType = ['Tax Invoice', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(document_type);
     
@@ -376,7 +377,7 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
                         </div>
                         ` : `
                         <div style="display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%;">
-                            ${paynowB64 ? `
+                            ${(paynowB64 && !isPurchaseOrder) ? `
                             <div style="text-align: center; border: 1px solid #cbd5e1; padding: 4px; border-radius: 4px; background: white; flex-shrink: 0;">
                                 <img src="${paynowB64}" style="width: 80px; height: 80px; object-fit: contain;" />
                                 <div style="font-size: 8px; font-weight: bold; margin-top: 2px; color: #1e3a8a;">PAYNOW UEN</div>

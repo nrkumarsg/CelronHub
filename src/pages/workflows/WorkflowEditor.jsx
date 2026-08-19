@@ -1189,7 +1189,8 @@ export default function WorkflowEditor() {
     }, [isNew, formData.id, formData.document_type, formData.assigned_job_no, formData.drive_folder_id, formData.gdrive_folder_id, partners, settings]);
 
     const fetchSignedProofs = async () => {
-        if (!formData.assigned_job_no) return;
+        const docNo = formData.assigned_job_no || formData.document_no || formData.enquiry_no;
+        if (!docNo) return;
         setLoadingSignedProofs(true);
         try {
             const token = getStoredToken();
@@ -1209,13 +1210,12 @@ export default function WorkflowEditor() {
         if (isNew || !formData.id) return;
         setLoadingDeliveryProofs(true);
         try {
-            const { data, error } = await supabase
-                .from('delivery_proofs')
-                .select('*')
-                .eq('document_id', formData.id)
-                .order('created_at', { ascending: false });
-            if (error) throw error;
-            setDeliveryProofs(data || []);
+            const token = getStoredToken();
+            const rootId = await ensureJobFolder();
+            const targetFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
+            const files = await listFolderContent(token, targetFolderId);
+            const deliveryFiles = files.filter(f => f.mimeType !== 'application/vnd.google-apps.folder' && (f.name.toLowerCase().includes('delivery') || f.name.toLowerCase().includes('do')));
+            setDeliveryProofs(deliveryFiles);
         } catch (err) {
             console.error('Error fetching delivery proofs:', err);
         } finally {
@@ -1376,7 +1376,8 @@ export default function WorkflowEditor() {
     };
 
     const fetchGallery = async () => {
-        if (!formData.assigned_job_no) return;
+        const docNo = formData.assigned_job_no || formData.document_no || formData.enquiry_no;
+        if (!docNo) return;
         setLoadingGallery(true);
         try {
             const token = getStoredToken();
@@ -1393,7 +1394,8 @@ export default function WorkflowEditor() {
     };
 
     const fetchDriveAttachments = async () => {
-        if (!formData.assigned_job_no) return;
+        const docNo = formData.assigned_job_no || formData.document_no || formData.enquiry_no;
+        if (!docNo) return;
         setLoadingDriveFiles(true);
         try {
             const isAuthed = await checkGoogleAuth();

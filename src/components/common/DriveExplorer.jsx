@@ -248,7 +248,33 @@ export default function DriveExplorer({ initialFolderId = null, folderName = nul
                                     <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</p>
                                     {item.description && <p style={{ margin: 0, fontSize: '0.75rem', color: '#94a3b8' }}>{item.description}</p>}
                                 </div>
-                                {item.type === 'folder' ? <ChevronRight size={16} color="#cbd5e1" /> : <ExternalLink size={14} color="#cbd5e1" />}
+                                 {item.type === 'folder' ? (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <a
+                                            href={item.webViewLink || `https://drive.google.com/drive/folders/${item.id}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={(e) => e.stopPropagation()}
+                                            title={`Open folder "${item.name}" in Google Drive (new window)`}
+                                            style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                padding: '4px 8px',
+                                                borderRadius: '6px',
+                                                fontSize: '0.75rem',
+                                                fontWeight: 700,
+                                                color: '#4f46e5',
+                                                background: '#eef2ff',
+                                                border: '1px solid rgba(79,70,229,0.2)',
+                                                textDecoration: 'none'
+                                            }}
+                                        >
+                                            <ExternalLink size={12} /> Drive
+                                        </a>
+                                        <ChevronRight size={16} color="#cbd5e1" />
+                                    </div>
+                                ) : <ExternalLink size={14} color="#cbd5e1" />}
                             </div>
                         ))}
                     </div>
@@ -261,7 +287,7 @@ export default function DriveExplorer({ initialFolderId = null, folderName = nul
                                 style={{
                                     padding: '16px', borderRadius: '16px', border: '1px solid #e2e8f0',
                                     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px',
-                                    cursor: 'pointer', transition: 'all 0.2s', textAlign: 'center'
+                                    cursor: 'pointer', transition: 'all 0.2s', textAlign: 'center', position: 'relative'
                                 }}
                                 onMouseOver={(e) => e.currentTarget.style.borderColor = '#6366f1'}
                                 onMouseOut={(e) => e.currentTarget.style.borderColor = '#e2e8f0'}
@@ -272,6 +298,31 @@ export default function DriveExplorer({ initialFolderId = null, folderName = nul
                                 <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1e293b', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                                     {item.name}
                                 </span>
+                                {item.type === 'folder' && (
+                                    <a
+                                        href={item.webViewLink || `https://drive.google.com/drive/folders/${item.id}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        title={`Open folder "${item.name}" in Google Drive (new window)`}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            padding: '2px 6px',
+                                            borderRadius: '6px',
+                                            fontSize: '0.7rem',
+                                            fontWeight: 700,
+                                            color: '#4f46e5',
+                                            background: '#eef2ff',
+                                            border: '1px solid rgba(79,70,229,0.2)',
+                                            textDecoration: 'none',
+                                            marginTop: '4px'
+                                        }}
+                                    >
+                                        <ExternalLink size={11} /> Open Drive
+                                    </a>
+                                )}
                             </div>
                         ))}
                     </div>

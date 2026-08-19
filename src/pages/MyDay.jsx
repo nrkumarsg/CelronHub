@@ -6,7 +6,7 @@ import {
     Truck, DollarSign, BookOpen, Loader2, X, ChevronRight, ChevronDown,
     RotateCcw, Archive, RefreshCw, Search, Zap, Bell, Calendar,
     ArrowRight, ExternalLink, MoreVertical, Sparkles, Building2,
-    MessageSquare, Award, Ruler, Image, QrCode, Folder, Filter, Cloud
+    MessageSquare, Award, Ruler, Image, QrCode, Folder, Filter, Cloud, Smartphone
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';

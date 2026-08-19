@@ -33,6 +33,7 @@ import UnifiedSupplierHub from './pages/workflows/UnifiedSupplierHub';
 import WorkflowV2Board from './pages/workflows/WorkflowV2Board';
 import JobsWhiteboard from './pages/workflows/JobsWhiteboard';
 import JobsDashboard from './pages/workflows/JobsDashboard';
+import JobEagleView from './pages/workflows/JobEagleView';
 import EnquiryList from './pages/workflows/EnquiryList';
 import WorkflowEditor from './pages/workflows/WorkflowEditor';
 import StatementOfAccount from './pages/workflows/StatementOfAccount';
@@ -388,6 +389,8 @@ function App() {
               <Route path="/workflows/enquiry/print/:id" element={<ProtectedRoute><EnquiryPrintPreview /></ProtectedRoute>} />
               <Route path="/workflows/enquiry/:id" element={<ProtectedRoute><EnquiryDetails /></ProtectedRoute>} />
               <Route path="/workflows/job/:id" element={<ProtectedRoute><JobDetails /></ProtectedRoute>} />
+              <Route path="/workflows/job-eagle-view/:id" element={<ProtectedRoute><JobEagleView /></ProtectedRoute>} />
+              <Route path="/workflows/eagle-view/:id" element={<ProtectedRoute><JobEagleView /></ProtectedRoute>} />
               <Route path="/workflows/editor/:type/:id" element={<ProtectedRoute><WorkflowEditor /></ProtectedRoute>} />
               <Route path="/workflows/float-supplier-order" element={<ProtectedRoute><FloatSupplierOrder /></ProtectedRoute>} />
               <Route path="/workflows/print/:id" element={<ProtectedRoute><WorkflowPrintPreview /></ProtectedRoute>} />

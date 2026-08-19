@@ -151,6 +151,7 @@ export default function WorkflowV2Board() {
 
     const dropdownRef = useRef(null);
     const [subTab, setSubTab] = useState('Ongoing'); // General sub-tab state (Ongoing, Completed, Archived, Sent, Draft, Paid, etc.)
+    const [compactWindow, setCompactWindow] = useState(true); // 5-6 row small window mode
 
     const location = useLocation();
     const searchParams = new URLSearchParams(location.search);
@@ -1659,21 +1660,21 @@ export default function WorkflowV2Board() {
                     </div>
                 )}
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '8px 16px', minWidth: '350px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '16px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '8px 16px', minWidth: '320px', flex: 1 }}>
                             <Search size={18} color="var(--text-secondary)" style={{ marginRight: '8px' }} />
                             <input
                                 type="text"
                                 placeholder="Search document no, customer, subject..."
-                                style={{ border: 'none', background: 'transparent', outline: 'none', flex: 1, color: 'var(--text-primary)' }}
+                                style={{ border: 'none', background: 'transparent', outline: 'none', width: '100%', color: 'var(--text-primary)' }}
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                             />
                         </div>
 
                         {/* Customer Filter Dropdown */}
-                        <div style={{ minWidth: '300px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ minWidth: '260px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <Filter size={18} color="var(--text-secondary)" style={{ marginLeft: '8px' }} />
                             <SearchableSelect
                                 options={(() => {
@@ -1720,11 +1721,60 @@ export default function WorkflowV2Board() {
                         )}
                     </div>
 
+                    {/* Connected Active Tile Filter Badge & Window View Mode Button */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{
+                            background: '#eef2ff',
+                            border: '1px solid #c7d2fe',
+                            color: '#4338ca',
+                            padding: '6px 12px',
+                            borderRadius: '20px',
+                            fontSize: '0.8rem',
+                            fontWeight: 800,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px'
+                        }}>
+                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#4f46e5' }} />
+                            <span>Tile Filter: {subTab || activeType} ({sortedDocs.length})</span>
+                        </div>
+
+                        <button
+                            onClick={() => setCompactWindow(!compactWindow)}
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '6px 12px',
+                                borderRadius: '8px',
+                                border: '1px solid #cbd5e1',
+                                background: compactWindow ? '#ffffff' : '#f1f5f9',
+                                color: '#334155',
+                                fontSize: '0.8rem',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease'
+                            }}
+                            title={compactWindow ? "Switch to full expanded table view" : "Switch to 5-6 row compact window view"}
+                        >
+                            {compactWindow ? '📐 Small Window (5-6 Rows)' : '📄 Full View'}
+                        </button>
+                    </div>
                 </div>
 
-                <div className="table-container">
+                <div 
+                    className="table-container custom-scrollbar"
+                    style={{
+                        maxHeight: compactWindow ? '360px' : 'none',
+                        overflowY: compactWindow ? 'auto' : 'visible',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '12px 12px 0 0',
+                        boxShadow: '0 4px 16px rgba(0,0,0,0.03)',
+                        position: 'relative'
+                    }}
+                >
                     <table>
-                        <thead>
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#f8fafc', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                             {activeType === 'Statement of Account' ? (
                                 <tr>
                                     <th style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}>
@@ -2510,6 +2560,38 @@ export default function WorkflowV2Board() {
                                 </tfoot>
                             )}
                     </table>
+                </div>
+
+                {/* Footer status bar for small window */}
+                <div style={{
+                    padding: '10px 18px',
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderTop: 'none',
+                    borderRadius: '0 0 12px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    fontSize: '0.78rem',
+                    color: '#64748b',
+                    fontWeight: 600
+                }}>
+                    <span>
+                        Showing {compactWindow ? `top 5-6 rows per window` : `all ${sortedDocs.length} rows`} for tile: <strong style={{ color: '#4f46e5' }}>{subTab || activeType}</strong> ({sortedDocs.length} matching jobs/docs)
+                    </span>
+                    <button
+                        onClick={() => setCompactWindow(!compactWindow)}
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#4f46e5',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                            fontSize: '0.78rem'
+                        }}
+                    >
+                        {compactWindow ? 'Expand to Full List View ↓' : 'Collapse to Small Window (5-6 Rows) ↑'}
+                    </button>
                 </div>
             </div>
 

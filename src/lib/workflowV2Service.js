@@ -1705,5 +1705,117 @@ export const updateJobPipelineStage = async (docId, newStage, isManual = true, n
     }
 };
 
+/**
+ * Fetch complete Eagle View data suite for a specific Job ID or Job Number.
+ * Returns master job, linked enquiry, quotations, customer PO, supplier POs, DOs, invoices, and line items.
+ */
+export const getJobEagleViewData = async (jobIdOrNo) => {
+    if (!jobIdOrNo) return { success: false, error: 'Missing job parameter' };
+    try {
+        // 1. Fetch Job document
+        let query = supabase
+            .from('workflow_documents')
+            .select(`
+                *,
+                partners!partner_id(id, name),
+                vessels!vessel_id(id, vessel_name),
+                work_locations!work_location_id(id, location_name),
+                contacts!contact_id(id, name, email)
+            `);
+
+        // Match by UUID or assigned_job_no/document_no
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(jobIdOrNo);
+        if (isUuid) {
+            query = query.or(`id.eq.${jobIdOrNo},assigned_job_no.eq.${jobIdOrNo}`);
+        } else {
+            query = query.or(`document_no.eq.${jobIdOrNo},assigned_job_no.eq.${jobIdOrNo}`);
+        }
+
+        const { data: matchedDocs, error: matchError } = await query;
+        if (matchError) throw matchError;
+
+        if (!matchedDocs || matchedDocs.length === 0) {
+            return { success: false, error: 'Job document not found' };
+        }
+
+        // Identify primary Master Job doc
+        const masterJob = matchedDocs.find(d => d.document_type === 'Job') || matchedDocs[0];
+        const jobNo = masterJob.assigned_job_no || masterJob.document_no;
+
+        // 2. Fetch all documents in the job suite by assigned_job_no or job_id
+        const { data: suiteDocs, error: suiteError } = await supabase
+            .from('workflow_documents')
+            .select(`
+                *,
+                partners!partner_id(id, name),
+                vessels!vessel_id(id, vessel_name),
+                work_locations!work_location_id(id, location_name),
+                contacts!contact_id(id, name, email)
+            `)
+            .or(`assigned_job_no.eq.${jobNo},job_id.eq.${masterJob.id},id.eq.${masterJob.id}`)
+            .order('created_at', { ascending: true });
+
+        if (suiteError) throw suiteError;
+
+        // 3. Fetch all line items for all documents in the suite
+        const docIds = (suiteDocs || []).map(d => d.id);
+        let lineItems = [];
+        if (docIds.length > 0) {
+            const { data: items, error: itemsError } = await supabase
+                .from('workflow_line_items')
+                .select('*')
+                .in('document_id', docIds)
+                .order('sort_order', { ascending: true });
+            
+            if (!itemsError) lineItems = items || [];
+        }
+
+        // Attach items to their respective documents
+        const docsWithItems = (suiteDocs || []).map(doc => ({
+            ...doc,
+            items: lineItems.filter(it => it.document_id === doc.id)
+        }));
+
+        // 4. Categorize document types
+        const enquiryDoc = docsWithItems.find(d => d.document_type === 'Enquiry');
+        const quotationDocs = docsWithItems.filter(d => d.document_type === 'Quotation');
+        const customerPoDocs = docsWithItems.filter(d => d.document_type === 'Order Acknowledgment' || (d.document_type === 'Purchase Order' && d.partner_id === masterJob.partner_id));
+        const supplierPoDocs = docsWithItems.filter(d => d.document_type === 'Purchase Order' && d.partner_id !== masterJob.partner_id);
+        const doDocs = docsWithItems.filter(d => d.document_type === 'Delivery Order');
+        const invoiceDocs = docsWithItems.filter(d => d.document_type === 'Tax Invoice' || d.document_type === 'Proforma Invoice');
+
+        // Calculate Totals
+        const customerBilledTotal = invoiceDocs.reduce((sum, d) => sum + (parseFloat(d.total_amount) || 0), 0);
+        const supplierPoTotal = supplierPoDocs.reduce((sum, d) => sum + (parseFloat(d.total_amount) || 0), 0);
+        const grossProfit = customerBilledTotal - supplierPoTotal;
+        const profitMargin = customerBilledTotal > 0 ? ((grossProfit / customerBilledTotal) * 100).toFixed(1) : '0.0';
+
+        return {
+            success: true,
+            data: {
+                masterJob,
+                jobNo,
+                allDocs: docsWithItems,
+                enquiryDoc,
+                quotationDocs,
+                customerPoDocs,
+                supplierPoDocs,
+                doDocs,
+                invoiceDocs,
+                metrics: {
+                    billedTotal: customerBilledTotal,
+                    supplierPoTotal: supplierPoTotal,
+                    grossProfit: grossProfit,
+                    profitMarginPercent: profitMargin
+                }
+            }
+        };
+    } catch (err) {
+        console.error('Error fetching job eagle view data:', err);
+        return { success: false, error: err.message };
+    }
+};
+
+
 
 
