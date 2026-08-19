@@ -151,7 +151,7 @@ export default function WorkflowV2Board() {
 
     const dropdownRef = useRef(null);
     const [subTab, setSubTab] = useState('Ongoing'); // General sub-tab state (Ongoing, Completed, Archived, Sent, Draft, Paid, etc.)
-    const [compactWindow, setCompactWindow] = useState(true); // 5-6 row small window mode
+    const [compactWindow, setCompactWindow] = useState(false); // Default to full screen view
 
     const location = useLocation();
     const searchParams = new URLSearchParams(location.search);
@@ -1748,8 +1748,8 @@ export default function WorkflowV2Board() {
                                 padding: '6px 12px',
                                 borderRadius: '8px',
                                 border: '1px solid #cbd5e1',
-                                background: compactWindow ? '#ffffff' : '#f1f5f9',
-                                color: '#334155',
+                                background: compactWindow ? '#ffffff' : '#eff6ff',
+                                color: compactWindow ? '#334155' : '#1d4ed8',
                                 fontSize: '0.8rem',
                                 fontWeight: 700,
                                 cursor: 'pointer',
@@ -1757,7 +1757,7 @@ export default function WorkflowV2Board() {
                             }}
                             title={compactWindow ? "Switch to full expanded table view" : "Switch to 5-6 row compact window view"}
                         >
-                            {compactWindow ? '📐 Small Window (5-6 Rows)' : '📄 Full View'}
+                            {compactWindow ? '📐 Small Window (5-6 Rows)' : '📺 Full Screen View'}
                         </button>
                     </div>
                 </div>
@@ -1765,8 +1765,10 @@ export default function WorkflowV2Board() {
                 <div 
                     className="table-container custom-scrollbar"
                     style={{
-                        maxHeight: compactWindow ? '360px' : 'none',
-                        overflowY: compactWindow ? 'auto' : 'visible',
+                        height: compactWindow ? '360px' : 'auto',
+                        maxHeight: compactWindow ? '360px' : 'calc(100vh - 240px)',
+                        minHeight: compactWindow ? 'auto' : '560px',
+                        overflowY: 'auto',
                         border: '1px solid #e2e8f0',
                         borderRadius: '12px 12px 0 0',
                         boxShadow: '0 4px 16px rgba(0,0,0,0.03)',

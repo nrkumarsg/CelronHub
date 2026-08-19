@@ -46,7 +46,7 @@ export default function JobsDashboard() {
     const [tableSelectedPartnerId, setTableSelectedPartnerId] = useState('');
     const [tableSortKey, setTableSortKey] = useState('created_at');
     const [tableSortDirection, setTableSortDirection] = useState('desc');
-    const [tableCompactWindow, setTableCompactWindow] = useState(true);
+    const [tableCompactWindow, setTableCompactWindow] = useState(false);
     const [editingJob, setEditingJob] = useState(null);
 
     const jobsTools = [
@@ -1481,8 +1481,8 @@ export default function JobsDashboard() {
                                 padding: '6px 12px',
                                 borderRadius: '8px',
                                 border: '1px solid #cbd5e1',
-                                background: tableCompactWindow ? '#ffffff' : '#f1f5f9',
-                                color: '#334155',
+                                background: tableCompactWindow ? '#ffffff' : '#eff6ff',
+                                color: tableCompactWindow ? '#334155' : '#1d4ed8',
                                 fontSize: '0.8rem',
                                 fontWeight: 700,
                                 cursor: 'pointer',
@@ -1490,7 +1490,7 @@ export default function JobsDashboard() {
                             }}
                             title={tableCompactWindow ? "Switch to full expanded table view" : "Switch to 5-6 row compact window view"}
                         >
-                            {tableCompactWindow ? '📐 Small Window (5-6 Rows)' : '📄 Full View'}
+                            {tableCompactWindow ? '📐 Small Window (5-6 Rows)' : '📺 Full Screen View'}
                         </button>
                     </div>
                 </div>
@@ -1499,8 +1499,10 @@ export default function JobsDashboard() {
                 <div
                     className="table-container custom-scrollbar"
                     style={{
-                        maxHeight: tableCompactWindow ? '360px' : 'none',
-                        overflowY: tableCompactWindow ? 'auto' : 'visible',
+                        height: tableCompactWindow ? '360px' : 'auto',
+                        maxHeight: tableCompactWindow ? '360px' : 'calc(100vh - 240px)',
+                        minHeight: tableCompactWindow ? 'auto' : '560px',
+                        overflowY: 'auto',
                         border: '1px solid #e2e8f0',
                         borderRadius: '12px 12px 0 0',
                         boxShadow: '0 4px 16px rgba(0,0,0,0.03)',
