@@ -1422,7 +1422,7 @@ export const QuickContactAdd = ({ company_id, partner_id, partners, initialData,
 // NEW: Combined Partner & Contact Dual Add
 export const QuickPartnerContactDualAdd = ({ company_id, initialPartner, initialContact, partners, onSuccess, onCancel, title, defaultType = 'Supplier' }) => {
     const [activeTab, setActiveTab] = useState('details'); // 'details' | 'documents'
-    const [smartPasteEnabled, setSmartPasteEnabled] = useState(true);
+    const [smartPasteEnabled, setSmartPasteEnabled] = useState(false);
     const [partnerData, setPartnerData] = useState(initialPartner || {
         name: '',
         uen: '',
