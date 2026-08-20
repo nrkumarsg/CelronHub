@@ -1,11 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
-import { Save, ArrowLeft, X, Plus, ExternalLink, Globe, Building2, MessageSquare, Sparkles, Search, Loader2, Check, RotateCcw, UserPlus, Mail, Phone, MapPin } from 'lucide-react';
-import { getPartners, savePartner, getContactsByPartner, deleteContact, uploadFile, saveContact, getCategories, saveCategory } from '../lib/store';
+import { 
+    Save, ArrowLeft, X, Plus, ExternalLink, Globe, Building2, 
+    MessageSquare, Sparkles, Search, Loader2, Check, RotateCcw, 
+    UserPlus, Mail, Phone, MapPin, User, Users, Edit, Trash2, Briefcase 
+} from 'lucide-react';
+import { 
+    getPartners, savePartner, getContactsByPartner, deleteContact, 
+    uploadFile, saveContact, getCategories, saveCategory 
+} from '../lib/store';
 import { useAuth } from '../contexts/AuthContext';
-import { smartSearchCompany } from '../lib/geminiService';
+import { smartSearchCompany, researchContactWithGemini, parseOCRBusinessCard } from '../lib/geminiService';
 import BusinessCardUpload from '../components/common/BusinessCardUpload';
 import CompanyAutocomplete from '../components/common/CompanyAutocomplete';
 import PartnerDocuments from '../components/partners/PartnerDocuments';
@@ -17,7 +24,7 @@ import toast from 'react-hot-toast';
 export default function PartnerForm() {
     const { id } = useParams();
     const navigate = useNavigate();
-    const { profile } = useAuth();
+    const location = useLocation();
     const isNew = id === 'new';
     const quillRef = useRef(null);
 
@@ -299,6 +306,24 @@ export default function PartnerForm() {
         setAiPreview(null);
     };
 
+    const [partnerContacts, setPartnerContacts] = useState([]);
+    const [contactsLoading, setContactsLoading] = useState(false);
+    const [showContactModal, setShowContactModal] = useState(false);
+    const [editingContact, setEditingContact] = useState(null);
+
+    const loadPartnerContacts = useCallback(async (partnerId) => {
+        if (!partnerId || partnerId === 'new') return;
+        setContactsLoading(true);
+        try {
+            const list = await getContactsByPartner(partnerId);
+            setPartnerContacts(list || []);
+        } catch (err) {
+            console.error('Error fetching partner contacts:', err);
+        } finally {
+            setContactsLoading(false);
+        }
+    }, []);
+
     useEffect(() => {
         async function load() {
             setLoading(true);
@@ -312,12 +337,31 @@ export default function PartnerForm() {
                 if (existing) {
                     setFormData(existing);
                 }
+                await loadPartnerContacts(id);
             }
             setDbCategories(catData.map(c => c.name));
             setLoading(false);
         }
         load();
-    }, [id, isNew]);
+    }, [id, isNew, loadPartnerContacts]);
+
+    // Automatically trigger Contact modal if launched from Workflow Editor for contact creation / edit
+    useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        const action = params.get('action');
+        const editContactId = params.get('editContactId');
+        
+        if (action === 'add_contact' && !isNew) {
+            setEditingContact(null);
+            setShowContactModal(true);
+        } else if (editContactId && partnerContacts.length > 0) {
+            const found = partnerContacts.find(c => c.id === editContactId);
+            if (found) {
+                setEditingContact(found);
+                setShowContactModal(true);
+            }
+        }
+    }, [location.search, isNew, partnerContacts]);
 
     const handleChange = (e) => {
         const { name, value } = e.target;
@@ -388,15 +432,42 @@ export default function PartnerForm() {
 
             const savedPartner = await savePartner(dataToSave);
             
-            // Save Primary Contact if name is provided
-            if (primaryContact.name && savedPartner?.id) {
-                await saveContact({
+            // Save Primary Contact ONLY for new partner creation if provided
+            let savedPrimaryContact = null;
+            if (isNew && primaryContact.name && savedPartner?.id) {
+                savedPrimaryContact = await saveContact({
                     ...primaryContact,
                     partnerId: savedPartner.id,
                     company_id: profile?.company_id
                 });
             }
 
+            // Cross-window synchronization broadcast to Workflow Editor and other tabs
+            try {
+                const bc = new BroadcastChannel('celron_partner_sync');
+                bc.postMessage({
+                    type: 'CELRON_PARTNER_SAVED',
+                    partnerId: savedPartner.id,
+                    partner: savedPartner,
+                    contactId: savedPrimaryContact?.id || null
+                });
+                bc.close();
+            } catch (e) {
+                console.warn('BroadcastChannel error:', e);
+            }
+
+            if (window.opener) {
+                try {
+                    window.opener.postMessage({
+                        type: 'CELRON_PARTNER_SAVED',
+                        partnerId: savedPartner.id,
+                        partner: savedPartner,
+                        contactId: savedPrimaryContact?.id || null
+                    }, '*');
+                } catch (e) {}
+            }
+
+            toast.success(isNew ? 'Partner created successfully! (Synced with Workflow)' : 'Partner updated successfully! (Synced with Workflow)');
             navigate('/partners');
         } catch (err) {
             console.error("SUPABASE SAVE ERROR:", err);
@@ -918,75 +989,77 @@ export default function PartnerForm() {
                         )}
                         </div>
 
-                        {/* Primary Contact Section (Only for New Partner or as a standalone section) */}
-                        <div className="glass-panel" style={{ padding: '32px', background: '#f8fafc', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                                <UserPlus size={20} color="#6366f1" />
-                                <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>Primary Contact Person</h3>
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                                <div className="form-group">
-                                    <label className="form-label" style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Contact Name</label>
-                                    <input
-                                        className="form-input premium-input"
-                                        placeholder="e.g. John Doe"
-                                        value={primaryContact.name}
-                                        onChange={e => setPrimaryContact({ ...primaryContact, name: e.target.value })}
-                                    />
+                        {/* Primary Contact Section (Only when creating a New Partner) */}
+                        {isNew && (
+                            <div className="glass-panel" style={{ padding: '32px', background: '#f8fafc', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                                    <UserPlus size={20} color="#6366f1" />
+                                    <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>Primary Contact Person (Optional)</h3>
                                 </div>
-                                <div className="form-group">
-                                    <label className="form-label" style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Designation</label>
-                                    <input
-                                        className="form-input premium-input"
-                                        placeholder="e.g. Purchasing Manager"
-                                        value={primaryContact.post}
-                                        onChange={e => setPrimaryContact({ ...primaryContact, post: e.target.value })}
-                                    />
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label" style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Contact Email</label>
-                                    <div style={{ position: 'relative' }}>
-                                        <Mail size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                                    <div className="form-group">
+                                        <label className="form-label" style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Contact Name</label>
                                         <input
                                             className="form-input premium-input"
-                                            style={{ paddingLeft: '40px' }}
-                                            placeholder="john@company.com"
-                                            value={primaryContact.email}
-                                            onChange={e => setPrimaryContact({ ...primaryContact, email: e.target.value })}
+                                            placeholder="e.g. John Doe"
+                                            value={primaryContact.name}
+                                            onChange={e => setPrimaryContact({ ...primaryContact, name: e.target.value })}
                                         />
                                     </div>
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label" style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Department</label>
-                                    <select
-                                        className="form-select premium-input"
-                                        value={primaryContact.department}
-                                        onChange={e => setPrimaryContact({ ...primaryContact, department: e.target.value })}
-                                    >
-                                        <option value="">-- Select Department --</option>
-                                        <option value="Accounts">Accounts / Finance</option>
-                                        <option value="Purchasing">Purchasing / Procurement</option>
-                                        <option value="Logistics">Logistics / Operations</option>
-                                        <option value="Technical">Technical / Engineering</option>
-                                        <option value="Sales">Sales / Marketing</option>
-                                        <option value="Management">Management</option>
-                                    </select>
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label" style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Handphone / WhatsApp</label>
-                                    <div style={{ position: 'relative' }}>
-                                        <Phone size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                                    <div className="form-group">
+                                        <label className="form-label" style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Designation</label>
                                         <input
                                             className="form-input premium-input"
-                                            style={{ paddingLeft: '40px' }}
-                                            placeholder="+65 9123 4567"
-                                            value={primaryContact.handphone}
-                                            onChange={e => setPrimaryContact({ ...primaryContact, handphone: e.target.value })}
+                                            placeholder="e.g. Purchasing Manager"
+                                            value={primaryContact.post}
+                                            onChange={e => setPrimaryContact({ ...primaryContact, post: e.target.value })}
                                         />
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label" style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Contact Email</label>
+                                        <div style={{ position: 'relative' }}>
+                                            <Mail size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                                            <input
+                                                className="form-input premium-input"
+                                                style={{ paddingLeft: '40px' }}
+                                                placeholder="john@company.com"
+                                                value={primaryContact.email}
+                                                onChange={e => setPrimaryContact({ ...primaryContact, email: e.target.value })}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label" style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Department</label>
+                                        <select
+                                            className="form-select premium-input"
+                                            value={primaryContact.department}
+                                            onChange={e => setPrimaryContact({ ...primaryContact, department: e.target.value })}
+                                        >
+                                            <option value="">-- Select Department --</option>
+                                            <option value="Accounts">Accounts / Finance</option>
+                                            <option value="Purchasing">Purchasing / Procurement</option>
+                                            <option value="Logistics">Logistics / Operations</option>
+                                            <option value="Technical">Technical / Engineering</option>
+                                            <option value="Sales">Sales / Marketing</option>
+                                            <option value="Management">Management</option>
+                                        </select>
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label" style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Handphone / WhatsApp</label>
+                                        <div style={{ position: 'relative' }}>
+                                            <Phone size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                                            <input
+                                                className="form-input premium-input"
+                                                style={{ paddingLeft: '40px' }}
+                                                placeholder="+65 9123 4567"
+                                                value={primaryContact.handphone}
+                                                onChange={e => setPrimaryContact({ ...primaryContact, handphone: e.target.value })}
+                                            />
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
+                        )}
 
                         <div className="form-group">
                             <label className="form-label" style={{ fontSize: '1rem', fontWeight: 700, color: '#1e293b', marginBottom: '16px' }}>Notes (Rich Text Builder)</label>
@@ -1031,39 +1104,124 @@ export default function PartnerForm() {
                 <div style={{ maxWidth: '1100px', margin: '48px auto 60px auto' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                         <div>
-                            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#1e293b' }}>Related Contacts</h3>
-                            <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '4px' }}>Manage decision makers and point of contacts</p>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>Related Contacts</h3>
+                                {partnerContacts.length > 0 && (
+                                    <span style={{ 
+                                        background: '#ecfdf5', 
+                                        color: '#059669', 
+                                        border: '1px solid #a7f3d0', 
+                                        padding: '2px 10px', 
+                                        borderRadius: '20px', 
+                                        fontSize: '0.75rem', 
+                                        fontWeight: 700 
+                                    }}>
+                                        {partnerContacts.length} Linked
+                                    </span>
+                                )}
+                            </div>
+                            <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '4px', margin: 0 }}>Manage decision makers and point of contacts</p>
                         </div>
                         <button 
-                            className={`btn ${showQuickContact ? 'btn-secondary' : 'btn-primary'}`} 
-                            onClick={() => setShowQuickContact(!showQuickContact)} 
-                            style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '12px' }}
+                            type="button"
+                            className="btn btn-primary" 
+                            onClick={() => {
+                                setEditingContact(null);
+                                setShowContactModal(true);
+                            }} 
+                            style={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: '8px', 
+                                borderRadius: '12px',
+                                background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                                padding: '10px 20px',
+                                fontWeight: 700,
+                                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.25)'
+                            }}
                         >
-                            {showQuickContact ? <X size={18} /> : <Plus size={18} />}
-                            {showQuickContact ? 'Cancel' : 'Quick Add Contact'}
+                            <Plus size={18} />
+                            Quick Add Contact
                         </button>
                     </div>
 
-                    {showQuickContact && (
-                        <div className="glass-panel animate-fade-in" style={{ padding: '32px', background: '#f8fafc', borderRadius: '20px', border: '1px solid #bae6fd', marginBottom: '32px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                                <div style={{ width: '36px', height: '36px', background: '#fff', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #bae6fd' }}>
-                                    <UserPlus size={18} color="#0284c7" />
-                                </div>
-                                <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#0369a1' }}>New Contact Details</h4>
-                            </div>
-                            <InlineContactForm 
-                                partnerId={id} 
-                                companyId={profile?.company_id} 
-                                onSave={() => {
-                                    setShowQuickContact(false);
-                                    // ContactsList will refresh via useEffect if we pass a refresh trigger or just wait for it
-                                }} 
-                            />
-                        </div>
-                    )}
+                    <ContactsTable 
+                        contacts={partnerContacts}
+                        loading={contactsLoading}
+                        onEdit={(c) => {
+                            setEditingContact(c);
+                            setShowContactModal(true);
+                        }}
+                        onDelete={async (c) => {
+                            if (window.confirm(`Delete contact "${c.name}"? This action cannot be undone.`)) {
+                                try {
+                                    await deleteContact(c.id);
+                                    setPartnerContacts(prev => prev.filter(item => item.id !== c.id));
+                                    toast.success(`Contact "${c.name}" deleted`);
+                                } catch (err) {
+                                    console.error("Delete Contact Error:", err);
+                                    toast.error("Failed to delete contact");
+                                }
+                            }
+                        }}
+                        onAdd={() => {
+                            setEditingContact(null);
+                            setShowContactModal(true);
+                        }}
+                    />
 
-                    <ContactsList partnerId={id} />
+                    {showContactModal && (
+                        <PartnerContactModal
+                            isOpen={showContactModal}
+                            partnerId={id}
+                            partnerName={formData.name}
+                            companyId={profile?.company_id}
+                            initialContact={editingContact}
+                            onClose={() => {
+                                setShowContactModal(false);
+                                setEditingContact(null);
+                            }}
+                            onSave={(saved) => {
+                                setPartnerContacts(prev => {
+                                    const exists = prev.some(c => c.id === saved.id);
+                                    if (exists) {
+                                        return prev.map(c => c.id === saved.id ? saved : c);
+                                    } else {
+                                        return [saved, ...prev];
+                                    }
+                                });
+
+                                // Cross-window synchronization broadcast to Workflow Editor and other tabs
+                                try {
+                                    const bc = new BroadcastChannel('celron_partner_sync');
+                                    bc.postMessage({
+                                        type: 'CELRON_CONTACT_SAVED',
+                                        contactId: saved.id,
+                                        partnerId: id,
+                                        contact: saved
+                                    });
+                                    bc.close();
+                                } catch (e) {
+                                    console.warn('BroadcastChannel error:', e);
+                                }
+
+                                if (window.opener) {
+                                    try {
+                                        window.opener.postMessage({
+                                            type: 'CELRON_CONTACT_SAVED',
+                                            contactId: saved.id,
+                                            partnerId: id,
+                                            contact: saved
+                                        }, '*');
+                                    } catch (e) {}
+                                }
+
+                                toast.success(editingContact?.id ? `Contact "${saved.name}" updated!` : `Contact "${saved.name}" added! (Synced with Workflow)`);
+                                setShowContactModal(false);
+                                setEditingContact(null);
+                            }}
+                        />
+                    )}
                 </div>
             )}
         </div>
@@ -1071,143 +1229,574 @@ export default function PartnerForm() {
 }
 
 /**
- * Inline form to quickly add contacts without navigating
+ * Related Contacts Table Component (Image 2 style)
  */
-function InlineContactForm({ partnerId, companyId, onSave }) {
-    const [contact, setContact] = useState({ name: '', post: '', department: '', email: '', handphone: '' });
-    const [saving, setSaving] = useState(false);
+function ContactsTable({ contacts, loading, onEdit, onDelete, onAdd }) {
+    if (loading) {
+        return (
+            <div className="glass-panel" style={{ padding: '32px', textAlign: 'center', color: '#64748b', background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                <Loader2 size={24} className="animate-spin" style={{ margin: '0 auto 8px auto', color: '#6366f1' }} />
+                <span>Loading related contacts...</span>
+            </div>
+        );
+    }
 
-    const handleSave = async () => {
-        if (!contact.name) return alert('Contact Name is required');
+    if (!contacts || contacts.length === 0) {
+        return (
+            <div className="glass-panel" style={{ padding: '48px 24px', textAlign: 'center', background: '#fff', borderRadius: '16px', border: '1.5px dashed #cbd5e1' }}>
+                <div style={{ width: '48px', height: '48px', background: '#f1f5f9', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px auto' }}>
+                    <Users size={24} color="#94a3b8" />
+                </div>
+                <h4 style={{ margin: '0 0 4px 0', fontSize: '1rem', fontWeight: 700, color: '#334155' }}>No Contacts Linked Yet</h4>
+                <p style={{ margin: '0 0 16px 0', fontSize: '0.85rem', color: '#64748b' }}>Add decision makers and operational points of contact for this company.</p>
+                <button 
+                    type="button" 
+                    className="btn btn-secondary" 
+                    onClick={onAdd}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', fontWeight: 600 }}
+                >
+                    <Plus size={16} /> Add First Contact
+                </button>
+            </div>
+        );
+    }
+
+    return (
+        <div className="table-container" style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                    <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <th style={{ background: '#f8fafc', padding: '14px 20px', fontSize: '0.8rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Contact Name</th>
+                        <th style={{ background: '#f8fafc', padding: '14px 20px', fontSize: '0.8rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Position</th>
+                        <th style={{ background: '#f8fafc', padding: '14px 20px', fontSize: '0.8rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Email / Phone</th>
+                        <th style={{ background: '#f8fafc', padding: '14px 20px', fontSize: '0.8rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'right' }}>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {contacts.map(c => {
+                        const phoneDigits = (c.handphone || c.phone || '').replace(/\D/g, '');
+                        return (
+                            <tr key={c.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s' }}>
+                                <td style={{ padding: '16px 20px', verticalAlign: 'middle' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                        <div style={{ 
+                                            width: '36px', 
+                                            height: '36px', 
+                                            borderRadius: '8px', 
+                                            background: c.business_card_url ? '#fff' : '#f0fdf4', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center', 
+                                            color: '#16a34a', 
+                                            border: '1px solid #bbf7d0',
+                                            overflow: 'hidden',
+                                            flexShrink: 0
+                                        }}>
+                                            {c.business_card_url ? (
+                                                <img src={c.business_card_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            ) : (
+                                                <User size={18} />
+                                            )}
+                                        </div>
+                                        <div>
+                                            <div style={{ fontWeight: 700, color: '#1e293b', fontSize: '0.95rem' }}>{c.name}</div>
+                                            {c.department && (
+                                                <span style={{ 
+                                                    display: 'inline-block', 
+                                                    marginTop: '2px',
+                                                    fontSize: '0.7rem', 
+                                                    color: '#0284c7', 
+                                                    background: '#e0f2fe', 
+                                                    padding: '1px 8px', 
+                                                    borderRadius: '10px',
+                                                    fontWeight: 600
+                                                }}>
+                                                    {c.department}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </td>
+                                <td style={{ padding: '16px 20px', verticalAlign: 'middle', color: '#475569', fontSize: '0.9rem' }}>
+                                    {c.post || '-'}
+                                </td>
+                                <td style={{ padding: '16px 20px', verticalAlign: 'middle' }}>
+                                    {c.email ? (
+                                        <a href={`mailto:${c.email}`} style={{ color: '#6366f1', fontWeight: 600, fontSize: '0.9rem', textDecoration: 'none' }}>
+                                            {c.email}
+                                        </a>
+                                    ) : (
+                                        <span style={{ color: '#94a3b8', fontSize: '0.9rem' }}>-</span>
+                                    )}
+                                    {(c.handphone || c.phone) && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                                            <span style={{ fontSize: '0.82rem', color: '#64748b' }}>HP: {c.handphone || c.phone}</span>
+                                            {phoneDigits && (
+                                                <a
+                                                    href={`https://wa.me/${phoneDigits}`}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    style={{ 
+                                                        color: '#25d366', 
+                                                        display: 'inline-flex', 
+                                                        alignItems: 'center', 
+                                                        transition: 'transform 0.2s',
+                                                        textDecoration: 'none'
+                                                    }}
+                                                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.2)'}
+                                                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                                                    title="Chat on WhatsApp"
+                                                >
+                                                    <MessageSquare size={14} fill="#25d366" color="#fff" />
+                                                </a>
+                                            )}
+                                        </div>
+                                    )}
+                                </td>
+                                <td style={{ padding: '16px 20px', verticalAlign: 'middle', textAlign: 'right' }}>
+                                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                        <button 
+                                            type="button"
+                                            className="btn btn-secondary" 
+                                            style={{ 
+                                                padding: '6px 14px', 
+                                                fontSize: '0.8rem', 
+                                                fontWeight: 600,
+                                                borderRadius: '8px'
+                                            }} 
+                                            onClick={() => onEdit(c)}
+                                        >
+                                            Edit
+                                        </button>
+                                        <button 
+                                            type="button"
+                                            className="btn btn-secondary" 
+                                            style={{ 
+                                                padding: '6px 14px', 
+                                                fontSize: '0.8rem', 
+                                                fontWeight: 600,
+                                                color: '#ef4444',
+                                                borderColor: '#fecaca',
+                                                borderRadius: '8px'
+                                            }} 
+                                            onClick={() => onDelete(c)}
+                                        >
+                                            Delete
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+/**
+ * Full Contact Entry / Edit Modal (Matching Image 1 Form Layout)
+ */
+function PartnerContactModal({ isOpen, partnerId, partnerName, companyId, initialContact, onClose, onSave }) {
+    const isEdit = !!initialContact?.id;
+
+    const [formData, setFormData] = useState({
+        id: initialContact?.id || '',
+        name: initialContact?.name || '',
+        post: initialContact?.post || '',
+        department: initialContact?.department || '',
+        email: initialContact?.email || '',
+        phone: initialContact?.phone || '',
+        handphone: initialContact?.handphone || '',
+        address: initialContact?.address || '',
+        type: initialContact?.type || 'Contact',
+        info: initialContact?.info || '',
+        business_card_url: initialContact?.business_card_url || '',
+        business_card_back_url: initialContact?.business_card_back_url || ''
+    });
+
+    const [saving, setSaving] = useState(false);
+    const [isAiResearching, setIsAiResearching] = useState(false);
+
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleOCR = async (text) => {
+        if (!text) return;
+        setIsAiResearching(true);
+        try {
+            const result = await parseOCRBusinessCard(text);
+            if (result) {
+                setFormData(prev => ({
+                    ...prev,
+                    name: prev.name || result.person_name || '',
+                    email: prev.email || result.email || '',
+                    handphone: prev.handphone || result.mobile || result.phone || '',
+                    post: prev.post || result.designation || '',
+                    department: prev.department || result.department || '',
+                    address: prev.address || result.address || ''
+                }));
+                toast.success('Extracted details from business card');
+            }
+        } catch (err) {
+            console.error('OCR Parsing failed', err);
+        } finally {
+            setIsAiResearching(false);
+        }
+    };
+
+    const handleAiAutofill = async () => {
+        if (!formData.name || !formData.name.trim()) {
+            return toast.error('Please enter a Contact Name first');
+        }
+        setIsAiResearching(true);
+        try {
+            const researchData = await researchContactWithGemini(formData.name, partnerName);
+            if (researchData && researchData.fields) {
+                setFormData(prev => ({
+                    ...prev,
+                    ...researchData.fields
+                }));
+                toast.success('Contact profile updated with AI intelligence');
+            }
+        } catch (err) {
+            console.error('AI Research Error:', err);
+            toast.error('AI Research failed. Please enter details manually.');
+        } finally {
+            setIsAiResearching(false);
+        }
+    };
+
+    const handleSubmit = async (e) => {
+        if (e) e.preventDefault();
+        if (!formData.name || !formData.name.trim()) {
+            return toast.error('Contact Name is required');
+        }
+
         setSaving(true);
         try {
-            await saveContact({ ...contact, partnerId, company_id: companyId });
-            onSave();
-            window.location.reload(); // Simple way to refresh the list for now
+            const payload = {
+                ...formData,
+                name: formData.name.trim(),
+                partnerId: partnerId,
+                company_id: companyId
+            };
+            const saved = await saveContact(payload);
+            onSave(saved);
         } catch (err) {
-            console.error(err);
-            alert('Failed to save contact');
+            console.error('Failed to save contact:', err);
+            toast.error(`Failed to save contact: ${err.message || 'Check console'}`);
         } finally {
             setSaving(false);
         }
     };
 
-    return (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
-            <div className="form-group">
-                <label className="form-label">Name *</label>
-                <input className="form-input premium-input" value={contact.name} onChange={e => setContact({...contact, name: e.target.value})} placeholder="Full Name" />
-            </div>
-            <div className="form-group">
-                <label className="form-label">Position</label>
-                <input className="form-input premium-input" value={contact.post} onChange={e => setContact({...contact, post: e.target.value})} placeholder="e.g. Manager" />
-            </div>
-            <div className="form-group">
-                <label className="form-label">Email</label>
-                <input className="form-input premium-input" value={contact.email} onChange={e => setContact({...contact, email: e.target.value})} placeholder="email@domain.com" />
-            </div>
-            <div className="form-group">
-                <label className="form-label">Phone</label>
-                <input className="form-input premium-input" value={contact.handphone} onChange={e => setContact({...contact, handphone: e.target.value})} placeholder="+65..." />
-            </div>
-            <div className="form-group">
-                <label className="form-label">Department</label>
-                <select 
-                    className="form-select premium-input" 
-                    value={contact.department} 
-                    onChange={e => setContact({...contact, department: e.target.value})}
-                >
-                    <option value="">-- Dept --</option>
-                    <option value="Accounts">Accounts</option>
-                    <option value="Purchasing">Purchasing</option>
-                    <option value="Logistics">Logistics</option>
-                    <option value="Technical">Technical</option>
-                    <option value="Sales">Sales</option>
-                </select>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: '24px' }}>
-                <button className="btn btn-primary" onClick={handleSave} disabled={saving} style={{ width: '100%', height: '42px', borderRadius: '10px' }}>
-                    {saving ? 'Saving...' : 'Add Contact'}
-                </button>
-            </div>
-        </div>
-    );
-}
-
-// Sub-component to list contacts inline for a partner
-function ContactsList({ partnerId }) {
-    const [contacts, setContacts] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const navigate = useNavigate();
-
-    const loadContacts = React.useCallback(async () => {
-        setLoading(true);
-        setContacts(await getContactsByPartner(partnerId));
-        setLoading(false);
-    }, [partnerId]);
-
-    useEffect(() => {
-        loadContacts();
-    }, [loadContacts]);
-
-    const remove = async (id) => {
-        if (window.confirm('Delete this contact?')) {
-            await deleteContact(id);
-            loadContacts();
-        }
-    };
-
-    if (loading) return <div className="glass-panel">Loading contacts...</div>;
-    if (contacts.length === 0) return <div className="glass-panel" style={{ textAlign: 'center', py: '40px', color: '#64748b' }}>No contacts linked to this partner yet.</div>;
+    if (!isOpen) return null;
 
     return (
-        <div className="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th style={{ background: '#f8fafc' }}>Contact Name</th>
-                        <th style={{ background: '#f8fafc' }}>Position</th>
-                        <th style={{ background: '#f8fafc' }}>Email / Phone</th>
-                        <th style={{ background: '#f8fafc' }}>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {contacts.map(c => (
-                        <tr key={c.id}>
-                            <td style={{ fontWeight: '600', color: '#1e293b' }}>{c.name}</td>
-                            <td>{c.post || '-'}</td>
-                            <td>
-                                <div style={{ color: '#6366f1', fontWeight: 500 }}>{c.email || '-'}</div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <div style={{ fontSize: '0.85rem', color: '#64748b' }}>HP: {c.handphone || '-'}</div>
-                                    {c.handphone && (() => {
-                                        const digits = c.handphone.replace(/\D/g, '');
-                                        return (
-                                            <a
-                                                href={`https://wa.me/${digits}`}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                style={{ color: '#25d366', display: 'flex', alignItems: 'center', transition: 'transform 0.2s' }}
-                                                onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.2)'}
-                                                onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
-                                                title="Chat on WhatsApp"
-                                            >
-                                                <MessageSquare size={14} fill="#25d366" color="#fff" />
-                                            </a>
-                                        );
-                                    })()}
-                                </div>
-                            </td>
-                            <td>
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                    <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.8rem' }} onClick={() => navigate(`/contacts/${c.id}?partnerId=${partnerId}`)}>Edit</button>
-                                    <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.8rem', color: '#ef4444' }} onClick={() => remove(c.id)}>Delete</button>
-                                </div>
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
+        <div style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1100,
+            background: 'rgba(15, 23, 42, 0.6)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px'
+        }}>
+            <div 
+                className="animate-fade-in"
+                style={{
+                    background: '#fff',
+                    borderRadius: '24px',
+                    width: '100%',
+                    maxWidth: '680px',
+                    maxHeight: '90vh',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden',
+                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                    border: '1px solid rgba(255, 255, 255, 0.2)'
+                }}
+            >
+                {/* Modal Header */}
+                <div style={{
+                    padding: '20px 28px',
+                    background: '#f8fafc',
+                    borderBottom: '1px solid #e2e8f0',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{
+                            width: '40px',
+                            height: '40px',
+                            borderRadius: '12px',
+                            background: '#e0e7ff',
+                            color: '#4f46e5',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }}>
+                            {isEdit ? <User size={20} /> : <UserPlus size={20} />}
+                        </div>
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: '#1e293b' }}>
+                                {isEdit ? `Edit Contact: ${formData.name || 'Details'}` : 'Add New Contact'}
+                            </h3>
+                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                Linked to: <strong style={{ color: '#4f46e5' }}>{partnerName || 'Partner'}</strong>
+                            </span>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: '#64748b',
+                            padding: '6px',
+                            borderRadius: '8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }}
+                    >
+                        <X size={20} />
+                    </button>
+                </div>
+
+                {/* Modal Form Body */}
+                <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+                    <div style={{ padding: '24px 28px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        
+                        {/* AI Research Banner */}
+                        <div style={{ 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center', 
+                            padding: '12px 18px', 
+                            background: 'linear-gradient(90deg, #f0f9ff 0%, #e0f2fe 100%)', 
+                            borderRadius: '12px',
+                            border: '1px solid #bae6fd'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <Sparkles size={18} className={isAiResearching ? 'ai-pulse' : ''} style={{ color: '#0284c7' }} />
+                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#0369a1' }}>
+                                    {isAiResearching ? 'AI is researching contact...' : 'Contact Intelligence'}
+                                </span>
+                            </div>
+                            <button 
+                                type="button" 
+                                onClick={handleAiAutofill}
+                                disabled={isAiResearching || !formData.name}
+                                style={{ 
+                                    padding: '6px 14px', 
+                                    borderRadius: '8px', 
+                                    background: '#fff', 
+                                    border: '1px solid #bae6fd', 
+                                    color: '#0284c7', 
+                                    fontSize: '0.8rem', 
+                                    fontWeight: 700, 
+                                    cursor: formData.name ? 'pointer' : 'not-allowed',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                                    opacity: formData.name ? 1 : 0.6
+                                }}
+                            >
+                                {isAiResearching ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                                Profile with AI
+                            </button>
+                        </div>
+
+                        {/* Customer / Partner (Image 1 top dropdown / readonly) */}
+                        <div className="form-item">
+                            <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                                Customer / Partner *
+                            </label>
+                            <input
+                                className="form-input premium-input"
+                                value={partnerName || ''}
+                                readOnly
+                                disabled
+                                style={{ background: '#f8fafc', color: '#334155', fontWeight: 600 }}
+                            />
+                        </div>
+
+                        {/* Form Fields Grid */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                            <div className="form-item">
+                                <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                                    Contact Name *
+                                </label>
+                                <input
+                                    className="form-input premium-input"
+                                    name="name"
+                                    value={formData.name}
+                                    onChange={handleChange}
+                                    placeholder="e.g. John Doe"
+                                    autoFocus
+                                    required
+                                />
+                            </div>
+
+                            <div className="form-item">
+                                <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                                    Department
+                                </label>
+                                <input
+                                    className="form-input premium-input"
+                                    name="department"
+                                    value={formData.department || ''}
+                                    onChange={handleChange}
+                                    placeholder="e.g. Sales, Technical, Purchasing"
+                                    list="contact-departments-list"
+                                />
+                                <datalist id="contact-departments-list">
+                                    <option value="Purchasing" />
+                                    <option value="Sales" />
+                                    <option value="Accounts / Finance" />
+                                    <option value="Technical / Operations" />
+                                    <option value="Logistics" />
+                                    <option value="Management" />
+                                </datalist>
+                            </div>
+
+                            <div className="form-item">
+                                <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                                    Post / Designation
+                                </label>
+                                <input
+                                    className="form-input premium-input"
+                                    name="post"
+                                    value={formData.post}
+                                    onChange={handleChange}
+                                    placeholder="e.g. Purchasing Manager"
+                                />
+                            </div>
+
+                            <div className="form-item">
+                                <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                        <Mail size={13} /> Email Address
+                                    </span>
+                                </label>
+                                <input
+                                    className="form-input premium-input"
+                                    name="email"
+                                    type="email"
+                                    value={formData.email}
+                                    onChange={handleChange}
+                                    placeholder="john@example.com"
+                                />
+                            </div>
+
+                            <div className="form-item">
+                                <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                        <Phone size={13} /> Office Phone
+                                    </span>
+                                </label>
+                                <input
+                                    className="form-input premium-input"
+                                    name="phone"
+                                    value={formData.phone}
+                                    onChange={handleChange}
+                                    placeholder="+65 ...."
+                                />
+                            </div>
+
+                            <div className="form-item">
+                                <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                        <Phone size={13} /> Handphone / Mobile
+                                    </span>
+                                </label>
+                                <input
+                                    className="form-input premium-input"
+                                    name="handphone"
+                                    value={formData.handphone}
+                                    onChange={handleChange}
+                                    placeholder="+65 ...."
+                                />
+                            </div>
+                        </div>
+
+                        {/* Contact Address */}
+                        <div className="form-item">
+                            <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                                Contact Address (if different)
+                            </label>
+                            <textarea
+                                className="form-textarea premium-input"
+                                name="address"
+                                value={formData.address}
+                                onChange={handleChange}
+                                placeholder="Enter specific address if any..."
+                                rows={2}
+                            />
+                        </div>
+
+                        {/* Business Card Upload & OCR */}
+                        <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                            <BusinessCardUpload
+                                frontValue={formData.business_card_url}
+                                backValue={formData.business_card_back_url}
+                                onFrontChange={(url) => setFormData(prev => ({ ...prev, business_card_url: url }))}
+                                onBackChange={(url) => setFormData(prev => ({ ...prev, business_card_back_url: url }))}
+                                onOCR={handleOCR}
+                                label="Contact Business Card (Auto-extracts fields)"
+                            />
+                        </div>
+                    </div>
+
+                    {/* Modal Footer */}
+                    <div style={{
+                        padding: '16px 28px',
+                        background: '#f8fafc',
+                        borderTop: '1px solid #e2e8f0',
+                        display: 'flex',
+                        justifyContent: 'flex-end',
+                        gap: '12px'
+                    }}>
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={onClose}
+                            disabled={saving}
+                            style={{ padding: '10px 20px', borderRadius: '12px', fontWeight: 600 }}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            className="btn btn-primary"
+                            disabled={saving || !formData.name}
+                            style={{
+                                padding: '10px 24px',
+                                borderRadius: '12px',
+                                background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                                fontWeight: 700,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)'
+                            }}
+                        >
+                            {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                            {saving ? 'Saving...' : isEdit ? 'Update Contact' : 'Save Contact'}
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     );
 }

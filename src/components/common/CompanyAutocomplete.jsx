@@ -11,11 +11,11 @@ const CompanyAutocomplete = ({ value, onChange, onSelect, className, aiDisabled 
     const dropdownRef = useRef(null);
     const timeoutRef = useRef(null);
 
-    // Google API Key from env
+    // Google API Key from env with project default fallback
     const GOOGLE_API_KEY = (
         (typeof import.meta !== 'undefined' && (import.meta.env?.VITE_GOOGLE_API_KEY || import.meta.env?.VITE_GOOGLE_GEOCODE_KEY)) ||
         (typeof process !== 'undefined' && (process.env?.VITE_GOOGLE_API_KEY || process.env?.VITE_GOOGLE_GEOCODE_KEY)) ||
-        ''
+        'AIzaSyA5YW4mWUo__7hwGjvLor-DDsh-spg2r5M'
     );
 
     useEffect(() => {

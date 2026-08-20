@@ -124,11 +124,11 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
         ? (isQuotation ? DEFAULT_QUOTATION_NOTES : (isDeliveryDoc ? DEFAULT_DELIVERY_NOTES : doc.notes))
         : doc.notes;
 
-    const cleanVesselName = doc.vessels?.vessel_name?.trim();
+    const cleanVesselName = doc.vessels?.vessel_name?.trim() || doc.vessels?.name?.trim();
     const hasVessel = !!cleanVesselName && 
         !['', 'N/A', 'N.A', 'N.A.', 'N/A.', 'NONE', 'NIL', '[VESSEL]', 'NOT APPLICABLE'].includes(cleanVesselName.toUpperCase());
     const vesselName = hasVessel ? cleanVesselName : '';
-    const locationName = doc.work_locations?.location_name;
+    const locationName = doc.work_locations?.location_name || doc.work_locations?.name;
     const hasLocation = !!locationName && locationName !== 'N/A';
 
     let vesselLabel = "VESSEL";

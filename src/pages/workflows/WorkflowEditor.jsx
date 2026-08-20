@@ -899,6 +899,83 @@ export default function WorkflowEditor() {
         if (staffData) setStaff(staffData);
     };
 
+    // Real-time synchronization for Partner / Contact additions & edits made in new window
+    useEffect(() => {
+        let channel = null;
+        try {
+            channel = new BroadcastChannel('celron_partner_sync');
+            channel.onmessage = async (event) => {
+                const data = event.data;
+                if (!data) return;
+                
+                const [pRes, allContacts] = await Promise.all([
+                    getPartners(profile),
+                    getContacts(profile)
+                ]);
+                if (pRes) setPartners(pRes);
+                if (allContacts) setContacts(allContacts);
+
+                if (data.type === 'CELRON_PARTNER_SAVED' && data.partnerId) {
+                    setFormData(prev => ({
+                        ...prev,
+                        partner_id: data.partnerId,
+                        contact_id: data.contactId || prev.contact_id
+                    }));
+                    toast.success('Partner details synchronized with Workflow!');
+                } else if (data.type === 'CELRON_CONTACT_SAVED' && data.contactId) {
+                    setFormData(prev => ({
+                        ...prev,
+                        partner_id: data.partnerId || prev.partner_id,
+                        contact_id: data.contactId
+                    }));
+                    toast.success('Contact Person synchronized with Workflow!');
+                }
+            };
+        } catch (err) {
+            console.warn('BroadcastChannel not available:', err);
+        }
+
+        const handleWindowMessage = async (e) => {
+            if (e.data && (e.data.type === 'CELRON_PARTNER_SAVED' || e.data.type === 'CELRON_CONTACT_SAVED')) {
+                const data = e.data;
+                const [pRes, allContacts] = await Promise.all([
+                    getPartners(profile),
+                    getContacts(profile)
+                ]);
+                if (pRes) setPartners(pRes);
+                if (allContacts) setContacts(allContacts);
+
+                if (data.type === 'CELRON_PARTNER_SAVED' && data.partnerId) {
+                    setFormData(prev => ({
+                        ...prev,
+                        partner_id: data.partnerId,
+                        contact_id: data.contactId || prev.contact_id
+                    }));
+                    toast.success('Partner details synchronized with Workflow!');
+                } else if (data.type === 'CELRON_CONTACT_SAVED' && data.contactId) {
+                    setFormData(prev => ({
+                        ...prev,
+                        partner_id: data.partnerId || prev.partner_id,
+                        contact_id: data.contactId
+                    }));
+                    toast.success('Contact Person synchronized with Workflow!');
+                }
+            }
+        };
+        window.addEventListener('message', handleWindowMessage);
+
+        const handleFocus = () => {
+            fetchMasterData();
+        };
+        window.addEventListener('focus', handleFocus);
+
+        return () => {
+            if (channel) channel.close();
+            window.removeEventListener('message', handleWindowMessage);
+            window.removeEventListener('focus', handleFocus);
+        };
+    }, [profile]);
+
     const fetchJobMajorCategoriesList = async () => {
         try {
             const data = await getJobMajorCategories(profile?.company_id);
@@ -2305,7 +2382,17 @@ export default function WorkflowEditor() {
         const { name, value } = e.target;
 
         if (value === 'ADD_NEW') {
-            setModal({ isOpen: true, type: name });
+            if (name === 'partner_id') {
+                window.open('/partners/new', '_blank');
+            } else if (name === 'contact_id') {
+                if (formData.partner_id) {
+                    window.open(`/partners/${formData.partner_id}?action=add_contact`, '_blank');
+                } else {
+                    window.open('/partners/new', '_blank');
+                }
+            } else {
+                setModal({ isOpen: true, type: name });
+            }
             return;
         }
 
@@ -2378,10 +2465,25 @@ export default function WorkflowEditor() {
     };
 
     const handleEditMaster = (type) => {
+        if (type === 'partner_id') {
+            if (!formData.partner_id) return alert('Please select a customer/partner to edit first.');
+            window.open(`/partners/${formData.partner_id}`, '_blank');
+            return;
+        }
+        if (type === 'contact_id') {
+            if (!formData.contact_id) return alert('Please select a contact person to edit first.');
+            const currentContact = contacts.find(c => c.id === formData.contact_id);
+            const targetPartnerId = currentContact?.partnerId || formData.partner_id;
+            if (targetPartnerId) {
+                window.open(`/partners/${targetPartnerId}?editContactId=${formData.contact_id}`, '_blank');
+            } else {
+                window.open('/partners', '_blank');
+            }
+            return;
+        }
+
         let initialData = null;
-        if (type === 'partner_id') initialData = partners.find(p => p.id === formData.partner_id);
-        else if (type === 'contact_id') initialData = contacts.find(c => c.id === formData.contact_id);
-        else if (type === 'vessel_id') initialData = vessels.find(v => v.id === formData.vessel_id);
+        if (type === 'vessel_id') initialData = vessels.find(v => v.id === formData.vessel_id);
         else if (type === 'work_location_id') initialData = workLocations.find(l => l.id === formData.work_location_id);
 
         if (!initialData) return alert('Please select a record to edit first.');
@@ -4051,7 +4153,7 @@ export default function WorkflowEditor() {
                                             name="partner_id"
                                             placeholder={`Choose ${formData.document_type === 'Purchase Order' ? 'supplier' : 'partner'}...`}
                                             className="flex-1"
-                                            onAddNew={() => setModal({ isOpen: true, type: 'partner_id' })}
+                                            onAddNew={() => window.open('/partners/new', '_blank')}
                                             addNewText={formData.document_type === 'Purchase Order' ? "Add New Supplier" : "Add New Customer"}
                                         />
                                         {formData.partner_id && (
@@ -4059,16 +4161,16 @@ export default function WorkflowEditor() {
                                                 className="icon-btn" 
                                                 onClick={() => handleEditMaster('partner_id')} 
                                                 style={{ padding: '8px', background: '#f8fafc' }}
-                                                title="Edit Customer"
+                                                title="Edit Customer (Opens full form in new window)"
                                             >
                                                 <Pencil size={16} />
                                             </button>
                                         )}
                                         <button 
                                             className="icon-btn" 
-                                            onClick={() => setModal({ isOpen: true, type: 'partner_id' })}
+                                            onClick={() => window.open('/partners/new', '_blank')} 
                                             style={{ padding: '8px', background: '#f8fafc' }}
-                                            title="Add New Partner"
+                                            title="Add New Partner (Opens in new window)"
                                         >
                                             <Plus size={16} />
                                         </button>
@@ -4106,16 +4208,22 @@ export default function WorkflowEditor() {
                                                 className="icon-btn" 
                                                 onClick={() => handleEditMaster('contact_id')} 
                                                 style={{ padding: '8px', background: '#f8fafc' }}
-                                                title="Edit Contact"
+                                                title="Edit Contact (Opens in new window)"
                                             >
                                                 <Pencil size={16} />
                                             </button>
                                         )}
                                         <button 
                                             className="icon-btn" 
-                                            onClick={() => setModal({ isOpen: true, type: 'contact_id' })}
+                                            onClick={() => {
+                                                if (formData.partner_id) {
+                                                    window.open(`/partners/${formData.partner_id}?action=add_contact`, '_blank');
+                                                } else {
+                                                    window.open('/partners/new', '_blank');
+                                                }
+                                            }} 
                                             style={{ padding: '8px', background: '#f8fafc' }}
-                                            title="Add New Contact"
+                                            title="Add New Contact (Opens in new window)"
                                         >
                                             <Plus size={16} />
                                         </button>

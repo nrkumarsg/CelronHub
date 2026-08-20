@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Ship, User, Users, MapPin, X, Save, Globe, Mail, Phone, Map, ExternalLink, Plus, Sparkles, Loader2, RefreshCw, Upload, ChevronDown, Paperclip, FileCheck, Calculator, FileText, Search, Check, RotateCcw, Pencil, Camera, Archive, Trash2, Receipt, Smartphone, Image, HardDrive, Info } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { savePartner, saveJobMajorCategory, getJobMajorCategories, deleteJobMajorCategory } from '../../lib/store';
+import { savePartner, saveContact, deleteContact, saveJobMajorCategory, getJobMajorCategories, deleteJobMajorCategory } from '../../lib/store';
 import { saveJobExpense } from '../../lib/jobExpenseService';
 import BusinessCardUpload from '../common/BusinessCardUpload';
 import { COUNTRIES, PARTNER_CATEGORIES } from '../../lib/constants';
@@ -1219,15 +1219,14 @@ export const QuickContactAdd = ({ company_id, partner_id, partners, initialData,
         if (!formData.name || !formData.partnerId) return alert('Name and Partner are required');
         setLoading(true);
         try {
-            const isExisting = !!formData.id;
-            const { data, error } = isExisting
-                ? await supabase.from('contacts').update({ ...formData }).eq('id', formData.id).select()
-                : await supabase.from('contacts').insert([{ ...formData, company_id }]).select();
-            if (error) throw error;
-            onSuccess(data[0]);
+            const saved = await saveContact({
+                ...formData,
+                company_id: formData.company_id || company_id
+            });
+            if (onSuccess) onSuccess(saved);
         } catch (err) {
-            console.error(err);
-            alert('Failed to save contact');
+            console.error('Failed to save contact:', err);
+            alert(`Failed to save contact: ${err.message || 'Check console'}`);
         } finally {
             setLoading(false);
         }
@@ -1642,27 +1641,12 @@ export const QuickPartnerContactDualAdd = ({ company_id, initialPartner, initial
             // 2. Save Contact if name is provided
             let savedContact = null;
             if (contactData.name) {
-                const contactPayload = { ...contactData, partnerId: savedPartner.id };
-                delete contactPayload.isAiResearching;
-                delete contactPayload.aiPreview;
-                delete contactPayload.isCleaning;
-                delete contactPayload.isExtracting;
-                delete contactPayload.customCategory;
-
-                if (!contactData.id) {
-                    contactPayload.company_id = validCompanyId;
-                }
-
-                const isContactExisting = !!contactData.id;
-                const { data: cData, error: cError } = isContactExisting
-                    ? await supabase.from('contacts').update(contactPayload).eq('id', contactData.id).select()
-                    : await supabase.from('contacts').insert([contactPayload]).select();
-                
-                if (cError) throw cError;
-                if (!cData || cData.length === 0) {
-                    throw new Error('No contact data returned from database operation');
-                }
-                savedContact = cData[0];
+                const contactPayload = {
+                    ...contactData,
+                    partnerId: savedPartner.id,
+                    company_id: contactData.company_id || validCompanyId
+                };
+                savedContact = await saveContact(contactPayload);
             }
 
             onSuccess({ partner: savedPartner, contact: savedContact });

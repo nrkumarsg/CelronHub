@@ -179,6 +179,21 @@ export const saveContact = async (contactData) => {
   delete payload.updatedAt;
   delete payload.created_at;
   delete payload.updated_at;
+  delete payload.isAiResearching;
+  delete payload.aiPreview;
+  delete payload.isCleaning;
+  delete payload.isExtracting;
+  delete payload.customCategory;
+  delete payload.partners;
+  delete payload.partner;
+
+  // Validate company_id if present
+  if (payload.company_id) {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(payload.company_id)) {
+      delete payload.company_id;
+    }
+  }
 
   if (isExisting) {
     const { data, error } = await supabase.from('contacts').update(payload).eq('id', payload.id).select();
