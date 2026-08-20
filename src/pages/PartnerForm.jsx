@@ -25,6 +25,7 @@ export default function PartnerForm() {
     const { id } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
+    const { profile } = useAuth();
     const isNew = id === 'new';
     const quillRef = useRef(null);
 
