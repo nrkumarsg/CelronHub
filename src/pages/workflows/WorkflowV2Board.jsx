@@ -18,7 +18,8 @@ import {
     FileCheck, Play, Briefcase, X, Loader2, PlayCircle, Folder, Upload,
     ArrowRightLeft, Filter, Eye, Printer, Search, Trash2, Plus, FileText, Copy, Clock,
     ArrowUp, ArrowDown, RefreshCw, Download, CreditCard, Calendar, ArrowUpDown, LayoutDashboard,
-    ArrowLeft, Sparkles, HardDrive, Hexagon, MessageSquare, Globe, ShieldCheck, Users, Smartphone, History
+    ArrowLeft, Sparkles, HardDrive, Hexagon, MessageSquare, Globe, ShieldCheck, Users, Smartphone, History,
+    Truck
 } from 'lucide-react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import CustomerEnquiryForm from '../../components/CustomerEnquiryForm';
@@ -26,8 +27,9 @@ import JobEditV2Modal from '../../components/workflows/JobEditV2Modal';
 import ReceivePaymentModal from '../../components/workflow/ReceivePaymentModal';
 import SearchableSelect from '../../components/common/SearchableSelect';
 import ModuleSwitcherHeader from '../../components/common/ModuleSwitcherHeader';
-import { getPartners } from '../../lib/store';
+import { getPartners, getDocumentSettings } from '../../lib/store';
 import SmartUploadPanel from '../../components/upload/SmartUploadPanel';
+import DeliveryOrderLabelModal from '../../components/workflow/DeliveryOrderLabelModal';
 
 const DOC_TYPES = [
     'Enquiry', 'Quotation', 'Job', 'Purchase Order', 'Order Acknowledgment',
@@ -137,6 +139,10 @@ export default function WorkflowV2Board() {
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [paymentPrefill, setPaymentPrefill] = useState(null);
     
+    // DO Label Modal State
+    const [doLabelModalDoc, setDoLabelModalDoc] = useState(null);
+    const [docSettings, setDocSettings] = useState(null);
+    
     // SOA Aging View State
     const [soaGroups, setSoaGroups] = useState([]);
     const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
@@ -224,11 +230,17 @@ export default function WorkflowV2Board() {
 
     useEffect(() => {
         if (profile?.company_id) {
-            const fetchPartners = async () => {
+            const fetchPartnersAndSettings = async () => {
                 const data = await getPartners(profile);
                 if (data) setPartners(data);
+                try {
+                    const s = await getDocumentSettings(profile.company_id);
+                    if (s) setDocSettings(s);
+                } catch (e) {
+                    console.error("Settings load error:", e);
+                }
             };
-            fetchPartners();
+            fetchPartnersAndSettings();
         }
     }, [profile]);
 
@@ -2261,6 +2273,36 @@ export default function WorkflowV2Board() {
                                                         <Download size={14} />
                                                     </button>
 
+                                                    {(doc.document_type === 'Delivery Order' || doc.document_type === 'Packing List') && (
+                                                        <button
+                                                            type="button"
+                                                            style={{
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                height: '32px',
+                                                                width: '32px',
+                                                                borderRadius: '6px',
+                                                                background: '#ecfdf5',
+                                                                border: '1px solid #a7f3d0',
+                                                                color: '#059669',
+                                                                cursor: 'pointer',
+                                                                position: 'relative',
+                                                                zIndex: 20
+                                                            }}
+                                                            onClick={async (e) => {
+                                                                e.preventDefault();
+                                                                e.stopPropagation();
+                                                                const { getWorkflowDocumentById } = await import('../../lib/workflowV2Service');
+                                                                const { data } = await getWorkflowDocumentById(doc.id);
+                                                                setDoLabelModalDoc(data || doc);
+                                                            }}
+                                                            title="Print DO Shipping Sticker / Label (4x6, A6, Half-A4, A4)"
+                                                        >
+                                                            <Truck size={14} />
+                                                        </button>
+                                                    )}
+
                                                     {doc.document_type === 'Certificate' && (
                                                         <button
                                                             type="button"
@@ -3024,6 +3066,14 @@ export default function WorkflowV2Board() {
                     accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
                     activeFolderName={conversionTarget?.subject || conversionTarget?.document_no || 'Job Workspace'}
                     runningEnquiryNo={conversionTarget?.enquiry_no || conversionTarget?.document_no || 'ENQ-2607-0005'}
+                />
+            )}
+            {doLabelModalDoc && (
+                <DeliveryOrderLabelModal 
+                    isOpen={!!doLabelModalDoc}
+                    onClose={() => setDoLabelModalDoc(null)}
+                    doc={doLabelModalDoc}
+                    settings={docSettings}
                 />
             )}
         </div>

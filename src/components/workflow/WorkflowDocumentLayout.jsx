@@ -408,8 +408,8 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                     </div>
                 )}
 
-                {/* Notes & Comments - Hide for Quotations, Show for others if they have content */}
-                {notesToDisplay && !isQuotation && notesToDisplay.trim() !== '' && notesToDisplay !== '<p><br></p>' && (
+                {/* Notes & Comments - Special 50/50 layout for Delivery Order & Packing List */}
+                {isDeliveryDoc ? (
                     <div style={{ 
                         ...styles.small, 
                         background: '#f8fafc', 
@@ -417,18 +417,83 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                         border: styles.border, 
                         borderRadius: '10px', 
                         marginBottom: '15px', 
-                        width: '100%' 
+                        width: '100%',
+                        boxSizing: 'border-box'
                     }}>
-                        <div style={{ ...styles.h4, marginBottom: '6px', borderBottom: '1px solid #e2e8f0' }}>NOTES & COMMENTS:</div>
-                        <div 
-                            style={{ paddingLeft: '5px', wordBreak: 'break-word', overflowWrap: 'break-word' }} 
-                            dangerouslySetInnerHTML={{ __html: notesToDisplay.replace(/<ul>/g, '<ul style="padding-left: 20px; margin: 0;">') }} 
-                        />
+                        <div style={{ display: 'flex', gap: '20px', alignItems: 'stretch' }}>
+                            {/* Left 50%: Package Details */}
+                            <div style={{ flex: 1, borderRight: '1px solid #cbd5e1', paddingRight: '15px' }}>
+                                <div style={{ ...styles.h4, marginBottom: '6px', borderBottom: '1px solid #e2e8f0', paddingBottom: '2px' }}>
+                                    PACKAGE DETAILS:
+                                </div>
+                                <div 
+                                    style={{ paddingLeft: '2px', wordBreak: 'break-word', overflowWrap: 'break-word', fontSize: '10.5px', lineHeight: '1.4' }} 
+                                    dangerouslySetInnerHTML={{ 
+                                        __html: notesToDisplay
+                                            .replace(/<p><strong>Package Details<\/strong><\/p>/gi, '')
+                                            .replace(/<ul>/g, '<ul style="padding-left: 18px; margin: 0;">') 
+                                    }} 
+                                />
+                            </div>
+
+                            {/* Right 50%: Delivery & Dispatch Details */}
+                            <div style={{ flex: 1, paddingLeft: '5px', display: 'flex', flexDirection: 'column' }}>
+                                <div style={{ ...styles.h4, marginBottom: '6px', borderBottom: '1px solid #e2e8f0', paddingBottom: '2px', color: '#1e3a8a' }}>
+                                    DELIVERY DETAILS & INSTRUCTIONS:
+                                </div>
+                                
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '10.5px' }}>
+                                    <div>
+                                        <span style={{ fontWeight: 800, color: '#475569', fontSize: '9px', textTransform: 'uppercase', display: 'block' }}>Delivery Address / Destination:</span>
+                                        <div style={{ fontWeight: 700, color: '#0f172a', whiteSpace: 'pre-wrap', marginTop: '1px', fontSize: '10.5px', lineHeight: '1.3' }}>
+                                            {doc.delivery_verification?.delivery_address || (hasLocation ? locationName : (doc.partners?.address || 'To be advised upon dispatch'))}
+                                        </div>
+                                    </div>
+
+                                    {(doc.delivery_verification?.delivery_pic || doc.contacts?.name || doc.contacts?.handphone) && (
+                                        <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: '4px' }}>
+                                            <span style={{ fontWeight: 800, color: '#475569', fontSize: '9px', textTransform: 'uppercase', display: 'block' }}>Person In Charge (PIC) / Contact:</span>
+                                            <div style={{ fontWeight: 700, color: '#0f172a', whiteSpace: 'pre-wrap', marginTop: '1px', fontSize: '10.5px', lineHeight: '1.3' }}>
+                                                {doc.delivery_verification?.delivery_pic || `${doc.contacts?.name || ''} ${doc.contacts?.handphone ? `(${doc.contacts.handphone})` : ''} ${doc.contacts?.email ? `| ${doc.contacts.email}` : ''}`.trim()}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {hasVessel && (
+                                        <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: '4px' }}>
+                                            <span style={{ fontWeight: 800, color: '#475569', fontSize: '9px', textTransform: 'uppercase', display: 'block' }}>Vessel / Service Location:</span>
+                                            <div style={{ fontWeight: 700, color: '#1e3a8a', marginTop: '1px', fontSize: '10px' }}>
+                                                {vesselValue}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
                     </div>
+                ) : (
+                    /* Notes & Comments - Hide for Quotations, Show for others if they have content */
+                    notesToDisplay && !isQuotation && notesToDisplay.trim() !== '' && notesToDisplay !== '<p><br></p>' && (
+                        <div style={{ 
+                            ...styles.small, 
+                            background: '#f8fafc', 
+                            padding: '10px 15px', 
+                            border: styles.border, 
+                            borderRadius: '10px', 
+                            marginBottom: '15px', 
+                            width: '100%' 
+                        }}>
+                            <div style={{ ...styles.h4, marginBottom: '6px', borderBottom: '1px solid #e2e8f0' }}>NOTES & COMMENTS:</div>
+                            <div 
+                                style={{ paddingLeft: '5px', wordBreak: 'break-word', overflowWrap: 'break-word' }} 
+                                dangerouslySetInnerHTML={{ __html: notesToDisplay.replace(/<ul>/g, '<ul style="padding-left: 20px; margin: 0;">') }} 
+                            />
+                        </div>
+                    )
                 )}
 
-                {/* Terms & Conditions (Standard position for other docs) - HIDE FOR FINANCIALS per user request */}
-                {!isQuotation && !isFinancial && doc.terms_conditions && doc.terms_conditions.trim() !== '' && doc.terms_conditions !== '<p><br></p>' && (
+                {/* Terms & Conditions (Standard position for other docs) - HIDE FOR FINANCIALS AND DELIVERY DOCS */}
+                {!isQuotation && !isFinancial && !isDeliveryDoc && doc.terms_conditions && doc.terms_conditions.trim() !== '' && doc.terms_conditions !== '<p><br></p>' && (
                     <div style={{ 
                         ...styles.small, 
                         background: '#f8fafc', 

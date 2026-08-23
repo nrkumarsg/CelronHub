@@ -3,9 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getWorkflowDocumentById } from '../../lib/workflowV2Service';
 import { getDocumentSettings } from '../../lib/store';
 import { useAuth } from '../../contexts/AuthContext';
-import { Printer, ArrowLeft, Download, Pencil } from 'lucide-react';
+import { Printer, ArrowLeft, Download, Pencil, Truck } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import WorkflowDocumentLayout from '../../components/workflow/WorkflowDocumentLayout';
+import DeliveryOrderLabelModal from '../../components/workflow/DeliveryOrderLabelModal';
 
 export default function WorkflowPrintPreview() {
     const { id } = useParams();
@@ -18,6 +19,7 @@ export default function WorkflowPrintPreview() {
     const [signatureBase64, setSignatureBase64] = useState('');
     const [paynowBase64, setPaynowBase64] = useState('');
     const [showSignature, setShowSignature] = useState(true);
+    const [showLabelModal, setShowLabelModal] = useState(false);
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -204,6 +206,15 @@ export default function WorkflowPrintPreview() {
                     >
                         <Pencil size={18} /> Sign & Annotate
                     </button>
+                    {(doc?.document_type === 'Delivery Order' || doc?.document_type === 'Packing List' || doc?.is_job) && (
+                        <button
+                            onClick={() => setShowLabelModal(true)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 20px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}
+                            title="Print DO Shipping Sticker / Label (4x6, A6, Half-A4, A4)"
+                        >
+                            <Truck size={18} /> Print DO Label
+                        </button>
+                    )}
                     <button
                         onClick={() => window.print()}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 24px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}
@@ -225,6 +236,16 @@ export default function WorkflowPrintPreview() {
                 />
                 <div className="page-footer"></div>
             </div>
+
+            {/* DO Shipping Label Modal */}
+            {showLabelModal && doc && (
+                <DeliveryOrderLabelModal 
+                    isOpen={showLabelModal}
+                    onClose={() => setShowLabelModal(false)}
+                    doc={doc}
+                    settings={settings}
+                />
+            )}
 
             <style dangerouslySetInnerHTML={{
                 __html: `

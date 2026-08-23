@@ -97,6 +97,7 @@ import html2pdf from 'html2pdf.js';
 import { generateSleekPDF } from '../../lib/pdfGeneratorV2';
 import { WhatsAppShareModal } from '../../components/workflow/WhatsAppShareModal';
 import SmartOCRModal from '../../components/common/SmartOCRModal';
+import DeliveryOrderLabelModal from '../../components/workflow/DeliveryOrderLabelModal';
 
 export default function WorkflowEditor() {
     const { type, id } = useParams();
@@ -115,6 +116,7 @@ export default function WorkflowEditor() {
     const [saving, setSaving] = useState(false);
     const [activeTab, setActiveTab] = useState('items'); // 'items' | 'other'
     const [modal, setModal] = useState({ isOpen: false, type: null });
+    const [doLabelModal, setDoLabelModal] = useState({ isOpen: false, doc: null });
     const [jobMajorCategories, setJobMajorCategories] = useState([]);
     const getJobMajorOptions = () => {
         const dbNames = jobMajorCategories.map(c => c.name);
@@ -3909,6 +3911,22 @@ export default function WorkflowEditor() {
                         <button className="btn-vibrant-secondary" onClick={handleAnnotate} disabled={saving} style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem' }} title="Sign & Annotate">
                             <Pencil size={16} /> <span className="hide-sm">Sign</span>
                         </button>
+                        {/* DO Shipping Label Sticker */}
+                        {(formData.document_type === 'Delivery Order' || formData.document_type === 'Packing List' || formData.is_job) && !isNew && (
+                            <button 
+                                className="btn-vibrant-secondary" 
+                                onClick={() => {
+                                    const targetDoc = formData.document_type === 'Delivery Order' 
+                                        ? { ...formData, items: lineItems, partners: partners.find(p => p.id === formData.partner_id), contacts: contacts.find(c => c.id === formData.contact_id), vessels: vessels.find(v => v.id === formData.vessel_id), work_locations: workLocations.find(w => w.id === formData.work_location_id) } 
+                                        : ((suiteDocs || []).find(d => d.document_type === 'Delivery Order') || { ...formData, items: lineItems, partners: partners.find(p => p.id === formData.partner_id), contacts: contacts.find(c => c.id === formData.contact_id), vessels: vessels.find(v => v.id === formData.vessel_id), work_locations: workLocations.find(w => w.id === formData.work_location_id) });
+                                    setDoLabelModal({ isOpen: true, doc: targetDoc });
+                                }}
+                                style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '8px 12px', fontSize: '0.85rem', fontWeight: 600 }} 
+                                title="Print DO Shipping Sticker / Label (4x6, A6, Half-A4, A4)"
+                            >
+                                <Truck size={16} /> <span className="hide-sm">DO Label</span>
+                            </button>
+                        )}
                     </div>
 
                     {/* Communication */}
@@ -4490,18 +4508,20 @@ export default function WorkflowEditor() {
                                 </div>
                             </div>
                             
-                            {formData.document_type === 'Delivery Order' && (
+                            {(['Delivery Order', 'Packing List', 'Job'].includes(formData.document_type) || formData.is_job) && (
                                 <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', marginBottom: '16px' }}>
-                                    <div style={{ fontSize: '11px', fontWeight: 800, color: '#1e293b', textTransform: 'uppercase', marginBottom: '8px' }}>Delivery Details</div>
+                                    <div style={{ fontSize: '11px', fontWeight: 800, color: '#1e3a8a', textTransform: 'uppercase', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <Truck size={14} color="#3b82f6" /> Delivery Details
+                                    </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                        <input 
-                                            type="text" 
+                                        <textarea 
                                             className="form-input" 
+                                            rows={2}
                                             name="delivery_verification.delivery_address" 
                                             value={formData.delivery_verification?.delivery_address || ''} 
                                             onChange={handleHeaderChange} 
-                                            placeholder="Delivery Address" 
-                                            style={{ fontSize: '12px', padding: '6px 10px' }}
+                                            placeholder="Delivery Address / Destination" 
+                                            style={{ fontSize: '12px', padding: '6px 10px', resize: 'vertical' }}
                                         />
                                         <input 
                                             type="text" 
@@ -4509,7 +4529,7 @@ export default function WorkflowEditor() {
                                             name="delivery_verification.delivery_pic" 
                                             value={formData.delivery_verification?.delivery_pic || ''} 
                                             onChange={handleHeaderChange} 
-                                            placeholder="Person in Charge (PIC)" 
+                                            placeholder="Person in Charge (PIC) / Contact Person / Phone / Email" 
                                             style={{ fontSize: '12px', padding: '6px 10px' }}
                                         />
                                     </div>
@@ -5290,6 +5310,25 @@ export default function WorkflowEditor() {
                                                             <td style={{ padding: '12px 16px', textAlign: 'center' }}><span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '0.72rem', fontWeight: 700, background: doc.status === 'Draft' ? '#f1f5f9' : doc.status === 'Paid' ? '#dcfce7' : doc.status === 'Cancelled' ? '#fee2e2' : '#eff6ff', color: doc.status === 'Draft' ? '#64748b' : doc.status === 'Paid' ? '#15803d' : doc.status === 'Cancelled' ? '#b91c1c' : '#1d4ed8' }}>{doc.status || 'Draft'}</span></td>
                                                             <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                                                                 <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                                                    {(doc.document_type === 'Delivery Order' || doc.document_type === 'Packing List') && (
+                                                                        <button 
+                                                                            onClick={() => {
+                                                                                const fullDoc = { 
+                                                                                    ...doc, 
+                                                                                    items: doc.items || lineItems,
+                                                                                    partners: doc.partners || partners.find(p => p.id === doc.partner_id),
+                                                                                    contacts: doc.contacts || contacts.find(c => c.id === doc.contact_id),
+                                                                                    vessels: doc.vessels || vessels.find(v => v.id === doc.vessel_id),
+                                                                                    work_locations: doc.work_locations || workLocations.find(w => w.id === doc.work_location_id)
+                                                                                };
+                                                                                setDoLabelModal({ isOpen: true, doc: fullDoc });
+                                                                            }}
+                                                                            title="Print DO Shipping Label Sticker" 
+                                                                            style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 9px', borderRadius: '7px', border: '1px solid #a7f3d0', background: '#ecfdf5', color: '#047857', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600 }}
+                                                                        >
+                                                                            <Truck size={13} /> Label
+                                                                        </button>
+                                                                    )}
                                                                     {!isCurrent ? (<button onClick={() => navigate(`/workflows/editor/${urlSlug}/${doc.id}`)} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }} onMouseOver={e => { e.currentTarget.style.background = clr.bg; e.currentTarget.style.color = clr.color; e.currentTarget.style.borderColor = clr.border; }} onMouseOut={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.color = '#475569'; e.currentTarget.style.borderColor = '#e2e8f0'; }}><Eye size={13} /> Open</button>) : (<span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', padding: '5px 8px' }}>Viewing</span>)}
                                                                     <button onClick={() => handleDeleteSuiteDoc(doc)} title={`Delete ${doc.document_type} ${doc.document_no}`} style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 8px', borderRadius: '7px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', fontSize: '0.78rem', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.background = '#fee2e2'} onMouseOut={e => e.currentTarget.style.background = '#fef2f2'}><Trash2 size={13} /></button>
                                                                 </div>
@@ -8579,6 +8618,19 @@ export default function WorkflowEditor() {
                 partner={partners.find(p => p.id === formData.partner_id)}
                 documentData={formData}
                 onShareFile={performWhatsAppShare}
+            />
+            <DeliveryOrderLabelModal 
+                isOpen={doLabelModal.isOpen}
+                onClose={() => setDoLabelModal({ isOpen: false, doc: null })}
+                doc={doLabelModal.doc || { 
+                    ...formData, 
+                    items: lineItems, 
+                    partners: partners.find(p => p.id === formData.partner_id), 
+                    contacts: contacts.find(c => c.id === formData.contact_id), 
+                    vessels: vessels.find(v => v.id === formData.vessel_id), 
+                    work_locations: workLocations.find(w => w.id === formData.work_location_id) 
+                }}
+                settings={settings}
             />
             {showPaymentModal && (
                 <ReceivePaymentModal 
