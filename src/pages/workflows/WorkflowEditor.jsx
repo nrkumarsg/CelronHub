@@ -17,7 +17,8 @@ import {
     EyeOff,
     Info,
     Image, FolderOpen, DollarSign,
-    List, TrendingUp, TrendingDown, Percent
+    List, TrendingUp, TrendingDown, Percent,
+    Truck
 } from 'lucide-react';
 import SearchableSelect from '../../components/common/SearchableSelect';
 import { getExchangeRateWithGemini } from '../../lib/geminiService';
