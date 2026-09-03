@@ -8,8 +8,11 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getJobEagleViewData, saveWorkflowDocument, deleteWorkflowDocument } from '../../lib/workflowV2Service';
+import { supabase } from '../../lib/supabase';
 import EagleDriveTreeViewer from '../../components/workflows/EagleDriveTreeViewer';
 import SupplierOrderCrudModal from '../../components/workflows/SupplierOrderCrudModal';
+import SmartUploadPanel from '../../components/upload/SmartUploadPanel';
+import { getStoredToken } from '../../lib/googleAuthService';
 import toast from 'react-hot-toast';
 
 const STAGES = [
@@ -30,6 +33,7 @@ export default function JobEagleView() {
     const [loading, setLoading] = useState(true);
     const [jobSuite, setJobSuite] = useState(null);
     const [activeTab, setActiveTab] = useState('drive'); // 'drive' | 'supplier' | 'enquiry' | 'quotation' | 'customer_po'
+    const [selectedStageKey, setSelectedStageKey] = useState('ENQ');
     
     // Modal states
     const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
@@ -353,6 +357,130 @@ export default function JobEagleView() {
                     </div>
                 </div>
 
+                {/* ── Smart Document Upload Component (Embedded) ── */}
+                <div style={{ borderRadius: '16px', overflow: 'hidden', border: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.04)', background: '#ffffff' }}>
+                    <SmartUploadPanel 
+                        isOpen={true}
+                        embedded={true}
+                        documentType="Job Documentation"
+                        accept="*/*"
+                        activeFolderId={masterJob.drive_folder_id || masterJob.gdrive_folder_id || null}
+                        activeFolderName={`${jobNo} > Photos & Gallery`}
+                        runningEnquiryNo={jobNo}
+                        onSelect={async (file, metadata) => {
+                            if (!file) return;
+                            const targetSubfolder = metadata?.docCategory?.subfolder || metadata?.targetSubfolder || 'Photos & Gallery';
+                            const categoryLabel = metadata?.docCategory?.shortLabel || metadata?.docCategory?.label || 'Document';
+                            const loadToast = toast.loading(`Uploading ${file.name || 'document'} to [${targetSubfolder}]...`);
+                            try {
+                                const token = getStoredToken();
+                                if (!token) {
+                                    toast.dismiss(loadToast);
+                                    toast.error('Google Drive is not authenticated. Please connect Google Drive first.');
+                                    return;
+                                }
+
+                                const year = new Date(masterJob.created_at || new Date()).getFullYear().toString();
+                                const cleanTitle = `${jobNo} - ${customer}`;
+                                const { provisionFullProjectStructure, getOrCreateFolder, copyFile, uploadFileToDrive } = await import('../../lib/driveService');
+                                const { getDocumentSettings } = await import('../../lib/store');
+
+                                let rootId = masterJob.gdrive_folder_id || masterJob.drive_folder_id;
+
+                                if (!rootId) {
+                                    const docSettings = await getDocumentSettings(profile?.company_id);
+                                    let celronRootId = docSettings?.gdrive_celron_root_id || docSettings?.google_drive_folder_id || '1GPr3g5mq6_TotBzM8gDz_atJPR7TgbB-';
+                                    if (celronRootId && celronRootId.includes('drive.google.com')) {
+                                        const match = celronRootId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || celronRootId.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                                        if (match) celronRootId = match[1];
+                                    }
+                                    rootId = await provisionFullProjectStructure(token, celronRootId, year, cleanTitle);
+                                    if (rootId && masterJob.id) {
+                                        await supabase.from('workflow_documents').update({ gdrive_folder_id: rootId, drive_folder_id: rootId }).eq('id', masterJob.id);
+                                    }
+                                }
+
+                                let targetId = metadata?.targetFolder?.id || metadata?.targetFolder?.folderId;
+                                let targetName = metadata?.targetFolder?.name || metadata?.targetFolder?.label;
+
+                                if (!targetId && rootId) {
+                                    if (targetSubfolder === 'ROOT' || targetSubfolder === 'Root' || !targetSubfolder) {
+                                        targetId = rootId;
+                                        targetName = `${jobNo} (Root Folder)`;
+                                    } else {
+                                        targetId = await getOrCreateFolder(token, targetSubfolder, rootId);
+                                        targetName = `${jobNo} > ${targetSubfolder}`;
+                                    }
+                                } else if (!targetId) {
+                                    targetId = rootId;
+                                    targetName = `${jobNo} > Root Folder`;
+                                }
+
+                                let uploadedResult;
+                                if (file.isGoogleDrive) {
+                                    uploadedResult = await copyFile(token, file.id, targetId);
+                                } else {
+                                    uploadedResult = await uploadFileToDrive(token, file, { 
+                                        folderId: targetId, 
+                                        title: file.name 
+                                    });
+                                }
+
+                                const fileId = uploadedResult?.id || file.id;
+                                const fileLink = fileId ? `https://drive.google.com/file/d/${fileId}/view` : (uploadedResult?.webViewLink || '');
+
+                                // Database Synchronization: Update attachments and transaction state
+                                const currentAttachments = Array.isArray(masterJob.attachment_urls) ? masterJob.attachment_urls : [];
+                                const updatedAttachments = fileLink && !currentAttachments.includes(fileLink)
+                                    ? [...currentAttachments, fileLink]
+                                    : currentAttachments;
+
+                                const categoryId = metadata?.docCategory?.id || '';
+                                const docType = metadata?.docCategory?.docType || '';
+
+                                let jobUpdates = { attachment_urls: updatedAttachments };
+
+                                if (categoryId === 'payment_proof' || docType === 'Payment Proof') {
+                                    jobUpdates.status = 'Paid';
+                                    jobUpdates.is_paid = true;
+                                    // Also mark any linked invoices as Paid
+                                    if (invoiceDocs && invoiceDocs.length > 0) {
+                                        for (const inv of invoiceDocs) {
+                                            await supabase
+                                                .from('workflow_documents')
+                                                .update({ status: 'Paid', is_paid: true })
+                                                .eq('id', inv.id);
+                                        }
+                                    }
+                                } else if (categoryId === 'delivery_order' || docType === 'Delivery Order') {
+                                    if (masterJob.status === 'Active' || masterJob.status === 'Pending') {
+                                        jobUpdates.status = 'Delivered';
+                                    }
+                                } else if (categoryId === 'customer_po' && !masterJob.customer_ref) {
+                                    // If filename has PO number, try to extract it
+                                    const poMatch = file.name.match(/PO[-_ ]?([A-Za-z0-9]+)/i);
+                                    if (poMatch && poMatch[1]) {
+                                        jobUpdates.customer_ref = `PO-${poMatch[1]}`;
+                                    }
+                                }
+
+                                await supabase
+                                    .from('workflow_documents')
+                                    .update(jobUpdates)
+                                    .eq('id', masterJob.id);
+
+                                toast.dismiss(loadToast);
+                                toast.success(`Saved "${file.name}" to Google Drive [${targetSubfolder}] as ${categoryLabel}!`);
+                                loadEagleViewData();
+                            } catch (err) {
+                                toast.dismiss(loadToast);
+                                console.error('Drive upload failed:', err);
+                                toast.error('Upload failed: ' + err.message);
+                            }
+                        }}
+                    />
+                </div>
+
                 {/* ── Status Info Section (Inbetween Stepper and Google Drive Tree & Views) ── */}
                 <div style={{ background: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '16px 20px', boxShadow: '0 4px 20px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     {/* Header Row: Filter & Stage Dot Legend */}
@@ -369,7 +497,10 @@ export default function JobEagleView() {
                                 return (
                                     <button
                                         key={s.key}
-                                        onClick={() => setActiveTab(s.tab)}
+                                        onClick={() => {
+                                            setSelectedStageKey(s.key);
+                                            setActiveTab(s.tab);
+                                        }}
                                         style={{
                                             display: 'flex',
                                             alignItems: 'center',
@@ -417,7 +548,10 @@ export default function JobEagleView() {
                             return (
                                 <button
                                     key={stage.key}
-                                    onClick={() => setActiveTab(stage.tab)}
+                                    onClick={() => {
+                                        setSelectedStageKey(stage.key);
+                                        setActiveTab(stage.tab);
+                                    }}
                                     title={`${stage.label} — ${detailText} (Click to open ${stage.label} view)`}
                                     style={{
                                         flex: 1,
@@ -507,6 +641,7 @@ export default function JobEagleView() {
                         jobNo={jobNo}
                         customerName={customer}
                         companyId={masterJob.company_id}
+                        selectedStage={selectedStageKey}
                     />
                 )}
 

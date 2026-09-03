@@ -67,13 +67,14 @@ export const connectGoogleAPI = (state = 'sync', customScope = null, loginHint =
  * @returns {boolean}
  */
 export const isTokenValid = () => {
-    const token = localStorage.getItem('google_access_token');
+    const token = localStorage.getItem('google_access_token') || sessionStorage.getItem('google_contacts_token');
     const expiry = localStorage.getItem('google_token_expiry');
 
-    if (!token || !expiry) return false;
+    if (!token) return false;
+    if (!expiry) return true; // Token exists without explicit expiry, treat as candidate
 
-    // Check if expiry is in the future (with 1 minute buffer)
-    return new Date(expiry).getTime() > (Date.now() + 60000);
+    // Check if expiry is in the future
+    return new Date(expiry).getTime() > Date.now();
 };
 
 /**
@@ -81,13 +82,13 @@ export const isTokenValid = () => {
  * @returns {string|null}
  */
 export const getStoredToken = () => {
-    // Prefer company-scoped token if active company set
+    // 1. Prefer company-scoped token if active company set
     try {
         const activeCompany = localStorage.getItem('active_company_id');
         if (activeCompany) {
             const compToken = localStorage.getItem(`google_access_token_company_${activeCompany}`);
             const compExpiry = localStorage.getItem(`google_token_expiry_company_${activeCompany}`);
-            if (compToken && compExpiry && new Date(compExpiry).getTime() > (Date.now() + 60000)) {
+            if (compToken && (!compExpiry || new Date(compExpiry).getTime() > Date.now())) {
                 return compToken;
             }
         }
@@ -95,7 +96,18 @@ export const getStoredToken = () => {
         // ignore and fall back to global token
     }
 
-    return isTokenValid() ? localStorage.getItem('google_access_token') : null;
+    // 2. Check standard localStorage token
+    const localToken = localStorage.getItem('google_access_token');
+    if (localToken) return localToken;
+
+    // 3. Check sessionStorage tokens
+    const sessionContactToken = sessionStorage.getItem('google_contacts_token');
+    if (sessionContactToken) return sessionContactToken;
+
+    const sessionAccessToken = sessionStorage.getItem('google_access_token');
+    if (sessionAccessToken) return sessionAccessToken;
+
+    return null;
 };
 
 /**

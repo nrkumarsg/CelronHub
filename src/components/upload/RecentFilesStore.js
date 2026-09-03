@@ -193,5 +193,72 @@ export const RecentFilesStore = {
             console.error('Failed to remove favorite folder:', e);
             return [];
         }
+    },
+
+    /**
+     * Get dynamic downloads history from browser storage
+     */
+    getDownloadsHistory: () => {
+        try {
+            const raw = localStorage.getItem('celron_downloads_history');
+            const items = raw ? JSON.parse(raw) : [];
+            return Array.isArray(items) ? items : [];
+        } catch (e) {
+            console.error('Failed to get downloads history:', e);
+            return [];
+        }
+    },
+
+    /**
+     * Save an item into the dynamic downloads history
+     */
+    saveDownloadItem: (item) => {
+        try {
+            const current = RecentFilesStore.getDownloadsHistory();
+            const record = {
+                id: item.id || `dl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                name: item.name,
+                size: item.size || 0,
+                type: item.type || 'application/pdf',
+                date: item.date || new Date().toISOString(),
+                category: item.category || 'Downloaded File',
+                source: item.source || 'Local Downloads'
+            };
+            const filtered = current.filter(c => c.name !== record.name);
+            const updated = [record, ...filtered].slice(0, 100);
+            localStorage.setItem('celron_downloads_history', JSON.stringify(updated));
+            return updated;
+        } catch (e) {
+            console.error('Failed to save download item:', e);
+            return [];
+        }
+    },
+
+    /**
+     * Remove an item from the downloads history
+     */
+    removeDownloadItem: (id) => {
+        try {
+            const current = RecentFilesStore.getDownloadsHistory();
+            const updated = current.filter(c => c.id !== id);
+            localStorage.setItem('celron_downloads_history', JSON.stringify(updated));
+            return updated;
+        } catch (e) {
+            console.error('Failed to remove download item:', e);
+            return [];
+        }
+    },
+
+    /**
+     * Clear all downloads history
+     */
+    clearDownloadsHistory: () => {
+        try {
+            localStorage.removeItem('celron_downloads_history');
+            return [];
+        } catch (e) {
+            console.error('Failed to clear downloads history:', e);
+            return [];
+        }
     }
 };

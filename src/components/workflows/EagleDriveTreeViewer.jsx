@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
     Folder, FolderOpen, FileText, Image as ImageIcon, File, Eye, Download, 
     ExternalLink, Upload, RefreshCcw, Search, ChevronRight, ChevronDown, 
-    Sparkles, HardDrive, CheckCircle2, AlertCircle, Loader2, Plus, X 
+    Sparkles, HardDrive, CheckCircle2, AlertCircle, Loader2, Plus, X, FolderPlus, Trash2 
 } from 'lucide-react';
 import { listFolderContent, uploadFileToDrive, deleteFile } from '../../lib/driveService';
 import { validateToken } from '../../lib/googleAuthService';
@@ -13,7 +13,8 @@ export default function EagleDriveTreeViewer({
     jobFolderId, 
     jobNo = 'CEL-2607-6100', 
     customerName = '', 
-    companyId = '' 
+    companyId = '',
+    selectedStage = null
 }) {
     const [loading, setLoading] = useState(true);
     const [tokenValid, setTokenValid] = useState(false);
@@ -24,12 +25,50 @@ export default function EagleDriveTreeViewer({
     const [searchTerm, setSearchTerm] = useState('');
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
+    const [deletingFile, setDeletingFile] = useState(false);
 
     const accessToken = localStorage.getItem('google_access_token');
 
     useEffect(() => {
         checkAuthAndLoad();
     }, [jobFolderId, accessToken]);
+
+    // Stage-based default target folder routing
+    // ENQ & PAID -> ROOT
+    // DEL, QTN, PO -> SupportDocs
+    // INV -> Worksuite
+    // SRC -> SupplierBills&Expenses
+    useEffect(() => {
+        if (!selectedStage || folderTree.length === 0) return;
+        const rootNode = folderTree[0];
+        if (!rootNode) return;
+
+        let targetNode = rootNode;
+        if (selectedStage === 'ENQ' || selectedStage === 'PAID') {
+            targetNode = rootNode;
+        } else if (selectedStage === 'DEL' || selectedStage === 'QTN' || selectedStage === 'PO') {
+            const found = (rootNode.children || []).find(c => c.name.toLowerCase().includes('supportdocs'));
+            if (found) targetNode = found;
+        } else if (selectedStage === 'INV') {
+            const found = (rootNode.children || []).find(c => c.name.toLowerCase().includes('worksuite'));
+            if (found) targetNode = found;
+        } else if (selectedStage === 'SRC') {
+            const found = (rootNode.children || []).find(c => c.name.toLowerCase().includes('supplierbills') || c.name.toLowerCase().includes('supplier'));
+            if (found) targetNode = found;
+        }
+
+        if (targetNode) {
+            setActiveFolder(targetNode);
+            if (targetNode.files && targetNode.files.length > 0) {
+                setSelectedFile(targetNode.files[0]);
+            }
+            setFolderTree(prev => prev.map(rn => ({
+                ...rn,
+                isExpanded: true,
+                children: (rn.children || []).map(cn => cn.id === targetNode.id ? { ...cn, isExpanded: true } : cn)
+            })));
+        }
+    }, [selectedStage, folderTree]);
 
     const checkAuthAndLoad = async () => {
         setLoading(true);
@@ -150,11 +189,12 @@ export default function EagleDriveTreeViewer({
         });
     };
 
-    const handleFileUpload = async (e) => {
+    const handleFileUpload = async (e, specificFolderId = null, specificFolderName = null) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
-        const targetFolder = activeFolder?.id || jobFolderId;
+        const targetFolder = specificFolderId || activeFolder?.id || jobFolderId;
+        const targetName = specificFolderName || activeFolder?.name || 'Drive Folder';
         if (!targetFolder) {
             toast.error('No target folder selected for upload');
             return;
@@ -169,7 +209,7 @@ export default function EagleDriveTreeViewer({
                 title: file.name
             }, (progress) => setUploadProgress(progress));
 
-            toast.success(`Uploaded ${file.name} to Drive`);
+            toast.success(`Uploaded ${file.name} to ${targetName}`);
             await loadFolderStructure();
             if (uploaded) setSelectedFile(uploaded);
         } catch (err) {
@@ -178,6 +218,62 @@ export default function EagleDriveTreeViewer({
         } finally {
             setUploading(false);
             setUploadProgress(0);
+            if (e.target) e.target.value = '';
+        }
+    };
+
+    const handleProvisionProjectFolder = async () => {
+        if (!accessToken) {
+            setIsAuthModalOpen(true);
+            return;
+        }
+        setLoading(true);
+        try {
+            const { getDocumentSettings: fetchDocSettings } = await import('../../lib/store');
+            const { provisionFullProjectStructure } = await import('../../lib/driveService');
+            const docSettings = await fetchDocSettings(companyId);
+            let celronRootId = docSettings?.gdrive_celron_root_id || docSettings?.google_drive_folder_id;
+            if (!celronRootId) throw new Error('Google Drive Root Folder ID is not configured in Settings.');
+
+            if (celronRootId.includes('drive.google.com')) {
+                const match = celronRootId.match(/\/folders\/([a-zA-Z0-9_-]+)/) || celronRootId.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                if (match) celronRootId = match[1];
+            }
+
+            const currentYear = new Date().getFullYear().toString();
+            const cleanCust = (customerName || 'Walk-in').replace(/[^a-zA-Z0-9\s]/g, '').trim().substring(0, 15);
+            const projName = `${jobNo} - ${cleanCust}`;
+
+            await provisionFullProjectStructure(accessToken, celronRootId, currentYear, projName);
+            toast.success(`Standard project folders created for Job ${jobNo}!`);
+            await loadFolderStructure();
+        } catch (err) {
+            console.error('Failed to provision folder:', err);
+            toast.error('Provisioning failed: ' + err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleDeleteSelectedFile = async () => {
+        if (!selectedFile) return;
+        if (!window.confirm(`Are you sure you want to delete "${selectedFile.name}" from Google Drive?`)) {
+            return;
+        }
+        setDeletingFile(true);
+        const deleteToast = toast.loading(`Deleting "${selectedFile.name}" from Google Drive...`);
+        try {
+            await deleteFile(accessToken, selectedFile.id);
+            toast.dismiss(deleteToast);
+            toast.success(`Deleted "${selectedFile.name}" successfully!`);
+            setSelectedFile(null);
+            await loadFolderStructure();
+        } catch (err) {
+            toast.dismiss(deleteToast);
+            console.error('Failed to delete file from Drive:', err);
+            toast.error('Failed to delete file: ' + (err.message || 'Drive error'));
+        } finally {
+            setDeletingFile(false);
         }
     };
 
@@ -225,6 +321,48 @@ export default function EagleDriveTreeViewer({
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                        {/* Quick upload directly to this correspondence folder */}
+                        <label
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveFolder(node);
+                            }}
+                            title={`Upload document directly into "${node.name}"`}
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px',
+                                padding: '2px 6px',
+                                borderRadius: '5px',
+                                fontSize: '0.7rem',
+                                fontWeight: 700,
+                                color: '#059669',
+                                background: '#ecfdf5',
+                                border: '1px solid #a7f3d0',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease'
+                            }}
+                            onMouseOver={(e) => {
+                                e.currentTarget.style.background = '#059669';
+                                e.currentTarget.style.color = '#ffffff';
+                            }}
+                            onMouseOut={(e) => {
+                                e.currentTarget.style.background = '#ecfdf5';
+                                e.currentTarget.style.color = '#059669';
+                            }}
+                        >
+                            <Upload size={10} />
+                            <span>Upload</span>
+                            <input 
+                                type="file" 
+                                style={{ display: 'none' }} 
+                                onChange={(e) => {
+                                    setActiveFolder(node);
+                                    handleFileUpload(e, node.id, node.name);
+                                }} 
+                            />
+                        </label>
+
                         {/* Online Link to open folder in new window */}
                         <a
                             href={folderLink}
@@ -357,7 +495,26 @@ export default function EagleDriveTreeViewer({
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    {/* Active Target Folder Indicator */}
+                    {activeFolder && (
+                        <div style={{
+                            background: 'rgba(99, 102, 241, 0.25)',
+                            border: '1px solid rgba(165, 180, 252, 0.4)',
+                            color: '#c7d2fe',
+                            padding: '5px 12px',
+                            borderRadius: '8px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px'
+                        }}>
+                            <Folder size={13} color="#f59e0b" />
+                            <span>Target: <strong style={{ color: '#ffffff' }}>{activeFolder.name}</strong></span>
+                        </div>
+                    )}
+
                     {/* Search Input */}
                     <div style={{ position: 'relative' }}>
                         <Search size={14} style={{ position: 'absolute', left: '10px', top: '9px', color: '#94a3b8' }} />
@@ -381,9 +538,9 @@ export default function EagleDriveTreeViewer({
                     </button>
 
                     {/* Upload File Button */}
-                    <label style={{ background: '#4f46e5', color: '#ffffff', padding: '6px 14px', borderRadius: '8px', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 6px rgba(79,70,229,0.3)' }}>
+                    <label style={{ background: '#4f46e5', color: '#ffffff', padding: '6px 14px', borderRadius: '8px', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 6px rgba(79,70,229,0.3)' }} title={`Upload file into ${activeFolder?.name || 'Job Folder'}`}>
                         <Upload size={14} /> Upload File
-                        <input type="file" onChange={handleFileUpload} style={{ display: 'none' }} />
+                        <input type="file" onChange={(e) => handleFileUpload(e)} style={{ display: 'none' }} />
                     </label>
                 </div>
             </div>
@@ -419,9 +576,29 @@ export default function EagleDriveTreeViewer({
                             {folderTree.map(node => renderFolderNode(node))}
                         </div>
                     ) : (
-                        <div style={{ textAlign: 'center', padding: '48px 0', color: '#64748b', fontSize: '0.8rem' }}>
-                            <AlertCircle size={28} style={{ margin: '0 auto 8px', color: '#94a3b8' }} />
-                            No Drive folders found for job <strong>{jobNo}</strong>.
+                        <div style={{ textAlign: 'center', padding: '48px 16px', color: '#64748b', fontSize: '0.8rem' }}>
+                            <AlertCircle size={32} style={{ margin: '0 auto 10px', color: '#94a3b8' }} />
+                            <p style={{ margin: '0 0 14px 0', fontSize: '0.85rem' }}>No Drive folders found for job <strong>{jobNo}</strong>.</p>
+                            <button
+                                onClick={handleProvisionProjectFolder}
+                                disabled={loading}
+                                style={{
+                                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                                    color: '#0f172a',
+                                    border: 'none',
+                                    padding: '8px 18px',
+                                    borderRadius: '8px',
+                                    fontWeight: 800,
+                                    fontSize: '0.8rem',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    boxShadow: '0 2px 8px rgba(245,158,11,0.3)'
+                                }}
+                            >
+                                <FolderPlus size={15} /> Provision Standard Job Folders
+                            </button>
                         </div>
                     )}
                 </div>
@@ -447,7 +624,7 @@ export default function EagleDriveTreeViewer({
                                     </div>
                                 </div>
 
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', shrink: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                                     {selectedFile.webViewLink && (
                                         <a
                                             href={selectedFile.webViewLink}
@@ -458,6 +635,30 @@ export default function EagleDriveTreeViewer({
                                             <ExternalLink size={13} /> Open in Drive
                                         </a>
                                     )}
+                                    <button
+                                        type="button"
+                                        onClick={handleDeleteSelectedFile}
+                                        disabled={deletingFile}
+                                        style={{
+                                            background: '#fef2f2',
+                                            color: '#dc2626',
+                                            border: '1px solid #fecaca',
+                                            padding: '6px 14px',
+                                            borderRadius: '8px',
+                                            fontSize: '0.8rem',
+                                            fontWeight: 700,
+                                            cursor: deletingFile ? 'not-allowed' : 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                                            transition: 'all 0.15s ease'
+                                        }}
+                                        title="Delete this file from Google Drive"
+                                    >
+                                        {deletingFile ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                                        Delete File
+                                    </button>
                                 </div>
                             </div>
 

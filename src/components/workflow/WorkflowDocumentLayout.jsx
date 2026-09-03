@@ -81,9 +81,10 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
     const isInvoice = doc.document_type?.toUpperCase() === 'TAX INVOICE' || doc.document_type?.toUpperCase() === 'INVOICE';
     const isProforma = doc.document_type?.toUpperCase() === 'PROFORMA INVOICE' || doc.document_type === 'PRO';
     const isPayment = doc.document_type === 'Payment Received';
-    const isFinancial = isInvoice || isProforma || isPayment;
+    const isCreditNote = doc.document_type?.toUpperCase() === 'CREDIT NOTE' || doc.document_type === 'CN';
+    const isFinancial = isInvoice || isProforma || isPayment || isCreditNote;
     const isEnquiry = doc.document_type?.toUpperCase() === 'ENQUIRY';
-    const isAnithaType = ['Tax Invoice', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(doc.document_type);
+    const isAnithaType = ['Tax Invoice', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment', 'Credit Note'].includes(doc.document_type);
     const isKumar = doc.salesperson_name?.toUpperCase() === 'N.R.KUMAR' || doc.salesperson_name?.toUpperCase() === 'KUMAR';
     const effectiveSalesperson = isKumar ? 'N.R.KUMAR' : ((isAnithaType && (!doc.salesperson_name)) ? 'ANITHA (Ms)' : (doc.salesperson_name || 'ANITHA (Ms)'));
     const effectivePhone = isKumar ? '+65 97685891' : ((isAnithaType && (!doc.salesperson_phone)) ? '+6581962270' : (doc.salesperson_phone || '+6581962270'));
@@ -95,6 +96,7 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                        isInvoice ? 'INV.NO' : 
                        isProforma ? 'PRO.NO' :
                        isPayment ? 'RCPT.NO' :
+                       isCreditNote ? 'CN.NO' :
                        isDeliveryDoc ? (doc.document_type === 'Packing List' ? 'PKL.NO' : 'DO.NO') : 
                        'DOC.NO';
 
@@ -237,32 +239,40 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                         <tbody>
                             {!isDeliveryDoc && (
                                 <tr style={{ borderBottom: styles.border }}>
-                                    <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, width: '40%', borderRight: styles.border }}>DUE/EXPIRY</td>
-                                    <td style={{ padding: '4px 10px', ...styles.bodyBold }}>{formatDate(doc.expiry_date)}</td>
+                                    <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, width: '40%', borderRight: styles.border }}>
+                                        {isCreditNote ? 'CREDIT DATE' : 'DUE/EXPIRY'}
+                                    </td>
+                                    <td style={{ padding: '4px 10px', ...styles.bodyBold }}>{formatDate(doc.expiry_date || doc.issue_date)}</td>
+                                </tr>
+                            )}
+                            {isCreditNote && (
+                                <tr style={{ borderBottom: styles.border }}>
+                                    <td style={{ padding: '4px 10px', background: '#fff1f2', ...styles.h3, color: '#b91c1c', borderRight: styles.border }}>REF INVOICE NO</td>
+                                    <td style={{ padding: '4px 10px', ...styles.bodyBold, color: '#b91c1c' }}>
+                                        {doc.original_invoice_no || doc.customer_ref || 'N/A'}
+                                    </td>
                                 </tr>
                             )}
                             <tr style={{ borderBottom: styles.border }}>
                                 <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>{vesselLabel}</td>
                                 <td style={{ padding: '4px 10px', ...styles.bodyBold }}>{vesselValue}</td>
                             </tr>
-                            {doc.payment_terms && (
+                            {doc.payment_terms && !isCreditNote && (
                                 <tr style={{ borderBottom: styles.border }}>
                                     <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>PAYMENT TERMS</td>
                                     <td style={{ padding: '4px 10px', ...styles.bodyBold, color: '#1e3a8a' }}>{doc.payment_terms.toUpperCase()}</td>
                                 </tr>
                             )}
-                            {doc.customer_ref && (
+                            {doc.customer_ref && !isCreditNote && (
                                 <tr style={{ borderBottom: styles.border }}>
                                     <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>REFERENCE</td>
                                     <td style={{ padding: '4px 10px', ...styles.bodyBold }}>{doc.customer_ref}</td>
                                 </tr>
                             )}
-                            {doc.assigned_job_no && (
-                                <tr style={{ borderBottom: styles.border }}>
-                                    <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>JOB NO</td>
-                                    <td style={{ padding: '4px 10px', ...styles.bodyBold, color: '#10b981' }}>{doc.assigned_job_no}</td>
-                                </tr>
-                            )}
+                            <tr style={{ borderBottom: styles.border }}>
+                                <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>JOB NO</td>
+                                <td style={{ padding: '4px 10px', ...styles.bodyBold, color: '#10b981' }}>{doc.assigned_job_no || 'N/A'}</td>
+                            </tr>
                             <tr>
                                 <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, borderRight: styles.border, verticalAlign: 'top' }}>SALESPERSON</td>
                                 <td style={{ padding: '4px 10px', ...styles.bodyBold }}>
@@ -365,7 +375,9 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                                 
                                 {/* Final Total (Dark Theme) */}
                                 <div style={{ background: '#0f172a', color: '#ffffff', padding: '6px 25px', display: 'flex', alignItems: 'center', width: '45%', justifyContent: 'space-between' }}>
-                                    <span style={{ ...styles.h3, color: '#ffffff', margin: 0 }}>TOTAL ({doc.currency || 'SGD'})</span>
+                                    <span style={{ ...styles.h3, color: '#ffffff', margin: 0 }}>
+                                        {isCreditNote ? 'TOTAL CREDITED' : 'TOTAL'} ({doc.currency || 'SGD'})
+                                    </span>
                                     <span style={{ fontSize: '15px', fontWeight: 900, color: '#ffffff' }}>{(doc.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                 </div>
                             </div>

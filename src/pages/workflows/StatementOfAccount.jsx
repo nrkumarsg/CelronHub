@@ -268,6 +268,8 @@ const processStatementData = (rawData, partnerId, start, end, partnersList, fall
         const docType = doc.document_type || '';
         const isInvoice = docType.includes('Invoice');
         const isPayment = docType === 'Payment Received';
+        const isCreditNote = docType === 'Credit Note';
+        const isCredit = isPayment || isCreditNote;
         const amount = parseFloat(doc.total_amount) || 0;
 
         let relId = null;
@@ -276,20 +278,22 @@ const processStatementData = (rawData, partnerId, start, end, partnersList, fall
                 const notes = JSON.parse(doc.internal_notes);
                 relId = notes.related_document_id;
             } catch {}
+        } else if (isCreditNote) {
+            relId = doc.original_document_id || null;
         }
 
         const docWithAmounts = {
             ...doc,
             debit: isInvoice ? amount : 0,
-            credit: isPayment ? amount : 0
+            credit: isCredit ? amount : 0
         };
         
         if (new Date(doc.issue_date) < new Date(start)) {
             if (isInvoice) openingBalance += amount;
-            if (isPayment) openingBalance -= amount;
+            if (isCredit) openingBalance -= amount;
             openingBalanceItems.push(docWithAmounts);
         } else {
-            if (isPayment && relId) {
+            if ((isPayment || isCreditNote) && relId) {
                 if (!relatedPayments.has(relId)) relatedPayments.set(relId, []);
                 relatedPayments.get(relId).push(docWithAmounts);
             } else {
@@ -339,7 +343,7 @@ const processStatementData = (rawData, partnerId, start, end, partnersList, fall
     const allInvoices = filteredData.filter(d => (d.document_type || '').includes('Invoice'))
         .sort((a, b) => new Date(a.issue_date) - new Date(b.issue_date));
     
-    let unallocatedCredit = filteredData.filter(d => d.document_type === 'Payment Received')
+    let unallocatedCredit = filteredData.filter(d => d.document_type === 'Payment Received' || d.document_type === 'Credit Note')
         .reduce((sum, p) => sum + (parseFloat(p.total_amount) || 0), 0);
     
     allInvoices.forEach(inv => {
@@ -652,7 +656,7 @@ export default function StatementOfAccount() {
                             absoluteOldestInvoiceDate = doc.issue_date;
                         }
                         
-                    } else if (doc.document_type === 'Payment Received') {
+                    } else if (doc.document_type === 'Payment Received' || doc.document_type === 'Credit Note') {
                         groups[pid].outstanding -= amount;
                         groups[pid].total_paid += amount;
                         

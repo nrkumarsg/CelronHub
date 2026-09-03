@@ -109,9 +109,9 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
     const opt = {
         margin: [0, 0, 0, 0],
         filename: safeFilename,
-        image: { type: 'jpeg', quality: 0.98 },
+        image: { type: 'jpeg', quality: 0.88 },
         html2canvas: {
-            scale: 2,
+            scale: 1.6,
             useCORS: true,
             allowTaint: false,
             scrollX: 0,
@@ -119,7 +119,7 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
             logging: false,
             backgroundColor: '#ffffff'
         },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true }
     };
 
     try {

@@ -620,10 +620,12 @@ export default function JobWorkflow() {
         const inv = docs.find(d => d.document_type === 'Tax Invoice');
         const pro = docs.find(d => d.document_type === 'Proforma Invoice');
         const pay = docs.find(d => d.document_type === 'Payment Received');
+        const cnDocs = docs.filter(d => d.document_type === 'Credit Note');
         
-        if (inv || pro || pay) {
+        if (inv || pro || pay || cnDocs.length > 0) {
             return {
                 status: inv?.status === 'Paid' ? 'confirmed' : 'active',
+                invId: inv?.id || null,
                 invNo: inv?.document_no || null,
                 invAmount: inv?.total_amount || 0,
                 invStatus: inv?.status || null,
@@ -631,10 +633,11 @@ export default function JobWorkflow() {
                 proStatus: pro?.status || null,
                 payNo: pay?.document_no || null,
                 payAmount: pay?.total_amount || 0,
+                cnDocs: cnDocs,
                 link: inv ? `/workflows/editor/tax-invoice/${inv.id}` : (pro ? `/workflows/editor/proforma-invoice/${pro.id}` : null)
             };
         }
-        return { status: 'missing' };
+        return { status: 'missing', cnDocs: [] };
     };
 
     const resolveFolderForStage = (stageNum) => {
@@ -1185,7 +1188,34 @@ export default function JobWorkflow() {
                                                         + Record Payment
                                                     </button>
                                                 )}
+                                                {stage6.invId && (
+                                                    <button 
+                                                        onClick={() => navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(stage4.jobNo || '')}&source_id=${stage6.invId}`)} 
+                                                        style={{ background: '#fff1f2', color: '#e11d48', border: '1px solid #fecdd3', padding: '6px 12px', borderRadius: '8px', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}
+                                                        title="Issue Credit Note linked to this Tax Invoice"
+                                                    >
+                                                        + Issue Credit Note
+                                                    </button>
+                                                )}
                                             </div>
+                                            {stage6.cnDocs && stage6.cnDocs.length > 0 && (
+                                                <div style={{ marginTop: '12px', padding: '10px 14px', background: '#fff1f2', borderRadius: '10px', border: '1px solid #fecdd3' }}>
+                                                    <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#9f1239', marginBottom: '6px' }}>
+                                                        Linked Credit Notes ({stage6.cnDocs.length}):
+                                                    </div>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                                        {stage6.cnDocs.map(cn => (
+                                                            <div key={cn.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.82rem' }}>
+                                                                <span style={{ fontWeight: 700, color: '#e11d48' }}>{cn.document_no}</span>
+                                                                <span style={{ color: '#be123c', fontWeight: 700 }}>- {cn.currency || 'SGD'} {(parseFloat(cn.total_amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                                                <button onClick={() => navigate(`/workflows/editor/credit-note/${cn.id}`)} style={{ padding: '3px 8px', fontSize: '0.72rem', borderRadius: '6px', border: '1px solid #fda4af', background: '#fff', color: '#e11d48', cursor: 'pointer', fontWeight: 600 }}>
+                                                                    View
+                                                                </button>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     ) : (
                                         <div style={{ marginTop: '12px' }}>

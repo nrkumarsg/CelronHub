@@ -34,7 +34,7 @@ import DeliveryOrderLabelModal from '../../components/workflow/DeliveryOrderLabe
 const DOC_TYPES = [
     'Enquiry', 'Quotation', 'Job', 'Purchase Order', 'Order Acknowledgment',
     'Delivery Order', 'Service Report', 'Proforma Invoice',
-    'Packing List', 'Tax Invoice', 'Certificate',
+    'Packing List', 'Tax Invoice', 'Credit Note', 'Certificate',
     'Payment Received', 'Statement of Account'
 ];
 
@@ -63,6 +63,11 @@ const SUB_TABS_CONFIG = {
         { id: 'Sent', label: 'Sent (Unpaid)', color: '#ef4444', bgActive: '#ef4444', textActive: '#ffffff', bgInactive: '#fef2f2', textInactive: '#991b1b', border: '#f87171', desc: 'Issued tax invoices awaiting payment' },
         { id: 'Draft', label: 'Draft Invoices', color: '#f59e0b', bgActive: '#f59e0b', textActive: '#ffffff', bgInactive: '#fffbeb', textInactive: '#b45309', border: '#fbbf24', desc: 'Unissued draft tax invoices' },
         { id: 'Paid', label: 'Paid Invoices', color: '#10b981', bgActive: '#10b981', textActive: '#ffffff', bgInactive: '#ecfdf5', textInactive: '#065f46', border: '#10b981', desc: 'Fully paid and closed tax invoices' }
+    ],
+    'Credit Note': [
+        { id: 'Draft', label: 'Draft Credit Notes', color: '#f59e0b', bgActive: '#f59e0b', textActive: '#ffffff', bgInactive: '#fffbeb', textInactive: '#b45309', border: '#fbbf24', desc: 'Draft credit notes being prepared' },
+        { id: 'Sent', label: 'Issued / Sent', color: '#e11d48', bgActive: '#e11d48', textActive: '#ffffff', bgInactive: '#fff1f2', textInactive: '#9f1239', border: '#fda4af', desc: 'Officially issued credit notes' },
+        { id: 'Confirmed', label: 'Applied to Ledger', color: '#10b981', bgActive: '#10b981', textActive: '#ffffff', bgInactive: '#ecfdf5', textInactive: '#065f46', border: '#10b981', desc: 'Applied to reduce invoice balance' }
     ],
     'Proforma Invoice': [
         { id: 'Sent', label: 'Sent / Unpaid', color: '#ef4444', bgActive: '#ef4444', textActive: '#ffffff', bgInactive: '#fef2f2', textInactive: '#991b1b', border: '#f87171', desc: 'Issued proformas awaiting advance payment' },
@@ -157,7 +162,7 @@ export default function WorkflowV2Board() {
 
     const dropdownRef = useRef(null);
     const [subTab, setSubTab] = useState('Ongoing'); // General sub-tab state (Ongoing, Completed, Archived, Sent, Draft, Paid, etc.)
-    const [compactWindow, setCompactWindow] = useState(false); // Default to full screen view
+    const [compactWindow, setCompactWindow] = useState(true); // Default to 6-row compact view
 
     const location = useLocation();
     const searchParams = new URLSearchParams(location.search);
@@ -1128,6 +1133,7 @@ export default function WorkflowV2Board() {
                                 'Proforma Invoice': { link: '/workflows/editor/proforma-invoice/new' },
                                 'Packing List': { link: '/workflows/editor/packing-list/new' },
                                 'Tax Invoice': { link: '/workflows/editor/tax-invoice/new' },
+                                'Credit Note': { link: '/workflows/editor/credit-note/new' },
                                 'Certificate': { link: '/workflows/editor/certificate/new' },
                                 'Statement of Account': { link: '/soa' }
                             };
@@ -1151,6 +1157,7 @@ export default function WorkflowV2Board() {
                                 'Certificate': 'New Certificate',
                                 'Proforma Invoice': 'New Proforma Invoice',
                                 'Tax Invoice': 'New Tax Invoice',
+                                'Credit Note': 'New Credit Note',
                                 'Statement of Account': 'Generate SOA',
                                 'All': 'New Enquiry'
                             };
@@ -1757,19 +1764,20 @@ export default function WorkflowV2Board() {
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 gap: '6px',
-                                padding: '6px 12px',
+                                padding: '5px 12px',
                                 borderRadius: '8px',
-                                border: '1px solid #cbd5e1',
-                                background: compactWindow ? '#ffffff' : '#eff6ff',
-                                color: compactWindow ? '#334155' : '#1d4ed8',
+                                border: '1px solid',
+                                borderColor: compactWindow ? '#bfdbfe' : '#cbd5e1',
+                                background: compactWindow ? '#eff6ff' : '#ffffff',
+                                color: compactWindow ? '#1d4ed8' : '#334155',
                                 fontSize: '0.8rem',
                                 fontWeight: 700,
                                 cursor: 'pointer',
                                 transition: 'all 0.15s ease'
                             }}
-                            title={compactWindow ? "Switch to full expanded table view" : "Switch to 5-6 row compact window view"}
+                            title={compactWindow ? "Switch to full expanded table view" : "Switch to 6-row compact window view"}
                         >
-                            {compactWindow ? '📐 Small Window (5-6 Rows)' : '📺 Full Screen View'}
+                            {compactWindow ? '📐 Compact View (6 Rows)' : '📺 Full Screen View'}
                         </button>
                     </div>
                 </div>
@@ -1777,8 +1785,8 @@ export default function WorkflowV2Board() {
                 <div 
                     className="table-container custom-scrollbar"
                     style={{
-                        height: compactWindow ? '360px' : 'auto',
-                        maxHeight: compactWindow ? '360px' : 'calc(100vh - 240px)',
+                        height: compactWindow ? '330px' : 'auto',
+                        maxHeight: compactWindow ? '330px' : 'calc(100vh - 240px)',
                         minHeight: compactWindow ? 'auto' : '560px',
                         overflowY: 'auto',
                         border: '1px solid #e2e8f0',

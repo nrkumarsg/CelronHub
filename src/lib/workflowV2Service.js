@@ -121,6 +121,7 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
         case 'Statement of Account': prefix = 'SOA'; break;
         case 'Job': prefix = 'CEL'; break; // v3 Requirement
         case 'Order Acknowledgment': prefix = 'ORA'; break;
+        case 'Credit Note': prefix = 'CN'; break;
     }
 
     // Handle Job-assigned documents with dynamic letter suffixing (A, B, C ... Z, AA...)
@@ -280,7 +281,7 @@ export const getStatementData = async (companyId, partnerId, startDate, endDate)
         .from('workflow_documents')
         .select('*, partners(name), vessels!vessel_id(vessel_name), work_locations!work_location_id(location_name)')
         .eq('company_id', companyId)
-        .in('document_type', ['Tax Invoice', 'Proforma Invoice', 'Payment Received'])
+        .in('document_type', ['Tax Invoice', 'Proforma Invoice', 'Payment Received', 'Credit Note'])
         .lte('issue_date', endDate)
         .order('issue_date', { ascending: true });
 

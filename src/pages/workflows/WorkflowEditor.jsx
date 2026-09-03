@@ -18,7 +18,7 @@ import {
     Info,
     Image, FolderOpen, DollarSign,
     List, TrendingUp, TrendingDown, Percent,
-    Truck
+    Truck, RotateCcw
 } from 'lucide-react';
 import SearchableSelect from '../../components/common/SearchableSelect';
 import { getExchangeRateWithGemini } from '../../lib/geminiService';
@@ -126,6 +126,7 @@ export default function WorkflowEditor() {
     };
     const [whatsappShareModal, setWhatsappShareModal] = useState({ isOpen: false });
     const [emailPreview, setEmailPreview] = useState(null);
+    const [creditNotePickerModal, setCreditNotePickerModal] = useState({ isOpen: false, invoices: [], jobNo: '' });
     
     const [smartUploadConfig, setSmartUploadConfig] = useState({
         isOpen: false,
@@ -791,7 +792,7 @@ export default function WorkflowEditor() {
     // Form Data
     const [formData, setFormData] = useState(() => {
         const docType = (type || 'Enquiry').split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-        const isAnithaDoc = ['Tax Invoice', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(docType);
+        const isAnithaDoc = ['Tax Invoice', 'Credit Note', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(docType);
         
         return {
         document_type: docType,
@@ -809,6 +810,7 @@ export default function WorkflowEditor() {
         salesperson_email: isAnithaDoc ? 'accounts@celron.net' : (profile?.professional_email || 'sales@celron.net'),
         subject: '',
         customer_ref: 'WALK IN',
+        original_invoice_no: '',
         currency: 'SGD',
         exchange_rate: 1.0,
         base_currency: 'SGD',
@@ -842,7 +844,7 @@ export default function WorkflowEditor() {
         };
     });
 
-    const isAnithaType = ['Tax Invoice', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(formData.document_type);
+    const isAnithaType = ['Tax Invoice', 'Credit Note', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(formData.document_type);
 
     useEffect(() => {
         // Reset Google Drive provisioning refs when the document ID or job number changes
@@ -994,14 +996,37 @@ export default function WorkflowEditor() {
             setAuthStatus('disconnected');
             return false;
         }
-        const isValid = await validateToken(token);
-        if (!isValid) {
-            setAuthStatus('expired');
+        try {
+            const isValid = await validateToken(token);
+            if (!isValid) {
+                setAuthStatus('expired');
+                return false;
+            }
+            setAuthStatus('connected');
+            return true;
+        } catch (err) {
+            console.error('Drive auth check error:', err);
+            setAuthStatus('disconnected');
             return false;
         }
-        setAuthStatus('connected');
-        return true;
     };
+
+    // Keep Google Drive status live and synchronized with floating hub & local storage
+    useEffect(() => {
+        checkGoogleAuth();
+        const interval = setInterval(checkGoogleAuth, 30000);
+        const handleFocus = () => checkGoogleAuth();
+        const handleStorage = () => checkGoogleAuth();
+
+        window.addEventListener('focus', handleFocus);
+        window.addEventListener('storage', handleStorage);
+
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('focus', handleFocus);
+            window.removeEventListener('storage', handleStorage);
+        };
+    }, []);
 
     const handleExplorerReconnect = () => {
         connectGoogleAPI(`job_${id}`);
@@ -1897,6 +1922,7 @@ export default function WorkflowEditor() {
     const SUITE_DOC_TYPES = [
         'Delivery Order',
         'Tax Invoice',
+        'Credit Note',
         'Proforma Invoice',
         'Purchase Order',
         'Packing List',
@@ -1911,6 +1937,7 @@ export default function WorkflowEditor() {
         'Purchase Order':       { bg: '#f3e8ff', color: '#7c3aed', border: '#ddd6fe' },
         'Delivery Order':       { bg: '#fff7ed', color: '#c2410c', border: '#fed7aa' },
         'Tax Invoice':          { bg: '#fef2f2', color: '#b91c1c', border: '#fecaca' },
+        'Credit Note':          { bg: '#fff1f2', color: '#e11d48', border: '#fecdd3' },
         'Proforma Invoice':     { bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
         'Packing List':         { bg: '#f0fdfa', color: '#0f766e', border: '#99f6e4' },
         'Service Report':       { bg: '#fdf2f8', color: '#be185d', border: '#fbcfe8' },
@@ -2181,6 +2208,7 @@ export default function WorkflowEditor() {
         if (sourceId) {
             const { data: sourceDoc } = await getWorkflowDocumentById(sourceId);
             if (sourceDoc) {
+                const isCN = docType === 'CREDIT NOTE';
                 setFormData(prev => ({
                     ...prev,
                     document_no: newNo,
@@ -2188,8 +2216,10 @@ export default function WorkflowEditor() {
                     contact_id: sourceDoc.contact_id || '',
                     vessel_id: sourceDoc.vessel_id || '',
                     work_location_id: sourceDoc.work_location_id || '',
-                    subject: sourceDoc.subject || `Derived from ${sourceDoc.document_no}`,
-                    customer_ref: sourceDoc.customer_ref || '',
+                    subject: isCN ? `Credit Note against Invoice #${sourceDoc.document_no}` : (sourceDoc.subject || `Derived from ${sourceDoc.document_no}`),
+                    customer_ref: isCN ? sourceDoc.document_no : (sourceDoc.customer_ref || ''),
+                    original_invoice_no: isCN ? sourceDoc.document_no : (sourceDoc.original_invoice_no || ''),
+                    original_document_id: isCN ? sourceDoc.id : (sourceDoc.original_document_id || ''),
                     currency: sourceDoc.currency || 'SGD',
                     enquiry_id: sourceDoc.enquiry_id || '',
                     job_id: sourceDoc.job_id || '',
@@ -2207,6 +2237,41 @@ export default function WorkflowEditor() {
                     setLineItems(inheritedItems);
                 }
                 return; // Skip other inheritance if sourceId is used
+            }
+        }
+
+        // Enforce invoice linkage for Credit Notes if created without source_id
+        if (docType === 'CREDIT NOTE' && !sourceId) {
+            const jobNoParam = searchParams.get('assigned_job_no');
+            try {
+                let invQuery = supabase
+                    .from('workflow_documents')
+                    .select('id, document_no, assigned_job_no, total_amount, currency, issue_date, partner_id, partners(name)')
+                    .eq('company_id', profile?.company_id)
+                    .eq('document_type', 'Tax Invoice')
+                    .order('issue_date', { ascending: false });
+
+                if (jobNoParam) {
+                    invQuery = invQuery.eq('assigned_job_no', jobNoParam);
+                }
+
+                const { data: invList } = await invQuery;
+                if (invList && invList.length > 0) {
+                    if (invList.length === 1) {
+                        const targetInv = invList[0];
+                        navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(targetInv.assigned_job_no || jobNoParam || '')}&source_id=${targetInv.id}`, { replace: true });
+                        return;
+                    } else {
+                        setCreditNotePickerModal({ isOpen: true, invoices: invList, jobNo: jobNoParam || '' });
+                    }
+                } else {
+                    toast.error(jobNoParam 
+                        ? `Job ${jobNoParam} has no Tax Invoice. A Tax Invoice must be created first before issuing a Credit Note.` 
+                        : 'No Tax Invoices found. A Credit Note must be linked to an existing Tax Invoice.'
+                    );
+                }
+            } catch (err) {
+                console.error('Error finding invoices for credit note:', err);
             }
         }
 
@@ -3078,6 +3143,7 @@ export default function WorkflowEditor() {
                 'Packing List': 'PKL',
                 'Proforma Invoice': 'PRO',
                 'Tax Invoice': 'INV',
+                'Credit Note': 'CN',
                 'Certificate': 'CERT',
                 'Service Report': 'SR'
             };
@@ -3680,31 +3746,83 @@ export default function WorkflowEditor() {
             const fallbackAccountsEmail = settings?.accounts_email || 'accounts@celron.net';
             const fromEmail = isAccountDoc ? fallbackAccountsEmail : fallbackSalesEmail;
 
+            // Helper to compress image if large
+            const compressAttachmentImage = async (file) => {
+                if (!file.type || !file.type.startsWith('image/') || file.size < 1024 * 800) return file;
+                return new Promise((resolve) => {
+                    const img = new Image();
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        img.onload = () => {
+                            const maxDim = 1600;
+                            let width = img.width;
+                            let height = img.height;
+                            if (width > maxDim || height > maxDim) {
+                                if (width > height) {
+                                    height = Math.round((height * maxDim) / width);
+                                    width = maxDim;
+                                } else {
+                                    width = Math.round((width * maxDim) / height);
+                                    height = maxDim;
+                                }
+                            }
+                            const canvas = document.createElement('canvas');
+                            canvas.width = width;
+                            canvas.height = height;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, width, height);
+                            canvas.toBlob((blob) => {
+                                if (blob && blob.size < file.size) {
+                                    resolve(new File([blob], file.name, { type: 'image/jpeg' }));
+                                } else {
+                                    resolve(file);
+                                }
+                            }, 'image/jpeg', 0.82);
+                        };
+                        img.src = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                });
+            };
+
             const customAttachments = await Promise.all((emailPreview.attachments || []).map(async (file) => {
+                const processed = await compressAttachmentImage(file);
                 return new Promise((resolve) => {
                     const reader = new FileReader();
-                    reader.onload = (e) => resolve({ name: file.name, type: file.type, content: e.target.result });
-                    reader.readAsDataURL(file);
+                    reader.onload = (e) => resolve({ name: processed.name, type: processed.type, content: e.target.result });
+                    reader.readAsDataURL(processed);
                 });
             }));
 
+            const finalAttachments = systemPdf ? [systemPdf, ...customAttachments] : customAttachments;
+
+            const payload = {
+                company_id: profile.company_id,
+                from_email: fromEmail,
+                to: emailPreview.to,
+                cc: emailPreview.cc,
+                bcc: emailPreview.bcc,
+                subject: emailPreview.subject,
+                body: emailPreview.body,
+                attachments: finalAttachments
+            };
+
+            const payloadString = JSON.stringify(payload);
+            if (payloadString.length > 4.2 * 1024 * 1024) {
+                const totalMB = (payloadString.length / (1024 * 1024)).toFixed(1);
+                toast.error(`Total attachment size (${totalMB} MB) exceeds the email server payload limit (4.0 MB). Please remove some attachments or share larger files via Google Drive.`);
+                setSaving(false);
+                return;
+            }
+
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 35000);
+            const timeoutId = setTimeout(() => controller.abort(), 45000);
 
             const response = await fetch(apiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 signal: controller.signal,
-                body: JSON.stringify({
-                    company_id: profile.company_id,
-                    from_email: fromEmail,
-                    to: emailPreview.to,
-                    cc: emailPreview.cc,
-                    bcc: emailPreview.bcc,
-                    subject: emailPreview.subject,
-                    body: emailPreview.body,
-                    attachments: systemPdf ? [systemPdf, ...customAttachments] : customAttachments
-                })
+                body: payloadString
             });
 
             clearTimeout(timeoutId);
@@ -4039,6 +4157,21 @@ export default function WorkflowEditor() {
                                 <FileText size={16} /> <span className="hide-sm">To Invoice</span>
                             </button>
                         )}
+
+                        {!isNew && formData.document_type === 'Tax Invoice' && (
+                            <button 
+                                className="btn-vibrant" 
+                                onClick={() => {
+                                    const jobNo = formData.assigned_job_no || '';
+                                    navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(jobNo)}&source_id=${id}`);
+                                }} 
+                                disabled={saving} 
+                                style={{ background: 'linear-gradient(135deg, #e11d48, #be123c)', color: '#fff', padding: '8px 12px', fontSize: '0.85rem', fontWeight: 700, borderRadius: '8px', border: 'none', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                title="Issue a Credit Note against this Tax Invoice"
+                            >
+                                <RotateCcw size={16} /> <span className="hide-sm">Issue Credit Note</span>
+                            </button>
+                        )}
                     </div>
 
                     <button className="icon-btn" onClick={handleGoBack} style={{ background: '#fee2e2', color: '#ef4444', border: 'none' }} title="Close Editor">
@@ -4096,6 +4229,61 @@ export default function WorkflowEditor() {
                     </div>
                 ))}
             </div>
+
+            {/* Credit Note Linkage Banner */}
+            {formData.document_type === 'Credit Note' && (
+                <div style={{
+                    margin: '0 24px 20px 24px',
+                    padding: '14px 20px',
+                    borderRadius: '14px',
+                    background: '#fff1f2',
+                    border: '1.5px solid #fecdd3',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    boxShadow: '0 2px 10px rgba(225,29,72,0.06)'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#e11d48', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+                            <RotateCcw size={18} />
+                        </div>
+                        <div>
+                            <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#9f1239' }}>
+                                Credit Note &bull; Reference Invoice #{formData.original_invoice_no || formData.customer_ref || 'Unlinked'}
+                            </div>
+                            <div style={{ fontSize: '0.8rem', color: '#be123c', marginTop: '2px' }}>
+                                Assigned Job Number: <strong style={{ color: '#047857' }}>{formData.assigned_job_no || 'N/A'}</strong>
+                                <span style={{ marginLeft: '12px', color: '#9f1239', fontWeight: 600 }}>
+                                    &bull; Strictly linked to parent invoice &bull; Deducts from Statement of Account
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    {formData.original_document_id && (
+                        <button
+                            type="button"
+                            onClick={() => navigate(`/workflows/editor/tax-invoice/${formData.original_document_id}`)}
+                            style={{
+                                padding: '6px 14px',
+                                borderRadius: '8px',
+                                border: '1px solid #fda4af',
+                                background: '#ffffff',
+                                color: '#e11d48',
+                                fontSize: '0.82rem',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                            }}
+                        >
+                            <FileText size={14} /> View Original Invoice
+                        </button>
+                    )}
+                </div>
+            )}
 
             <div className="editor-content">
                 {/* Google Drive Integration card */}
@@ -4250,8 +4438,15 @@ export default function WorkflowEditor() {
                                 </div>
                             </div>
                             <div className="form-item">
-                                <label><FileText size={14} /> Customer Reference</label>
-                                <input type="text" className="form-input" name="customer_ref" value={formData.customer_ref} onChange={handleHeaderChange} placeholder="Customer's PO or Ref No." />
+                                <label><FileText size={14} /> {formData.document_type === 'Credit Note' ? 'Reference Invoice No' : 'Customer Reference'}</label>
+                                <input 
+                                    type="text" 
+                                    className="form-input" 
+                                    name="customer_ref" 
+                                    value={formData.customer_ref} 
+                                    onChange={handleHeaderChange} 
+                                    placeholder={formData.document_type === 'Credit Note' ? "Reference Invoice No (e.g. INV-2409001)" : "Customer's PO or Ref No."} 
+                                />
                             </div>
                             <div className="form-item">
                                 <label><FileText size={14} /> Subject / Project Name</label>
@@ -5262,7 +5457,29 @@ export default function WorkflowEditor() {
                                                         const clr = SUITE_DOC_COLORS[docType] || { bg: '#f8fafc', color: '#475569', border: '#e2e8f0' };
                                                         const urlSlug = docType.toLowerCase().replace(/\s+/g, '-');
                                                         return (
-                                                            <button key={docType} onClick={() => { setShowCreateDocMenu(false); navigate(`/workflows/editor/${urlSlug}/new?assigned_job_no=${encodeURIComponent(jobNo)}&source_id=${id || ''}`); }} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '9px 12px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '0.87rem', fontWeight: 600, color: '#334155' }} onMouseOver={e => e.currentTarget.style.background = clr.bg} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
+                                                            <button 
+                                                                key={docType} 
+                                                                onClick={() => { 
+                                                                    setShowCreateDocMenu(false); 
+                                                                    if (docType === 'Credit Note') {
+                                                                        const invoiceDocs = suiteDocs.filter(d => d.document_type === 'Tax Invoice');
+                                                                        if (invoiceDocs.length === 0) {
+                                                                            toast.error('A Tax Invoice must be created first before issuing a Credit Note.');
+                                                                            return;
+                                                                        }
+                                                                        if (invoiceDocs.length === 1) {
+                                                                            navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(jobNo)}&source_id=${invoiceDocs[0].id}`);
+                                                                            return;
+                                                                        }
+                                                                        setCreditNotePickerModal({ isOpen: true, invoices: invoiceDocs, jobNo: jobNo });
+                                                                        return;
+                                                                    }
+                                                                    navigate(`/workflows/editor/${urlSlug}/new?assigned_job_no=${encodeURIComponent(jobNo)}&source_id=${id || ''}`); 
+                                                                }} 
+                                                                style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '9px 12px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: '0.87rem', fontWeight: 600, color: '#334155' }} 
+                                                                onMouseOver={e => e.currentTarget.style.background = clr.bg} 
+                                                                onMouseOut={e => e.currentTarget.style.background = 'transparent'}
+                                                            >
                                                                 <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: clr.color, flexShrink: 0 }} />
                                                                 {docType}
                                                             </button>
@@ -5796,238 +6013,60 @@ export default function WorkflowEditor() {
                     </div>
                         </div>
 
-                        {/* 4. Photos & Media */}
-                        <div id="section-gallery" style={{ marginTop: '12px' }}>
-                            <div 
-                        className="glass-panel job-gallery animate-fade-in"
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
-                        style={{ position: 'relative' }}
-                    >
-                        {isDragging && (
-                            <div style={{
-                                position: 'absolute',
-                                inset: 0,
-                                background: 'rgba(99, 102, 241, 0.95)',
-                                backdropFilter: 'blur(4px)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '16px',
-                                zIndex: 50,
-                                borderRadius: '16px',
-                                color: '#fff',
-                                border: '3px dashed #fff',
-                                margin: '8px'
-                            }}>
-                                <UploadCloud size={48} className="animate-bounce" />
-                                <span style={{ fontSize: '1.25rem', fontWeight: 800 }}>Drop Photos & Videos Here to Upload</span>
-                            </div>
-                        )}
-                        <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'linear-gradient(135deg, #f43f5e, #e11d48)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(225,29,72,0.3)' }}>
-                                    <Image size={20} color="#fff" />
-                                </div>
-                                <div>
-                                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#1e293b' }}>Project Photos, Media & Videos</h3>
-                                    <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '2px' }}>
-                                        Upload, view, and organize job site photos, inspection videos, and media files
-                                    </div>
-                                </div>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                                {loadingGallery && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                        <div style={{ width: '120px', height: '6px', background: '#e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
-                                            <div style={{ width: `${galleryUploadProgress}%`, height: '100%', background: 'var(--accent)', transition: 'width 0.3s ease' }} />
-                                        </div>
-                                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent)' }}>{galleryUploadProgress}%</span>
-                                    </div>
-                                )}
-                                {galleryUploadSuccess && (
-                                    <div className="animate-bounce" style={{ color: '#22c55e', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', fontWeight: 600 }}>
-                                        <FileCheck size={18} /> Upload Success!
-                                    </div>
-                                )}
-                                {(formData.drive_folder_id || formData.gdrive_folder_id) && (
-                                    <a 
-                                        href={`https://drive.google.com/drive/folders/${formData.drive_folder_id || formData.gdrive_folder_id}`} 
-                                        target="_blank" 
-                                        rel="noreferrer"
-                                        className="btn btn-secondary"
-                                        style={{ 
-                                            background: 'linear-gradient(135deg, #ecfeff 0%, #cffafe 100%)', 
-                                            border: '1px solid #a5f3fc', 
-                                            color: '#0891b2', 
-                                            display: 'inline-flex', 
-                                            alignItems: 'center', 
-                                            gap: '8px', 
-                                            textDecoration: 'none',
-                                            fontWeight: 600,
-                                            fontSize: '0.88rem'
-                                        }}
-                                    >
-                                        <FolderOpen size={16} /> Explorer (Drive)
-                                    </a>
-                                )}
-                                <button 
-                                    className="btn btn-secondary" 
-                                    onClick={async () => {
-                                        let targetId = galleryFolderId;
-                                        if (!targetId) {
-                                            const token = getStoredToken();
-                                            const rootId = await ensureJobFolder();
-                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
-                                            setGalleryFolderId(targetId);
+                        {/* 4. Smart Document Upload Component (Embedded) */}
+                        <div id="section-gallery" style={{ marginTop: '16px' }}>
+                            <SmartUploadPanel 
+                                isOpen={true}
+                                embedded={true}
+                                documentType="Job Documentation"
+                                accept="*/*"
+                                activeFolderId={formData.drive_folder_id || formData.gdrive_folder_id || '1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w'}
+                                activeFolderName={`${formData.assigned_job_no || formData.document_no || 'Job'} > Photos & Gallery`}
+                                runningEnquiryNo={formData.assigned_job_no || formData.document_no || null}
+                                onSelect={async (file, metadata) => {
+                                    if (!file) return;
+                                    const loadToast = toast.loading(`Uploading ${file.name || 'document'} to Google Drive...`);
+                                    try {
+                                        let targetId = metadata?.targetFolder?.id || metadata?.targetFolder?.folderId;
+                                        let targetName = metadata?.targetFolder?.name || metadata?.targetFolder?.label || 'Photos & Gallery';
+                                        const token = getStoredToken();
+                                        if (!token) {
+                                            toast.dismiss(loadToast);
+                                            toast.error('Google Drive is not authenticated. Please connect Google Drive first.');
+                                            return;
                                         }
-                                        openSmartUpload(async (file) => {
-                                            if (file) await handleGalleryUpload(file);
-                                        }, 'image/*,video/*', targetId, 'Photos & Gallery', 'ocr');
-                                    }}
-                                    style={{ background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)', border: '1px solid #ddd6fe', color: '#7c3aed' }}
-                                >
-                                    <Sparkles size={16} /> Smart OCR
-                                </button>
-                                <button 
-                                    className="btn btn-secondary" 
-                                    onClick={async () => {
-                                        let targetId = galleryFolderId;
-                                        if (!targetId) {
-                                            const token = getStoredToken();
-                                            const rootId = await ensureJobFolder();
-                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
-                                            setGalleryFolderId(targetId);
-                                        }
-                                        openSmartUpload(async (file) => {
-                                            if (file) await handleGalleryUpload(file);
-                                        }, 'image/*,video/*', targetId, 'Photos & Gallery', 'mobile_qr');
-                                    }}
-                                    style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid #bbf7d0', color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}
-                                >
-                                    <Smartphone size={16} /> Mobile Upload (QR)
-                                </button>
-                                <button 
-                                    className="btn btn-secondary" 
-                                    onClick={() => fetchGallery()}
-                                    title="Synchronize photos & videos with Google Drive"
-                                    style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-                                >
-                                    <RefreshCw size={16} className={loadingGallery ? 'animate-spin' : ''} />
-                                    Synchronize
-                                </button>
-                                <button 
-                                    type="button"
-                                    onClick={async () => {
-                                        let targetId = galleryFolderId;
-                                        if (!targetId) {
-                                            const token = getStoredToken();
-                                            const rootId = await ensureJobFolder();
-                                            targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
-                                            setGalleryFolderId(targetId);
-                                        }
-                                        openSmartUpload(async (file) => {
-                                            if (file) await handleGalleryUpload(file);
-                                        }, 'image/*,video/*', targetId, 'Photos & Gallery', 'recent');
-                                    }}
-                                    className="btn btn-primary" 
-                                    style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden', display: 'inline-flex', alignItems: 'center', gap: '6px', border: 'none', background: 'linear-gradient(135deg, #e11d48, #be123c)' }}
-                                >
-                                    <Upload size={16} /> Upload Photo / Video
-                                    {loadingGallery && <div className="btn-loading-overlay" />}
-                                </button>
-                            </div>
-                        </div>
 
-                        <SmartOCRModal 
-                            isOpen={showOCRModal}
-                            onClose={() => setShowOCRModal(false)}
-                            title="Job Gallery OCR Assistant"
-                            onApply={(res) => {
-                                if (res.rawText) {
-                                    setFormData(prev => ({
-                                        ...prev,
-                                        notes: (prev.notes || '') + '\n\n[OCR DATA FROM GALLERY]:\n' + res.rawText
-                                    }));
-                                    alert('Extracted text has been appended to the Document Notes.');
-                                }
-                            }}
-                        />
 
-                        {loadingGallery && galleryFiles.length === 0 ? (
-                            <div style={{ padding: '80px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                                <div className="upload-animation-ring">
-                                    <div />
-                                    <div />
-                                    <div />
-                                    <div />
-                                </div>
-                                <p style={{ marginTop: '24px', fontWeight: 600 }}>Syncing media with Drive...</p>
-                                <style>{`
-                                    .upload-animation-ring { display: inline-block; position: relative; width: 80px; height: 80px; }
-                                    .upload-animation-ring div { box-sizing: border-box; display: block; position: absolute; width: 64px; height: 64px; margin: 8px; border: 8px solid var(--accent); border-radius: 50%; animation: upload-ring 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite; border-color: var(--accent) transparent transparent transparent; }
-                                    .upload-animation-ring div:nth-child(1) { animation-delay: -0.45s; }
-                                    .upload-animation-ring div:nth-child(2) { animation-delay: -0.3s; }
-                                    .upload-animation-ring div:nth-child(3) { animation-delay: -0.15s; }
-                                    @keyframes upload-ring { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-                                `}</style>
-                            </div>
-                        ) : galleryFiles.length === 0 ? (
-                            <div style={{ padding: '80px', textAlign: 'center', background: '#f8fafc', borderRadius: '16px', border: '2px dashed #cbd5e1' }}>
-                                <Image size={48} color="#cbd5e1" style={{ marginBottom: '16px' }} />
-                                <p style={{ color: '#64748b', fontSize: '1.1rem', fontWeight: 700 }}>No photos or videos uploaded yet for this job.</p>
-                                <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: '4px' }}>Capture and upload site photos, equipment inspection videos, or media recordings directly here.</p>
-                            </div>
-                        ) : (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '20px' }}>
-                                {galleryFiles.map(file => {
-                                    const isVideo = file.mimeType?.includes('video') || file.name?.match(/\.(mp4|webm|mov|mkv|avi)$/i);
-                                    return (
-                                        <div key={file.id} className="gallery-item" style={{ position: 'relative', borderRadius: '14px', overflow: 'hidden', background: '#0f172a', border: '1px solid #e2e8f0', aspectRatio: '4/3', boxShadow: '0 4px 16px rgba(0,0,0,0.08)', transition: 'transform 0.2s, box-shadow 0.2s' }}>
-                                            {isVideo ? (
-                                                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#090d16', position: 'relative' }}>
-                                                    <video 
-                                                        src={file.webContentLink || file.thumbnailLink?.replace('=s220', '')} 
-                                                        poster={file.thumbnailLink?.replace('=s220', '=s600')}
-                                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                                        controls
-                                                        preload="metadata"
-                                                    />
-                                                    <div style={{ position: 'absolute', top: '10px', left: '10px', background: 'rgba(225,29,72,0.9)', color: '#fff', padding: '3px 8px', borderRadius: '12px', fontSize: '0.68rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '4px', zIndex: 10 }}>
-                                                        <Video size={12} /> Video
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <img 
-                                                    src={file.thumbnailLink?.replace('=s220', '=s600') || file.webContentLink} 
-                                                    alt={file.name} 
-                                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                                                />
-                                            )}
-                                            <div className="gallery-overlay" style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(2px)', opacity: 0, transition: 'opacity 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', zIndex: 20 }}>
-                                                <a href={file.webViewLink} target="_blank" rel="noreferrer" title="Open in Google Drive" style={{ color: '#fff', padding: '10px', background: 'rgba(255,255,255,0.25)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                                    <ExternalLink size={20} />
-                                                </a>
-                                            </div>
-                                            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '10px 12px', background: 'linear-gradient(transparent, rgba(15,23,42,0.88))', color: '#fff', fontSize: '0.74rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 15 }}>
-                                                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '85%' }} title={file.name}>
-                                                    {file.name}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                        <style>{`
-                            .gallery-item:hover .gallery-overlay { opacity: 1; } 
-                            .gallery-item:hover { transform: translateY(-4px); boxShadow: 0 8px 24px rgba(0,0,0,0.15); }
-                            .btn-loading-overlay { position: absolute; inset: 0; background: rgba(255,255,255,0.3); animation: pulse 1.5s infinite; }
-                            @keyframes pulse { 0% { opacity: 0.2; } 50% { opacity: 0.5; } 100% { opacity: 0.2; } }
-                        `}</style>
-                    </div>
+                                        if (!targetId) {
+                                            const rootId = await ensureJobFolder();
+                                            if (rootId) {
+                                                targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+                                            } else {
+                                                targetId = formData.drive_folder_id || formData.gdrive_folder_id || '1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w';
+                                            }
+                                        }
+
+                                        if (file.isGoogleDrive) {
+                                            await copyFile(token, file.id, targetId);
+                                        } else {
+                                            await uploadFileToDrive(token, file, { 
+                                                folderId: targetId, 
+                                                title: file.name 
+                                            });
+                                        }
+
+                                        toast.dismiss(loadToast);
+                                        toast.success(`Saved "${file.name}" to Google Drive [${targetName}]!`);
+                                        if (typeof fetchExplorerFiles === 'function') {
+                                            fetchExplorerFiles();
+                                        }
+                                    } catch (err) {
+                                        toast.dismiss(loadToast);
+                                        console.error('Drive upload failed:', err);
+                                        toast.error('Upload failed: ' + (err.message || 'Error uploading file'));
+                                    }
+                                }}
+                            />
                         </div>
 
                         {/* 5. Explorer */}
@@ -6038,19 +6077,19 @@ export default function WorkflowEditor() {
                             display: 'flex', 
                             justifyContent: 'space-between', 
                             alignItems: 'center', 
-                            background: authStatus === 'connected' ? '#f0fdf4' : '#fef2f2', 
+                            background: authStatus === 'connected' ? '#f0fdf4' : authStatus === 'checking' ? '#f8fafc' : '#fef2f2', 
                             padding: '12px 20px', 
                             borderRadius: '12px', 
                             marginBottom: '24px',
-                            border: `1px solid ${authStatus === 'connected' ? '#bbf7d0' : '#fecaca'}`
+                            border: `1px solid ${authStatus === 'connected' ? '#bbf7d0' : authStatus === 'checking' ? '#e2e8f0' : '#fecaca'}`
                         }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: authStatus === 'connected' ? '#22c55e' : '#ef4444' }} />
-                                <span style={{ fontSize: '0.9rem', fontWeight: 600, color: authStatus === 'connected' ? '#166534' : '#991b1b' }}>
-                                    Google Drive: {authStatus === 'connected' ? 'Connected' : authStatus === 'expired' ? 'Session Expired' : 'Disconnected'}
+                                <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: authStatus === 'connected' ? '#22c55e' : authStatus === 'checking' ? '#94a3b8' : '#ef4444' }} />
+                                <span style={{ fontSize: '0.9rem', fontWeight: 600, color: authStatus === 'connected' ? '#166534' : authStatus === 'checking' ? '#64748b' : '#991b1b' }}>
+                                    Google Drive: {authStatus === 'connected' ? 'Connected' : authStatus === 'checking' ? 'Checking Connection...' : authStatus === 'expired' ? 'Session Expired' : 'Disconnected'}
                                 </span>
                             </div>
-                            {authStatus !== 'connected' && (
+                            {authStatus !== 'connected' && authStatus !== 'checking' && (
                                 <button onClick={handleExplorerReconnect} className="btn btn-sm btn-primary" style={{ fontSize: '0.8rem', padding: '6px 16px' }}>
                                     <RefreshCw size={14} style={{ marginRight: '6px' }} /> Reconnect Now
                                 </button>
@@ -6269,324 +6308,6 @@ export default function WorkflowEditor() {
                             >
                                 <ExternalLink size={14} /> Open Partner Folder
                             </button>
-                        </div>
-                    </div>
-                        </div>
-
-                        {/* 6. Delivery Proof */}
-                        <div id="section-delivery-proof" style={{ marginTop: '12px' }}>
-                            <div className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
-                        {/* Digital Delivery Proofs & Signatures Component */}
-                        <div style={{ marginBottom: '32px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                                <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <FileCheck size={22} color="#1a3c63" /> Digital Delivery Proofs & Signatures
-                                </h2>
-                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                                    <button 
-                                        type="button" 
-                                        onClick={handleOpenJobDrive} 
-                                        className="btn btn-secondary" 
-                                        style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-                                    >
-                                        <FolderOpen size={16} /> Open Job Folder
-                                    </button>
-                                    <button 
-                                        type="button" 
-                                        onClick={handleOpenSupportDocsDrive} 
-                                        className="btn btn-secondary" 
-                                        style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-                                    >
-                                        <FolderOpen size={16} /> Open SupportDocs Folder
-                                    </button>
-                                    <button 
-                                        type="button" 
-                                        onClick={syncDeliveryProofs} 
-                                        className="btn btn-primary" 
-                                        style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#1a3c63', borderColor: '#1a3c63' }}
-                                        disabled={loadingDeliveryProofs}
-                                    >
-                                        <RefreshCw size={16} className={loadingDeliveryProofs ? 'animate-spin' : ''} />
-                                        Sync Proofs with Google Drive
-                                    </button>
-                                </div>
-                            </div>
-
-                            {loadingDeliveryProofs && deliveryProofs.length === 0 ? (
-                                <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
-                                    <RefreshCw className="animate-spin" size={32} style={{ margin: '0 auto 16px' }} />
-                                    Loading delivery proofs...
-                                </div>
-                            ) : deliveryProofs.length === 0 ? (
-                                <div style={{ padding: '60px 40px', textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: '16px', border: '1px dashed #cbd5e1' }}>
-                                    <FileCheck size={48} style={{ color: '#94a3b8', margin: '0 auto 16px' }} />
-                                    <h3 style={{ margin: '0 0 8px', fontSize: '1rem', color: '#334155', fontWeight: 600 }}>No Signed Proofs Recorded</h3>
-                                    <p style={{ margin: 0, fontSize: '0.85rem' }}>Record signatures in the mobile digiPOD app or upload a signed copy below.</p>
-                                </div>
-                            ) : (
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
-                                    {deliveryProofs.map(proof => (
-                                        <div key={proof.id} style={{
-                                            background: '#fff',
-                                            border: '1px solid #e2e8f0',
-                                            borderRadius: '16px',
-                                            padding: '20px',
-                                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            gap: '12px'
-                                        }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                                <div>
-                                                    <h4 style={{ margin: '0 0 4px', fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>{proof.recipient_name}</h4>
-                                                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(proof.delivered_at || proof.created_at).toLocaleString()}</span>
-                                                </div>
-                                                {proof.location_name && (
-                                                    <span style={{ fontSize: '0.75rem', background: '#f1f5f9', padding: '4px 8px', borderRadius: '20px', fontWeight: 600, color: '#475569' }}>
-                                                        {proof.location_name}
-                                                    </span>
-                                                )}
-                                            </div>
-
-                                            {proof.gps_latitude && proof.gps_longitude && (
-                                                <a 
-                                                    href={`https://www.google.com/maps/search/?api=1&query=${proof.gps_latitude},${proof.gps_longitude}`}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    style={{ fontSize: '0.8rem', color: '#3b82f6', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
-                                                >
-                                                    📍 Location: {proof.gps_latitude.toFixed(4)}, {proof.gps_longitude.toFixed(4)} (Open Map)
-                                                </a>
-                                            )}
-
-                                            {proof.signature_drive_id && (
-                                                <div style={{ marginTop: '8px' }}>
-                                                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Signature / Proof</div>
-                                                    <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px', background: '#f8fafc', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '120px' }}>
-                                                        {proof.signature_drive_id.startsWith('http') || proof.signature_drive_id.length > 25 ? (
-                                                            <a 
-                                                                href={proof.signature_drive_id.startsWith('http') ? proof.signature_drive_id : `https://drive.google.com/file/d/${proof.signature_drive_id}/view`}
-                                                                target="_blank"
-                                                                rel="noreferrer"
-                                                                style={{ fontSize: '0.8rem', color: '#4f46e5', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}
-                                                            >
-                                                                Open Attached Document ↗
-                                                            </a>
-                                                        ) : (
-                                                            <>
-                                                                <img 
-                                                                    src={`https://lh3.googleusercontent.com/d/${proof.signature_drive_id}`}
-                                                                    alt="Recipient Signature"
-                                                                    style={{ maxHeight: '100px', maxWidth: '100%', objectFit: 'contain' }}
-                                                                    onError={(e) => {
-                                                                        e.target.style.display = 'none';
-                                                                        e.target.nextSibling.style.display = 'block';
-                                                                    }}
-                                                                />
-                                                                <a 
-                                                                    href={`https://drive.google.com/file/d/${proof.signature_drive_id}/view`}
-                                                                    target="_blank"
-                                                                    rel="noreferrer"
-                                                                    style={{ display: 'none', fontSize: '0.8rem', color: '#4f46e5', fontWeight: 600 }}
-                                                                >
-                                                                    View Proof Document ↗
-                                                                </a>
-                                                            </>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Signed Proofs Section (Moved from Explorer tab) */}
-                        <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.1rem', fontWeight: 700, color: '#1e293b' }}>
-                                    <FileCheck size={22} color="#059669" /> Signed Proofs of Delivery / Service Files
-                                </h3>
-                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                                    <button 
-                                        type="button"
-                                        onClick={() => fetchSignedProofs()} 
-                                        className="btn btn-secondary btn-sm" 
-                                        title="Refresh signed proofs from Google Drive" 
-                                        style={{ 
-                                            height: '36px', 
-                                            display: 'flex', 
-                                            alignItems: 'center', 
-                                            justifyContent: 'center',
-                                            padding: '6px 12px',
-                                            borderRadius: '8px'
-                                        }}
-                                    >
-                                        <RefreshCw size={14} className={loadingSignedProofs ? 'animate-spin' : ''} />
-                                    </button>
-                                    <button 
-                                        type="button"
-                                        onClick={async () => {
-                                            if (authStatus !== 'connected') {
-                                                toast.error('Google Drive is not connected. Please connect/reconnect at the status bar or Settings first.');
-                                                return;
-                                            }
-                                            const token = getStoredToken();
-                                            const rootId = await ensureJobFolder();
-                                            const supportDocsFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
-                                            setQrModal({ isOpen: true, folderId: supportDocsFolderId, folderName: 'SupportDocs' });
-                                        }} 
-                                        className="btn btn-secondary btn-sm" 
-                                        title="Mobile Upload to SupportDocs via QR Code"
-                                        style={{ 
-                                            display: 'flex', 
-                                            alignItems: 'center', 
-                                            gap: '6px',
-                                            background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', 
-                                            border: '1px solid #bbf7d0', 
-                                            color: '#166534',
-                                            height: '36px',
-                                            padding: '6px 12px',
-                                            borderRadius: '8px',
-                                            fontWeight: 600,
-                                            fontSize: '0.85rem'
-                                        }}
-                                    >
-                                        <Smartphone size={14} /> Mobile Scan
-                                    </button>
-                                    <div
-                                        onDragOver={(e) => { e.preventDefault(); setIsDraggingSigned(true); }}
-                                        onDragLeave={(e) => { e.preventDefault(); setIsDraggingSigned(false); }}
-                                        onDrop={async (e) => {
-                                            e.preventDefault();
-                                            setIsDraggingSigned(false);
-                                            const files = Array.from(e.dataTransfer.files);
-                                            if (files.length > 0) {
-                                                setLoadingSignedProofs(true);
-                                                try {
-                                                    const token = getStoredToken();
-                                                    const rootId = await ensureJobFolder();
-                                                    const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
-                                                    for (const file of files) {
-                                                        const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
-                                                        const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
-                                                        setFormData(prev => {
-                                                            const newAttachments = [...(prev.attachment_urls || []), proofUrl];
-                                                            return { ...prev, attachment_urls: newAttachments };
-                                                        });
-                                                        
-                                                        // Sync to Supabase delivery_proofs table immediately
-                                                        await supabase.from('delivery_proofs').insert({
-                                                            document_id: formData.id,
-                                                            recipient_name: 'Uploaded Copy (' + file.name.substring(0, 15) + ')',
-                                                            signature_drive_id: result.id,
-                                                            location_name: 'Web Upload'
-                                                        });
-                                                    }
-                                                    alert('Signed proof(s) uploaded successfully to Google Drive & Supabase database!');
-                                                    fetchSignedProofs();
-                                                    fetchDeliveryProofs();
-                                                } catch (err) {
-                                                    console.error('Proof upload failed:', err);
-                                                    alert('Upload failed: ' + err.message);
-                                                } finally {
-                                                    setLoadingSignedProofs(false);
-                                                }
-                                            }
-                                        }}
-                                        onClick={() => document.getElementById('signed-proof-upload').click()}
-                                        style={{
-                                            border: isDraggingSigned ? '2px dashed #059669' : '2px dashed #cbd5e1',
-                                            background: isDraggingSigned ? '#ecfdf5' : '#f8fafc',
-                                            padding: '6px 16px',
-                                            borderRadius: '8px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '8px',
-                                            cursor: 'pointer',
-                                            color: '#059669',
-                                            fontWeight: 600,
-                                            fontSize: '0.85rem',
-                                            transition: 'all 0.2s ease',
-                                            height: '36px',
-                                            justifyContent: 'center'
-                                        }}
-                                    >
-                                        <Upload size={14} />
-                                        <span>{isDraggingSigned ? 'Drop Signed Copy Here' : 'Drop Signed Copy'}</span>
-                                    </div>
-                                    <input id="signed-proof-upload" type="file" multiple hidden onChange={(e) => {
-                                        const files = Array.from(e.target.files);
-                                        const uploadSequence = async () => {
-                                            setLoadingSignedProofs(true);
-                                            try {
-                                                const token = getStoredToken();
-                                                const rootId = await ensureJobFolder();
-                                                const signedFolderId = await getOrCreateFolder(token, 'SupportDocs', rootId);
-                                                for (const file of files) {
-                                                    const result = await uploadFileToDrive(token, file, { folderId: signedFolderId });
-                                                    const proofUrl = `https://drive.google.com/file/d/${result.id}/view`;
-                                                    setFormData(prev => {
-                                                        const newAttachments = [...(prev.attachment_urls || []), proofUrl];
-                                                        return { ...prev, attachment_urls: newAttachments };
-                                                    });
-                                                    
-                                                    // Sync to Supabase delivery_proofs table immediately
-                                                    await supabase.from('delivery_proofs').insert({
-                                                        document_id: formData.id,
-                                                        recipient_name: 'Uploaded Copy (' + file.name.substring(0, 15) + ')',
-                                                        signature_drive_id: result.id,
-                                                        location_name: 'Web Upload'
-                                                    });
-                                                }
-                                                alert('Signed proof(s) uploaded successfully to Google Drive & Supabase database!');
-                                                fetchSignedProofs();
-                                                fetchDeliveryProofs();
-                                            } catch (err) {
-                                                console.error('Proof upload failed:', err);
-                                                alert('Upload failed: ' + err.message);
-                                            } finally {
-                                                setLoadingSignedProofs(false);
-                                            }
-                                        };
-                                        uploadSequence();
-                                    }} />
-                                </div>
-                            </div>
-                            {loadingSignedProofs ? (
-                                <div style={{ textAlign: 'center', padding: '20px' }}><Loader2 size={24} className="animate-spin" /></div>
-                            ) : signedProofs.length === 0 ? (
-                                <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '0.9rem' }}>
-                                    No signed proofs found in Job Folder. Use the Scanner App or upload here.
-                                </div>
-                            ) : (
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
-                                    {signedProofs.map(proof => (
-                                        <div key={proof.id} style={{ background: '#fff', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                            <FileCheck size={18} color="#059669" />
-                                            <div style={{ flex: 1, overflow: 'hidden' }}>
-                                                <div style={{ fontSize: '0.8rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{proof.name}</div>
-                                            </div>
-                                            <a href={proof.webViewLink} target="_blank" rel="noreferrer" style={{ color: '#64748b' }}><ExternalLink size={14} /></a>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            {formData.document_type === 'Tax Invoice' && (
-                                <div style={{ marginTop: '24px', padding: '16px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '12px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                                        <AlertCircle size={18} color="#d97706" />
-                                        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#92400e' }}>Invoice Compliance Check</span>
-                                    </div>
-                                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#b45309' }}>
-                                        {signedProofs.length > 0 
-                                            ? `Found ${signedProofs.length} signed proof(s) in Job Folder. Ensure they are attached when emailing the customer.`
-                                            : "Warning: No signed Proof of Delivery found in Job Folder. It is highly recommended to upload a signed copy before sending the invoice."}
-                                    </p>
-                                </div>
-                            )}
                         </div>
                     </div>
                         </div>
@@ -7669,9 +7390,26 @@ export default function WorkflowEditor() {
 
                                     {/* Currently Attached Files List */}
                                     <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
-                                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>
-                                            Currently Attached ({emailPreview.attachments?.length || 0})
-                                        </label>
+                                        {(() => {
+                                            const totalBytes = (emailPreview.attachments || []).reduce((acc, f) => acc + (f.size || 0), 0);
+                                            const isNearLimit = totalBytes > 3.2 * 1024 * 1024;
+                                            return (
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                                    <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                        Currently Attached ({emailPreview.attachments?.length || 0})
+                                                    </label>
+                                                    <span style={{ fontSize: '11px', fontWeight: 600, color: isNearLimit ? '#e11d48' : '#64748b' }}>
+                                                        Total: {Math.round(totalBytes / 1024)} KB {isNearLimit ? '(Near Server Limit 3.5 MB)' : '/ 3.5 MB Max'}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })()}
+                                        {((emailPreview.attachments || []).reduce((acc, f) => acc + (f.size || 0), 0) > 3.5 * 1024 * 1024) && (
+                                            <div style={{ background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', color: '#be123c', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <AlertCircle size={15} color="#e11d48" />
+                                                <span>Attachments exceed 3.5 MB. Please remove large files or share via Google Drive to prevent mail delivery failure.</span>
+                                            </div>
+                                        )}
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
 
                                             {/* Other attachments (GDrive, suite, local upload) */}
@@ -8633,6 +8371,98 @@ export default function WorkflowEditor() {
                 }}
                 settings={settings}
             />
+
+            {/* Credit Note Invoice Picker Modal */}
+            {creditNotePickerModal.isOpen && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '20px' }}>
+                    <div style={{ background: '#ffffff', borderRadius: '18px', width: '100%', maxWidth: '580px', boxShadow: '0 20px 40px rgba(0,0,0,0.2)', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                        <div style={{ padding: '18px 24px', background: 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%)', borderBottom: '1px solid #fecdd3', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#e11d48', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+                                    <RotateCcw size={16} />
+                                </div>
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#9f1239' }}>Select Invoice to Credit</h3>
+                                    <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: '#be123c' }}>Each Credit Note must be strictly linked to an existing Tax Invoice</p>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => setCreditNotePickerModal({ isOpen: false, invoices: [], jobNo: '' })}
+                                style={{ background: 'none', border: 'none', color: '#9f1239', cursor: 'pointer', padding: '4px' }}
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div style={{ padding: '20px 24px', maxHeight: '380px', overflowY: 'auto' }}>
+                            {creditNotePickerModal.invoices.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '30px 0', color: '#64748b' }}>
+                                    <AlertCircle size={32} color="#f43f5e" style={{ margin: '0 auto 8px' }} />
+                                    <div style={{ fontWeight: 700 }}>No Tax Invoices Found</div>
+                                    <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px' }}>Please create a Tax Invoice before generating a Credit Note.</div>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                    {creditNotePickerModal.invoices.map(inv => (
+                                        <div 
+                                            key={inv.id}
+                                            onClick={() => {
+                                                const jNo = inv.assigned_job_no || creditNotePickerModal.jobNo || '';
+                                                setCreditNotePickerModal({ isOpen: false, invoices: [], jobNo: '' });
+                                                navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(jNo)}&source_id=${inv.id}`);
+                                            }}
+                                            style={{
+                                                padding: '14px 16px',
+                                                borderRadius: '12px',
+                                                border: '1.5px solid #e2e8f0',
+                                                background: '#f8fafc',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                transition: 'all 0.15s ease'
+                                            }}
+                                            onMouseOver={e => { e.currentTarget.style.borderColor = '#e11d48'; e.currentTarget.style.background = '#fff1f2'; }}
+                                            onMouseOut={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#f8fafc'; }}
+                                        >
+                                            <div>
+                                                <div style={{ fontWeight: 800, color: '#0f172a', fontSize: '0.95rem' }}>
+                                                    {inv.document_no}
+                                                    {inv.assigned_job_no && (
+                                                        <span style={{ marginLeft: '8px', fontSize: '0.75rem', color: '#047857', background: '#d1fae5', padding: '2px 8px', borderRadius: '6px', fontWeight: 700 }}>
+                                                            {inv.assigned_job_no}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '3px' }}>
+                                                    {inv.partners?.name || 'Customer'} &bull; Date: {inv.issue_date || '-'}
+                                                </div>
+                                            </div>
+                                            <div style={{ textAlign: 'right' }}>
+                                                <div style={{ fontWeight: 800, color: '#b91c1c', fontSize: '0.95rem' }}>
+                                                    {inv.currency || 'SGD'} {(parseFloat(inv.total_amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </div>
+                                                <div style={{ fontSize: '0.75rem', color: '#e11d48', fontWeight: 700, marginTop: '2px' }}>
+                                                    Select Invoice &rarr;
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div style={{ padding: '14px 24px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end' }}>
+                            <button 
+                                type="button" 
+                                onClick={() => setCreditNotePickerModal({ isOpen: false, invoices: [], jobNo: '' })}
+                                className="btn btn-secondary"
+                                style={{ padding: '8px 18px', fontSize: '0.85rem' }}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
             {showPaymentModal && (
                 <ReceivePaymentModal 
                     isOpen={showPaymentModal}

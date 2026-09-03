@@ -4,7 +4,8 @@ import {
     AlertCircle, FileText, CheckCircle, Pin, Folder, Star, 
     Sparkles, ShieldAlert, FileImage, FileCode, Keyboard,
     Smartphone, QrCode, Image as ImageIcon, Loader2, Camera, RefreshCw, Mail, Inbox,
-    ExternalLink, Grid, List, MessageSquare
+    ExternalLink, Grid, List, MessageSquare, Trash2, Send, Share2,
+    Tag, ShoppingCart, Receipt, Package, Truck, CreditCard, DollarSign, CheckCircle2
 } from 'lucide-react';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
@@ -12,7 +13,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { performOCR } from '../../lib/googleAuthService';
 import { parseOCRBusinessCard } from '../../lib/geminiService';
 import { RecentFilesStore } from './RecentFilesStore';
-import { AIFileClassifier } from './AIFileClassifier';
+import { AIFileClassifier, DOCUMENT_CATEGORIES } from './AIFileClassifier';
 import { DuplicateChecker } from './DuplicateChecker';
 import { listFolderContent } from '../../lib/driveService';
 import { getStoredToken } from '../../lib/googleAuthService';
@@ -80,13 +81,20 @@ export default function SmartUploadPanel({
     const [gdriveFiles, setGdriveFiles] = useState([]);
     const [gdriveLoading, setGdriveLoading] = useState(false);
     
-    // Simulated Downloads state
+    // Dynamic Downloads state
     const [downloadFiles, setDownloadFiles] = useState([]);
+    const [downloadsSearchTerm, setDownloadsSearchTerm] = useState('');
+    const downloadsInputRef = useRef(null);
     
     // Target Drive Folder state
     const [targetFolder, setTargetFolder] = useState(null);
     const [showFolderSelector, setShowFolderSelector] = useState(false);
     const [documentSettings, setDocumentSettings] = useState(null);
+
+    // Selected Transaction Document Category (Enquiry, Quote, Customer PO, Supplier PO, DO, Invoice, Bill, Payment, etc.)
+    const [selectedDocCategory, setSelectedDocCategory] = useState(
+        DOCUMENT_CATEGORIES.find(dc => dc.id === 'customer_enquiry') || DOCUMENT_CATEGORIES[0]
+    );
 
     const fileInputRef = useRef(null);
 
@@ -97,7 +105,7 @@ export default function SmartUploadPanel({
             setRecentFiles(RecentFilesStore.getUploads(documentType));
             setFavorites(RecentFilesStore.getFavoriteFolders(documentType));
             setLastOpened(RecentFilesStore.getLastOpenedFolder(documentType));
-            loadMockDownloads();
+            loadDownloadsHistory();
             loadGoogleDriveFiles();
             getDocumentSettings().then(setDocumentSettings).catch(console.error);
         }
@@ -216,16 +224,50 @@ export default function SmartUploadPanel({
         }, 'image/png');
     };
 
-    // Load mock downloads suited for CelronHub shipping/marine themes
-    const loadMockDownloads = () => {
-        const mockPdfs = [
-            { id: 'dl1', name: 'ABB_ACS880_Manual_v2.pdf', size: 1048576 * 8.4, date: new Date(Date.now() - 1000 * 60 * 10).toISOString() },
-            { id: 'dl2', name: 'Siemens_G120_UserGuide.pdf', size: 1048576 * 5.2, date: new Date(Date.now() - 1000 * 60 * 45).toISOString() },
-            { id: 'dl3', name: 'Calibration_Report_CAL9918.pdf', size: 1024 * 450, date: new Date(Date.now() - 1000 * 60 * 120).toISOString() },
-            { id: 'dl4', name: 'Fire_Pump_Safety_Cert.pdf', size: 1024 * 980, date: new Date(Date.now() - 1000 * 3600 * 4).toISOString() },
-            { id: 'dl5', name: 'Invoice_2026_Celron_109.pdf', size: 1024 * 120, date: new Date(Date.now() - 1000 * 3600 * 24).toISOString() }
-        ];
-        setDownloadFiles(mockPdfs);
+    // Load dynamic downloads history
+    const loadDownloadsHistory = () => {
+        const history = RecentFilesStore.getDownloadsHistory();
+        setDownloadFiles(history);
+    };
+
+    // Pick files directly from local Downloads using native file picker
+    const handlePickFromDownloads = (e) => {
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
+
+        files.forEach(file => {
+            RecentFilesStore.saveDownloadItem({
+                name: file.name,
+                size: file.size,
+                type: file.type || 'application/pdf',
+                date: new Date().toISOString(),
+                category: 'Local Downloads'
+            });
+        });
+
+        loadDownloadsHistory();
+        // Immediately stage the first selected file
+        handleFileStaged(files[0]);
+    };
+
+    const handleSelectDownloadItem = (dlItem) => {
+        const mockFile = new File([], dlItem.name, { type: dlItem.type || 'application/pdf' });
+        const suggestions = AIFileClassifier.classify(dlItem.name);
+        onSelect(mockFile, suggestions);
+        if (!embedded && onClose) onClose();
+    };
+
+    const handleRemoveDownloadItem = (e, id) => {
+        e.stopPropagation();
+        const updated = RecentFilesStore.removeDownloadItem(id);
+        setDownloadFiles(updated);
+    };
+
+    const handleClearAllDownloads = () => {
+        if (window.confirm('Clear all items from your Downloads history?')) {
+            RecentFilesStore.clearDownloadsHistory();
+            setDownloadFiles([]);
+        }
     };
 
     // Load actual Google Drive files if token exists
@@ -282,6 +324,12 @@ export default function SmartUploadPanel({
         const dup = DuplicateChecker.checkDuplicate(hash, file.name, documentType);
         if (dup) {
             setDuplicateRecord(dup);
+        }
+
+        // Auto-classify document category from filename
+        const classified = AIFileClassifier.classify(file.name);
+        if (classified?.docCategory) {
+            setSelectedDocCategory(classified.docCategory);
         }
     };
 
@@ -362,6 +410,11 @@ export default function SmartUploadPanel({
 
         // Classify metadata suggestions using local AI
         const suggestions = AIFileClassifier.classify(fileToUpload.name) || {};
+        const effectiveCategory = selectedDocCategory || suggestions.docCategory || DOCUMENT_CATEGORIES[0];
+        suggestions.docCategory = effectiveCategory;
+        suggestions.targetSubfolder = effectiveCategory.subfolder;
+        suggestions.docType = effectiveCategory.docType;
+
         if (targetFolder) {
             suggestions.targetFolder = targetFolder;
         }
@@ -370,11 +423,11 @@ export default function SmartUploadPanel({
         RecentFilesStore.saveUpload({
             name: fileToUpload.name,
             size: fileToUpload.size,
-            documentType: documentType,
+            documentType: effectiveCategory.label || documentType,
             hash: stagedFileHash,
-            category: suggestions?.category || 'General',
+            category: effectiveCategory.shortLabel || suggestions?.category || 'General',
             company: suggestions?.manufacturer || '',
-            targetFolder: targetFolder?.path || ''
+            targetFolder: targetFolder?.path || effectiveCategory.subfolder || ''
         });
 
         // Callback
@@ -599,14 +652,60 @@ export default function SmartUploadPanel({
                         </span>
                     </div>
                 </div>
-                {!embedded && onClose && (
-                    <button 
-                        onClick={onClose}
-                        style={{ background: '#fff', border: '1px solid #e2e8f0', cursor: 'pointer', color: '#94a3b8', padding: '6px', borderRadius: '10px', display: 'flex', alignItems: 'center' }}
+
+                {/* Header Quick Scan Shortcuts */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                        type="button"
+                        onClick={() => { setActiveTab('mobile_qr'); resetStagedState(); }}
+                        style={{
+                            background: activeTab === 'mobile_qr' ? '#4f46e5' : '#eff6ff',
+                            color: activeTab === 'mobile_qr' ? '#ffffff' : '#2563eb',
+                            border: '1px solid ' + (activeTab === 'mobile_qr' ? '#4338ca' : '#bfdbfe'),
+                            padding: '6px 12px',
+                            borderRadius: '8px',
+                            fontSize: '0.78rem',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            transition: 'all 0.15s ease'
+                        }}
                     >
-                        <X size={18} />
+                        <Smartphone size={14} /> Mobile Scan (QR)
                     </button>
-                )}
+
+                    <button
+                        type="button"
+                        onClick={() => { setActiveTab('whatsapp'); resetStagedState(); }}
+                        style={{
+                            background: activeTab === 'whatsapp' ? '#16a34a' : '#f0fdf4',
+                            color: activeTab === 'whatsapp' ? '#ffffff' : '#15803d',
+                            border: '1px solid ' + (activeTab === 'whatsapp' ? '#15803d' : '#bbf7d0'),
+                            padding: '6px 12px',
+                            borderRadius: '8px',
+                            fontSize: '0.78rem',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            transition: 'all 0.15s ease'
+                        }}
+                    >
+                        <MessageSquare size={14} /> WhatsApp Scan
+                    </button>
+
+                    {!embedded && onClose && (
+                        <button 
+                            onClick={onClose}
+                            style={{ background: '#fff', border: '1px solid #e2e8f0', cursor: 'pointer', color: '#94a3b8', padding: '6px', borderRadius: '10px', display: 'flex', alignItems: 'center' }}
+                        >
+                            <X size={18} />
+                        </button>
+                    )}
+                </div>
             </div>
 
             {/* Target Drive Saving Folder Selector Banner */}
@@ -615,7 +714,7 @@ export default function SmartUploadPanel({
                     <Folder size={16} color="#10b981" />
                     <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#065f46' }}>Target Saving Folder:</span>
                     <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#047857', background: '#ffffff', padding: '2px 10px', borderRadius: '6px', border: '1px solid #a7f3d0' }}>
-                        {targetFolder ? targetFolder.path : `${activeFolderName || 'System Workspace'} (${documentType || 'Manuals'})`}
+                        {targetFolder ? targetFolder.path : `${runningEnquiryNo || activeFolderName || 'Job Project'} > ${selectedDocCategory?.subfolder === 'ROOT' ? 'Root Folder' : (selectedDocCategory?.subfolder || 'Photos & Gallery')} (${selectedDocCategory?.shortLabel || documentType || 'Documentation'})`}
                     </span>
                 </div>
                 <button 
@@ -626,11 +725,57 @@ export default function SmartUploadPanel({
                 </button>
             </div>
 
+            {/* Document Category Routing Bar (Customer & Supplier Transaction Stages) */}
+            <div style={{ padding: '8px 20px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '8px', overflowX: 'auto' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                    <Tag size={14} color="#6366f1" />
+                    <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Category:
+                    </span>
+                </div>
+                
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
+                    {DOCUMENT_CATEGORIES.map(cat => {
+                        const isSelected = selectedDocCategory?.id === cat.id;
+                        return (
+                            <button
+                                key={cat.id}
+                                type="button"
+                                onClick={() => setSelectedDocCategory(cat)}
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px',
+                                    padding: '4px 10px',
+                                    borderRadius: '20px',
+                                    fontSize: '0.74rem',
+                                    fontWeight: isSelected ? 800 : 600,
+                                    border: isSelected ? `2px solid ${cat.color}` : '1px solid #cbd5e1',
+                                    background: isSelected ? cat.bg : '#ffffff',
+                                    color: isSelected ? cat.color : '#475569',
+                                    cursor: 'pointer',
+                                    whiteSpace: 'nowrap',
+                                    transition: 'all 0.15s ease',
+                                    boxShadow: isSelected ? `0 2px 6px ${cat.color}33` : 'none'
+                                }}
+                                title={`${cat.label} (Saves to: ${cat.subfolder})`}
+                            >
+                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isSelected ? cat.color : '#94a3b8' }} />
+                                {cat.shortLabel}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
             {/* Expanded Folder Picker Layer */}
             {showFolderSelector && (
                 <div style={{ padding: '14px 20px', background: '#ffffff', borderBottom: '2px solid #6366f1', boxShadow: '0 6px 20px rgba(0,0,0,0.06)', zIndex: 10 }}>
                     <FolderTargetSelector
                         settings={documentSettings}
+                        jobFolderId={activeFolderId}
+                        jobNo={runningEnquiryNo}
+                        activeFolderName={activeFolderName}
                         onSelect={(folder) => {
                             setTargetFolder(folder);
                             setShowFolderSelector(false);
@@ -644,118 +789,134 @@ export default function SmartUploadPanel({
             <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
                     
                     {/* Left Tabs Nav */}
-                    <nav style={{ width: '220px', borderRight: '1px solid #f1f5f9', background: '#f8fafc', padding: '20px 12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <button 
-                            onClick={() => { setActiveTab('recent'); resetStagedState(); }}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
-                                background: activeTab === 'recent' ? '#6366f1' : 'transparent',
-                                color: activeTab === 'recent' ? '#fff' : '#475569',
-                                textAlign: 'left', transition: 'all 0.2s'
-                            }}
-                        >
-                            <Clock size={16} /> Recent Files
-                        </button>
-                        <button 
-                            onClick={() => { setActiveTab('clipboard'); resetStagedState(); }}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
-                                background: activeTab === 'clipboard' ? '#6366f1' : 'transparent',
-                                color: activeTab === 'clipboard' ? '#fff' : '#475569',
-                                textAlign: 'left', transition: 'all 0.2s'
-                            }}
-                        >
-                            <Clipboard size={16} /> Clipboard Paste
-                        </button>
-                        <button 
-                            onClick={() => { setActiveTab('downloads'); resetStagedState(); }}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
-                                background: activeTab === 'downloads' ? '#6366f1' : 'transparent',
-                                color: activeTab === 'downloads' ? '#fff' : '#475569',
-                                textAlign: 'left', transition: 'all 0.2s'
-                            }}
-                        >
-                            <Download size={16} /> Downloads Folder
-                        </button>
-                        <button 
-                            onClick={() => { setActiveTab('gdrive'); resetStagedState(); }}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
-                                background: activeTab === 'gdrive' ? '#6366f1' : 'transparent',
-                                color: activeTab === 'gdrive' ? '#fff' : '#475569',
-                                textAlign: 'left', transition: 'all 0.2s'
-                            }}
-                        >
-                            <Cloud size={16} /> Google Drive
-                        </button>
-                        <button 
-                            onClick={() => { setActiveTab('dragdrop'); resetStagedState(); }}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
-                                background: activeTab === 'dragdrop' ? '#6366f1' : 'transparent',
-                                color: activeTab === 'dragdrop' ? '#fff' : '#475569',
-                                textAlign: 'left', transition: 'all 0.2s'
-                            }}
-                        >
-                            <Monitor size={16} /> Drag &amp; Drop Zone
-                        </button>
-                        <button 
-                            onClick={() => { setActiveTab('ocr'); resetStagedState(); }}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
-                                background: activeTab === 'ocr' ? '#6366f1' : 'transparent',
-                                color: activeTab === 'ocr' ? '#fff' : '#475569',
-                                textAlign: 'left', transition: 'all 0.2s'
-                            }}
-                        >
-                            <Sparkles size={16} /> Smart OCR
-                        </button>
-                        <button 
-                            onClick={() => { setActiveTab('camera'); resetStagedState(); }}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
-                                background: activeTab === 'camera' ? '#6366f1' : 'transparent',
-                                color: activeTab === 'camera' ? '#fff' : '#475569',
-                                textAlign: 'left', transition: 'all 0.2s'
-                            }}
-                        >
-                            <Camera size={16} /> Camera Photo
-                        </button>
+                    <nav style={{ width: '230px', borderRight: '1px solid #f1f5f9', background: '#f8fafc', padding: '12px 8px', display: 'flex', flexDirection: 'column', gap: '3px', overflowY: 'auto' }}>
+                        {/* Section 1: Mobile & WhatsApp Highlights */}
+                        <div style={{ fontSize: '0.68rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '4px 8px', margin: '2px 0' }}>
+                            Mobile &amp; Chat Scanning
+                        </div>
+
                         <button 
                             onClick={() => { setActiveTab('mobile_qr'); resetStagedState(); }}
                             style={{
-                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
-                                background: activeTab === 'mobile_qr' ? '#6366f1' : 'transparent',
-                                color: activeTab === 'mobile_qr' ? '#fff' : '#475569',
-                                textAlign: 'left', transition: 'all 0.2s'
+                                display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '9px 12px', border: '1px solid ' + (activeTab === 'mobile_qr' ? '#4f46e5' : '#e0e7ff'), borderRadius: '9px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 700,
+                                background: activeTab === 'mobile_qr' ? '#4f46e5' : '#eef2ff',
+                                color: activeTab === 'mobile_qr' ? '#fff' : '#3730a3',
+                                textAlign: 'left', transition: 'all 0.15s ease'
                             }}
                         >
-                            <Smartphone size={16} /> Mobile Upload (QR)
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <Smartphone size={15} color={activeTab === 'mobile_qr' ? '#fff' : '#4f46e5'} /> Mobile Upload (QR)
+                            </span>
+                            <span style={{ fontSize: '0.62rem', background: activeTab === 'mobile_qr' ? 'rgba(255,255,255,0.25)' : '#4f46e5', color: '#fff', padding: '1px 6px', borderRadius: '8px', fontWeight: 800 }}>
+                                Live
+                            </span>
                         </button>
+
                         <button 
                             onClick={() => { setActiveTab('whatsapp'); resetStagedState(); }}
                             style={{
-                                display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '12px 14px', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
-                                background: activeTab === 'whatsapp' ? '#25D366' : 'transparent',
-                                color: activeTab === 'whatsapp' ? '#fff' : '#475569',
-                                textAlign: 'left', transition: 'all 0.2s'
+                                display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '9px 12px', border: '1px solid ' + (activeTab === 'whatsapp' ? '#16a34a' : '#bbf7d0'), borderRadius: '9px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 700,
+                                background: activeTab === 'whatsapp' ? '#16a34a' : '#f0fdf4',
+                                color: activeTab === 'whatsapp' ? '#fff' : '#14532d',
+                                textAlign: 'left', transition: 'all 0.15s ease'
                             }}
                         >
-                            <MessageSquare size={16} /> WhatsApp Integration
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <MessageSquare size={15} color={activeTab === 'whatsapp' ? '#fff' : '#16a34a'} /> WhatsApp Scan
+                            </span>
+                            <span style={{ fontSize: '0.62rem', background: activeTab === 'whatsapp' ? 'rgba(255,255,255,0.25)' : '#16a34a', color: '#fff', padding: '1px 6px', borderRadius: '8px', fontWeight: 800 }}>
+                                Chat
+                            </span>
                         </button>
 
-                        <div style={{ marginTop: 'auto', borderTop: '1px solid #e2e8f0', paddingTop: '16px', fontSize: '0.75rem', color: '#94a3b8' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: 600 }}>
-                                <Keyboard size={14} /> Shortcuts
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                <div><code style={{ background: '#f1f5f9', padding: '1px 4px', borderRadius: '3px' }}>Ctrl+R</code> Recents</div>
-                                <div><code style={{ background: '#f1f5f9', padding: '1px 4px', borderRadius: '3px' }}>Ctrl+V</code> Paste</div>
-                                <div><code style={{ background: '#f1f5f9', padding: '1px 4px', borderRadius: '3px' }}>Ctrl+D</code> Downloads</div>
-                                <div><code style={{ background: '#f1f5f9', padding: '1px 4px', borderRadius: '3px' }}>Ctrl+B</code> Browse</div>
-                            </div>
+                        {/* Section 2: Local & Cloud Sources */}
+                        <div style={{ fontSize: '0.68rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '8px 8px 4px', margin: '4px 0 0' }}>
+                            File Sources
                         </div>
+
+                        <button 
+                            onClick={() => { setActiveTab('recent'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '8px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600,
+                                background: activeTab === 'recent' ? '#6366f1' : 'transparent',
+                                color: activeTab === 'recent' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.15s ease'
+                            }}
+                        >
+                            <Clock size={15} /> Recent Files
+                        </button>
+
+                        <button 
+                            onClick={() => { setActiveTab('clipboard'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '8px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600,
+                                background: activeTab === 'clipboard' ? '#6366f1' : 'transparent',
+                                color: activeTab === 'clipboard' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.15s ease'
+                            }}
+                        >
+                            <Clipboard size={15} /> Clipboard Paste
+                        </button>
+
+                        <button 
+                            onClick={() => { setActiveTab('downloads'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '8px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600,
+                                background: activeTab === 'downloads' ? '#6366f1' : 'transparent',
+                                color: activeTab === 'downloads' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.15s ease'
+                            }}
+                        >
+                            <Download size={15} /> Downloads Folder
+                        </button>
+
+                        <button 
+                            onClick={() => { setActiveTab('gdrive'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '8px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600,
+                                background: activeTab === 'gdrive' ? '#6366f1' : 'transparent',
+                                color: activeTab === 'gdrive' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.15s ease'
+                            }}
+                        >
+                            <Cloud size={15} /> Google Drive
+                        </button>
+
+                        <button 
+                            onClick={() => { setActiveTab('dragdrop'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '8px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600,
+                                background: activeTab === 'dragdrop' ? '#6366f1' : 'transparent',
+                                color: activeTab === 'dragdrop' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.15s ease'
+                            }}
+                        >
+                            <Monitor size={15} /> Drag &amp; Drop Zone
+                        </button>
+
+                        <button 
+                            onClick={() => { setActiveTab('ocr'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '8px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600,
+                                background: activeTab === 'ocr' ? '#6366f1' : 'transparent',
+                                color: activeTab === 'ocr' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.15s ease'
+                            }}
+                        >
+                            <Sparkles size={15} /> Smart OCR
+                        </button>
+
+                        <button 
+                            onClick={() => { setActiveTab('camera'); resetStagedState(); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '8px 12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600,
+                                background: activeTab === 'camera' ? '#6366f1' : 'transparent',
+                                color: activeTab === 'camera' ? '#fff' : '#475569',
+                                textAlign: 'left', transition: 'all 0.15s ease'
+                            }}
+                        >
+                            <Camera size={15} /> Camera Photo
+                        </button>
                     </nav>
 
                     {/* Right Staging & Panel Content */}
@@ -904,35 +1065,129 @@ export default function SmartUploadPanel({
                             </div>
                         )}
 
-                        {/* 3. DOWNLOADS TAB */}
+                        {/* 3. DYNAMIC DOWNLOADS TAB */}
                         {activeTab === 'downloads' && (
                             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                                <div style={{ fontSize: '0.8rem', color: '#64748b', background: '#eff6ff', padding: '10px 14px', borderRadius: '10px', border: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                                    <AlertCircle size={14} style={{ flexShrink: 0 }} />
-                                    <span>Simulating downloads folder contents due to browser security sandbox. Select a recently downloaded PDF below.</span>
+                                {/* Hidden Downloads File Input */}
+                                <input 
+                                    type="file" 
+                                    ref={downloadsInputRef} 
+                                    multiple 
+                                    onChange={handlePickFromDownloads} 
+                                    style={{ display: 'none' }} 
+                                />
+
+                                {/* Action & Search Header */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => downloadsInputRef.current?.click()}
+                                        style={{
+                                            background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                                            color: '#ffffff',
+                                            border: 'none',
+                                            padding: '8px 16px',
+                                            borderRadius: '10px',
+                                            fontSize: '0.82rem',
+                                            fontWeight: 700,
+                                            cursor: 'pointer',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            boxShadow: '0 2px 8px rgba(2,132,199,0.3)'
+                                        }}
+                                    >
+                                        <Download size={16} /> Choose Files from Downloads
+                                    </button>
+
+                                    {downloadFiles.length > 0 && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <div style={{ display: 'flex', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0', padding: '2px 10px' }}>
+                                                <Search size={14} style={{ alignSelf: 'center', color: '#94a3b8' }} />
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="Search downloads..." 
+                                                    value={downloadsSearchTerm}
+                                                    onChange={(e) => setDownloadsSearchTerm(e.target.value)}
+                                                    style={{ border: 'none', background: 'transparent', outline: 'none', padding: '6px 8px', fontSize: '0.78rem', width: '160px' }}
+                                                />
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                onClick={handleClearAllDownloads}
+                                                style={{ background: '#f8fafc', color: '#94a3b8', border: '1px solid #e2e8f0', padding: '6px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
+                                                title="Clear downloads list"
+                                            >
+                                                Clear
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
 
+                                {/* Dynamic Downloads List */}
                                 <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    {downloadFiles.map(dl => (
-                                        <div 
-                                            key={dl.id}
-                                            onClick={() => handleSelectMockDownload(dl)}
-                                            style={{ 
-                                                display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', 
-                                                background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', cursor: 'pointer', fontSize: '0.8rem'
-                                            }}
-                                            onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
-                                            onMouseLeave={e => e.currentTarget.style.background = '#fff'}
-                                        >
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                                <Download size={16} color="#0ea5e9" />
-                                                <strong>{dl.name}</strong>
-                                            </div>
-                                            <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
-                                                {Math.round(dl.size / (1024 * 102.4)) / 10} MB
-                                            </span>
+                                    {downloadFiles.length === 0 ? (
+                                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '36px 16px', border: '2px dashed #cbd5e1', borderRadius: '14px', background: '#f8fafc', textAlign: 'center' }}>
+                                            <Download size={36} style={{ color: '#0ea5e9', opacity: 0.6, marginBottom: '10px' }} />
+                                            <h4 style={{ margin: '0 0 4px 0', fontSize: '0.92rem', color: '#1e293b' }}>No Downloaded Files Staged Yet</h4>
+                                            <p style={{ margin: '0 0 14px 0', fontSize: '0.78rem', color: '#64748b', maxWidth: '340px' }}>
+                                                Click below to pick any PDF, invoice, quotation, or receipt directly from your computer's <strong>Downloads</strong> folder.
+                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={() => downloadsInputRef.current?.click()}
+                                                style={{ background: '#0ea5e9', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: '8px', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}
+                                            >
+                                                Select from Downloads Folder
+                                            </button>
                                         </div>
-                                    ))}
+                                    ) : (
+                                        downloadFiles
+                                            .filter(dl => !downloadsSearchTerm || dl.name.toLowerCase().includes(downloadsSearchTerm.toLowerCase()))
+                                            .map(dl => (
+                                                <div 
+                                                    key={dl.id}
+                                                    onClick={() => handleSelectDownloadItem(dl)}
+                                                    style={{ 
+                                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', 
+                                                        background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', cursor: 'pointer', fontSize: '0.8rem', transition: 'all 0.15s ease'
+                                                    }}
+                                                    onMouseEnter={e => e.currentTarget.style.background = '#f0f9ff'}
+                                                    onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+                                                >
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+                                                        <Download size={16} color="#0ea5e9" style={{ flexShrink: 0 }} />
+                                                        <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                                                            <strong style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#0f172a' }}>
+                                                                {dl.name}
+                                                            </strong>
+                                                            <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                                                                {dl.date ? new Date(dl.date).toLocaleDateString() : 'Recent'} • {dl.category || 'Downloaded File'}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+                                                        <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>
+                                                            {dl.size > 1048576 
+                                                                ? `${(dl.size / (1024 * 1024)).toFixed(1)} MB` 
+                                                                : `${Math.max(1, Math.round(dl.size / 1024))} KB`}
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => handleRemoveDownloadItem(e, dl.id)}
+                                                            style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', padding: '4px', borderRadius: '4px' }}
+                                                            onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                                                            onMouseLeave={e => e.currentTarget.style.color = '#cbd5e1'}
+                                                            title="Remove from history"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -1449,10 +1704,11 @@ export default function SmartUploadPanel({
 
                         {/* 8. WHATSAPP INTEGRATION TAB */}
                         {activeTab === 'whatsapp' && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%', overflowY: 'auto' }}>
+                                {/* Top WhatsApp Header */}
                                 <div style={{ 
                                     background: 'linear-gradient(135deg, rgba(37, 211, 102, 0.12) 0%, rgba(18, 140, 126, 0.12) 100%)', 
-                                    border: '1px solid rgba(37, 211, 102, 0.3)', 
+                                    border: '1px solid rgba(37, 211, 102, 0.35)', 
                                     borderRadius: '16px', 
                                     padding: '16px 20px',
                                     display: 'flex',
@@ -1467,101 +1723,128 @@ export default function SmartUploadPanel({
                                         </div>
                                         <div>
                                             <h4 style={{ margin: '0 0 2px 0', fontSize: '1rem', fontWeight: 800, color: '#0f172a' }}>
-                                                WhatsApp Smart Upload (Personal & Business)
+                                                WhatsApp Direct Document Scanner &amp; Upload
                                             </h4>
                                             <span style={{ fontSize: '0.78rem', color: '#475569' }}>
-                                                Drag PDFs or photos directly from WhatsApp Web (`web.whatsapp.com`) into CelronHub
+                                                Target: <strong style={{ color: '#15803d' }}>{activeFolderName}</strong>
                                             </span>
                                         </div>
                                     </div>
 
-                                    <a
-                                        href="https://web.whatsapp.com"
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        style={{
-                                            background: '#25D366',
-                                            color: '#ffffff',
-                                            padding: '8px 14px',
-                                            borderRadius: '8px',
-                                            fontSize: '0.8rem',
-                                            fontWeight: 700,
-                                            textDecoration: 'none',
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '6px',
-                                            boxShadow: '0 2px 6px rgba(37, 211, 102, 0.3)'
-                                        }}
-                                    >
-                                        Open WhatsApp Web <ExternalLink size={12} />
-                                    </a>
+                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                        <a
+                                            href={`https://wa.me/?text=${encodeURIComponent(`Please upload documents/photos for Job ${runningEnquiryNo || 'Celron'}: ${window.location.origin}/upload-media?folderId=${activeFolderId}&token=${getStoredToken() || localStorage.getItem('google_access_token') || ''}&jobName=${encodeURIComponent(activeFolderName)}`)}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{
+                                                background: '#25D366',
+                                                color: '#ffffff',
+                                                padding: '8px 14px',
+                                                borderRadius: '8px',
+                                                fontSize: '0.8rem',
+                                                fontWeight: 700,
+                                                textDecoration: 'none',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '6px',
+                                                boxShadow: '0 2px 6px rgba(37, 211, 102, 0.3)'
+                                            }}
+                                        >
+                                            <Share2 size={13} /> Share Link on WhatsApp
+                                        </a>
+
+                                        <a
+                                            href="https://web.whatsapp.com"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{
+                                                background: '#ffffff',
+                                                color: '#15803d',
+                                                border: '1px solid #86efac',
+                                                padding: '8px 14px',
+                                                borderRadius: '8px',
+                                                fontSize: '0.8rem',
+                                                fontWeight: 700,
+                                                textDecoration: 'none',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '6px'
+                                            }}
+                                        >
+                                            <ExternalLink size={13} /> Open WhatsApp Web
+                                        </a>
+                                    </div>
                                 </div>
 
+                                {/* QR Code Card for Scanning with WhatsApp / Mobile Camera */}
+                                <div style={{ 
+                                    background: '#ffffff', 
+                                    border: '1px solid #bbf7d0', 
+                                    borderRadius: '16px', 
+                                    padding: '20px', 
+                                    boxShadow: '0 4px 16px rgba(37, 211, 102, 0.08)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '24px',
+                                    flexWrap: 'wrap'
+                                }}>
+                                    <div style={{ background: '#fff', padding: '10px', borderRadius: '14px', border: '2px solid #86efac', boxShadow: '0 4px 12px rgba(0,0,0,0.06)', flexShrink: 0 }}>
+                                        <QRCodeSVG 
+                                            value={`${window.location.origin}/upload-media?folderId=${activeFolderId}&token=${getStoredToken() || localStorage.getItem('google_access_token') || ''}&jobName=${encodeURIComponent(activeFolderName)}`}
+                                            size={130} 
+                                            level="H" 
+                                            includeMargin={true} 
+                                        />
+                                    </div>
+
+                                    <div style={{ flex: 1, minWidth: '220px' }}>
+                                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#ecfdf5', color: '#15803d', border: '1px solid #86efac', padding: '3px 10px', borderRadius: '20px', fontSize: '0.72rem', fontWeight: 800, marginBottom: '6px' }}>
+                                            <QrCode size={13} /> WhatsApp / Phone Camera Scanner
+                                        </div>
+                                        <h4 style={{ margin: '0 0 6px 0', fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' }}>
+                                            Scan QR Code to Upload directly from Phone
+                                        </h4>
+                                        <p style={{ margin: '0 0 10px 0', fontSize: '0.8rem', color: '#475569', lineHeight: '1.45' }}>
+                                            1. Open <strong>WhatsApp</strong> or your mobile camera.<br />
+                                            2. Scan this QR code to launch the Mobile Upload Gateway.<br />
+                                            3. Take photos or select files from WhatsApp chats to upload instantly into <strong>{activeFolderName}</strong>.
+                                        </p>
+                                        
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#16a34a', fontSize: '0.8rem', fontWeight: 700 }}>
+                                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', animation: 'pulse 1.5s infinite' }} />
+                                            <span>Live Sync: Listening for incoming uploads...</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Drag and Drop Zone from WhatsApp Web */}
                                 <div 
                                     onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
                                     onDragLeave={() => setIsDraggingOver(false)}
                                     onDrop={handleUniversalDrop}
                                     style={{ 
-                                        flex: 1, 
                                         display: 'flex', 
                                         flexDirection: 'column', 
                                         justifyContent: 'center', 
                                         alignItems: 'center', 
-                                        border: isDraggingOver ? '2px dashed #25D366' : '2px dashed #a7f3d0', 
+                                        border: isDraggingOver ? '2px dashed #25D366' : '2px dashed #cbd5e1', 
                                         borderRadius: '16px', 
-                                        background: isDraggingOver ? '#ecfdf5' : '#f0fdf4', 
-                                        padding: '24px 20px',
+                                        background: isDraggingOver ? '#ecfdf5' : '#f8fafc', 
+                                        padding: '24px 20px', 
                                         transition: 'all 0.2s', 
                                         textAlign: 'center',
-                                        minHeight: '200px'
+                                        minHeight: '140px'
                                     }}
                                 >
-                                    <div style={{ background: '#dcfce7', color: '#15803d', padding: '12px', borderRadius: '50%', marginBottom: '10px' }}>
-                                        <MessageSquare size={28} />
+                                    <div style={{ background: '#dcfce7', color: '#15803d', padding: '10px', borderRadius: '50%', marginBottom: '8px' }}>
+                                        <Clipboard size={22} />
                                     </div>
-                                    <h4 style={{ margin: '0 0 6px 0', fontSize: '1rem', fontWeight: 800, color: '#14532d' }}>
-                                        Drag & Drop Purchase Orders / Quotations Here
-                                    </h4>
-                                    <p style={{ margin: '0 0 14px 0', fontSize: '0.8rem', color: '#166534', maxWidth: '420px', lineHeight: '1.4' }}>
-                                        Open <strong>WhatsApp Web</strong> alongside CelronHub. Drag any PO document directly from your chat window into this zone, or copy an image/file in WhatsApp (`Ctrl+C`) and press `Ctrl+V`!
+                                    <h5 style={{ margin: '0 0 4px 0', fontSize: '0.9rem', fontWeight: 800, color: '#14532d' }}>
+                                        Drag &amp; Drop or Paste (`Ctrl + V`) from WhatsApp Web
+                                    </h5>
+                                    <p style={{ margin: 0, fontSize: '0.78rem', color: '#64748b', maxWidth: '420px' }}>
+                                        Copy any image or PDF in WhatsApp (<kbd style={{ background: '#e2e8f0', padding: '1px 5px', borderRadius: '4px' }}>Ctrl + C</kbd>) and click here to paste (<kbd style={{ background: '#e2e8f0', padding: '1px 5px', borderRadius: '4px' }}>Ctrl + V</kbd>).
                                     </p>
-                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                                        <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', background: '#25D366', color: '#fff' }}>
-                                            📱 Personal WhatsApp
-                                        </span>
-                                        <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', background: '#128C7E', color: '#fff' }}>
-                                            💼 Business WhatsApp
-                                        </span>
-                                        <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', background: '#059669', color: '#fff' }}>
-                                            ⚡ Drag PDF / PNG / JPG
-                                        </span>
-                                    </div>
-                                </div>
-
-                                <div style={{ 
-                                    background: '#f8fafc', 
-                                    border: '1px solid #e2e8f0', 
-                                    borderRadius: '14px', 
-                                    padding: '12px 16px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '14px'
-                                }}>
-                                    <div style={{ background: '#fff', padding: '6px', borderRadius: '8px', border: '1px solid #cbd5e1', flexShrink: 0 }}>
-                                        <QRCodeSVG 
-                                            value={`https://wa.me/6597685891?text=Send%20document%20for%20${runningEnquiryNo || 'CelronHub'}`}
-                                            size={70}
-                                            level="M"
-                                        />
-                                    </div>
-                                    <div style={{ flex: 1 }}>
-                                        <h5 style={{ margin: '0 0 2px 0', fontSize: '0.85rem', fontWeight: 800, color: '#0f172a' }}>
-                                            WhatsApp Cloud Ingestion Bot (+65 97685891)
-                                        </h5>
-                                        <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b', lineHeight: '1.35' }}>
-                                            Customers can also send orders directly to your WhatsApp Business number. Incoming files automatically sync with <strong>{runningEnquiryNo || 'your Job Suite'}</strong>.
-                                        </p>
-                                    </div>
                                 </div>
                             </div>
                         )}
@@ -1601,10 +1884,15 @@ export default function SmartUploadPanel({
 
                                 {/* Auto-Preview AI suggestion snippet */}
                                 {!duplicateRecord && (
-                                    <div style={{ marginTop: '12px', padding: '8px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <Sparkles size={14} color="#15803d" />
-                                        <span style={{ fontSize: '0.75rem', color: '#166534' }}>
-                                            <strong>Local AI Classified:</strong> Equipment brand/model and tags will be auto-suggested.
+                                    <div style={{ marginTop: '12px', padding: '8px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <Sparkles size={14} color="#15803d" />
+                                            <span style={{ fontSize: '0.75rem', color: '#166534' }}>
+                                                <strong>Local AI Classified:</strong> Routing to <strong>{selectedDocCategory?.subfolder === 'ROOT' ? 'Root Folder' : selectedDocCategory?.subfolder}</strong> as <strong>{selectedDocCategory?.label}</strong>.
+                                            </span>
+                                        </div>
+                                        <span style={{ fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: '10px', background: selectedDocCategory?.bg || '#ecfdf5', color: selectedDocCategory?.color || '#15803d', border: `1px solid ${selectedDocCategory?.color || '#bbf7d0'}` }}>
+                                            {selectedDocCategory?.shortLabel}
                                         </span>
                                     </div>
                                 )}

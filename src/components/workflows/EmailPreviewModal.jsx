@@ -312,37 +312,87 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
         console.log('[Email] Sending RFQ email to:', recipientTo);
 
         try {
+            // Helper to compress image if large
+            const compressAttachmentImage = async (file) => {
+                if (!file.type || !file.type.startsWith('image/') || file.size < 1024 * 800) return file;
+                return new Promise((resolve) => {
+                    const img = new Image();
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        img.onload = () => {
+                            const maxDim = 1600;
+                            let width = img.width;
+                            let height = img.height;
+                            if (width > maxDim || height > maxDim) {
+                                if (width > height) {
+                                    height = Math.round((height * maxDim) / width);
+                                    width = maxDim;
+                                } else {
+                                    width = Math.round((width * maxDim) / height);
+                                    height = maxDim;
+                                }
+                            }
+                            const canvas = document.createElement('canvas');
+                            canvas.width = width;
+                            canvas.height = height;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, width, height);
+                            canvas.toBlob((blob) => {
+                                if (blob && blob.size < file.size) {
+                                    resolve(new File([blob], file.name, { type: 'image/jpeg' }));
+                                } else {
+                                    resolve(file);
+                                }
+                            }, 'image/jpeg', 0.82);
+                        };
+                        img.src = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                });
+            };
+
             // Convert attachments to base64 payload
             const customAttachments = await Promise.all(attachments.map(async (file) => {
+                const processed = await compressAttachmentImage(file);
                 return new Promise((resolve) => {
                     const reader = new FileReader();
-                    reader.onload = (e) => resolve({ name: file.name, type: file.type, content: e.target.result });
-                    reader.readAsDataURL(file);
+                    reader.onload = (e) => resolve({ name: processed.name, type: processed.type, content: e.target.result });
+                    reader.readAsDataURL(processed);
                 });
             }));
 
             // Fallback from email from settings/auth
             const fromEmail = 'sales@celron.net';
 
+            const payload = {
+                company_id: profile?.company_id,
+                from_email: fromEmail,
+                to: recipientTo,
+                cc: cc,
+                bcc: bcc,
+                subject: subject,
+                body: body,
+                attachments: customAttachments,
+                in_reply_to: data.inReplyTo || data.messageId || '',
+                references: data.references || data.inReplyTo || data.messageId || ''
+            };
+
+            const payloadString = JSON.stringify(payload);
+            if (payloadString.length > 4.2 * 1024 * 1024) {
+                const totalMB = (payloadString.length / (1024 * 1024)).toFixed(1);
+                toast.error(`Total attachment size (${totalMB} MB) exceeds the email server limit (4.0 MB). Please remove some attachments or share larger files via Google Drive.`);
+                setSaving(false);
+                return;
+            }
+
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 35000);
+            const timeoutId = setTimeout(() => controller.abort(), 45000);
 
             const response = await fetch(apiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 signal: controller.signal,
-                body: JSON.stringify({
-                    company_id: profile?.company_id,
-                    from_email: fromEmail,
-                    to: recipientTo,
-                    cc: cc,
-                    bcc: bcc,
-                    subject: subject,
-                    body: body,
-                    attachments: customAttachments,
-                    in_reply_to: data.inReplyTo || data.messageId || '',
-                    references: data.references || data.inReplyTo || data.messageId || ''
-                })
+                body: payloadString
             });
 
             clearTimeout(timeoutId);

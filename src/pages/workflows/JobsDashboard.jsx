@@ -22,6 +22,7 @@ import { isTokenValid, connectGoogleAPI } from '../../lib/googleAuthService';
 import { getDocumentSettings, getPartners } from '../../lib/store';
 import SearchableSelect from '../../components/common/SearchableSelect';
 import JobEditV2Modal from '../../components/workflows/JobEditV2Modal';
+import EagleDriveTreeViewer from '../../components/workflows/EagleDriveTreeViewer';
 import toast from 'react-hot-toast';
 
 const stripHtml = (html) => {
@@ -46,7 +47,8 @@ export default function JobsDashboard() {
     const [tableSelectedPartnerId, setTableSelectedPartnerId] = useState('');
     const [tableSortKey, setTableSortKey] = useState('created_at');
     const [tableSortDirection, setTableSortDirection] = useState('desc');
-    const [tableCompactWindow, setTableCompactWindow] = useState(false);
+    const [tableCompactWindow, setTableCompactWindow] = useState(true);
+    const [selectedDriveTreeJob, setSelectedDriveTreeJob] = useState(null);
     const [editingJob, setEditingJob] = useState(null);
 
     const jobsTools = [
@@ -614,6 +616,7 @@ export default function JobsDashboard() {
 
     // Sub Tabs Configuration for Job List (Image 2 & 3)
     const JOB_SUB_TABS = [
+        { id: 'All', label: 'All Jobs', color: '#6366f1', bgActive: '#6366f1', textActive: '#ffffff', bgInactive: '#f8fafc', textInactive: '#4338ca', border: '#6366f1', desc: 'All ongoing, completed, and archived jobs' },
         { id: 'Ongoing', label: 'Ongoing Jobs', color: '#3b82f6', bgActive: '#3b82f6', textActive: '#ffffff', bgInactive: '#eff6ff', textInactive: '#1e40af', border: '#3b82f6', desc: 'Billed drafts or operational in-progress' },
         { id: 'Completed', label: 'Completed Jobs', color: '#10b981', bgActive: '#10b981', textActive: '#ffffff', bgInactive: '#ecfdf5', textInactive: '#065f46', border: '#10b981', desc: 'Billed Tax Invoices awaiting payments' },
         { id: 'Archived', label: 'Archived Jobs', color: '#64748b', bgActive: '#64748b', textActive: '#ffffff', bgInactive: '#f1f5f9', textInactive: '#475569', border: '#94a3b8', desc: 'Fully Paid Tax Invoices or Closed' }
@@ -666,16 +669,9 @@ export default function JobsDashboard() {
         return Object.values(jobGroups).sort((a, b) => (b.assigned_job_no || '').localeCompare(a.assigned_job_no || ''));
     }, [documents]);
 
-    const ongoingCount = useMemo(() => tableJobRows.filter(d => d.subTabState === 'Ongoing').length, [tableJobRows]);
-    const completedCount = useMemo(() => tableJobRows.filter(d => d.subTabState === 'Completed').length, [tableJobRows]);
-    const archivedCount = useMemo(() => tableJobRows.filter(d => d.subTabState === 'Archived').length, [tableJobRows]);
-
-    const filteredTableDocs = useMemo(() => {
+    // 1. Filter jobs by Year, Search Query, and Partner across ALL status tabs
+    const searchFilteredTableDocs = useMemo(() => {
         return tableJobRows.filter(doc => {
-            if (tableSubTab && doc.subTabState !== tableSubTab) {
-                return false;
-            }
-
             if (selectedYear !== 'All') {
                 const docDate = doc.issue_date || doc.created_at;
                 const docYear = docDate ? new Date(docDate).getFullYear().toString() : new Date().getFullYear().toString();
@@ -717,7 +713,21 @@ export default function JobsDashboard() {
 
             return true;
         });
-    }, [tableJobRows, tableSubTab, selectedYear, tableSearchQuery, searchQuery, tableSelectedPartnerId, partners]);
+    }, [tableJobRows, selectedYear, tableSearchQuery, searchQuery, tableSelectedPartnerId, partners]);
+
+    // 2. Compute dynamic search-aware counts for each tab
+    const allCount = useMemo(() => searchFilteredTableDocs.length, [searchFilteredTableDocs]);
+    const ongoingCount = useMemo(() => searchFilteredTableDocs.filter(d => d.subTabState === 'Ongoing').length, [searchFilteredTableDocs]);
+    const completedCount = useMemo(() => searchFilteredTableDocs.filter(d => d.subTabState === 'Completed').length, [searchFilteredTableDocs]);
+    const archivedCount = useMemo(() => searchFilteredTableDocs.filter(d => d.subTabState === 'Archived').length, [searchFilteredTableDocs]);
+
+    // 3. Filter by active subTab ('All' shows all search results)
+    const filteredTableDocs = useMemo(() => {
+        if (!tableSubTab || tableSubTab === 'All') {
+            return searchFilteredTableDocs;
+        }
+        return searchFilteredTableDocs.filter(doc => doc.subTabState === tableSubTab);
+    }, [searchFilteredTableDocs, tableSubTab]);
 
     const sortedTableDocs = useMemo(() => {
         return [...filteredTableDocs].sort((a, b) => {
@@ -1245,7 +1255,7 @@ export default function JobsDashboard() {
                     <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Total Jobs</span>
                     <span style={{ fontSize: '2rem', fontWeight: 800, marginTop: '8px', color: '#1e293b' }}>{totalJobsCount}</span>
                     <span style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <Activity size={14} color="#6366f1" /> {activeJobsCount} active ongoing
+                        <Activity size={14} color="#6366f1" /> {(searchQuery || tableSearchQuery) ? `${totalJobsCount} matching search` : `${activeJobsCount} active ongoing`}
                     </span>
                 </div>
 
@@ -1305,7 +1315,8 @@ export default function JobsDashboard() {
                     {JOB_SUB_TABS.map(tab => {
                         const isActive = tableSubTab === tab.id;
                         let count = 0;
-                        if (tab.id === 'Ongoing') count = ongoingCount;
+                        if (tab.id === 'All') count = allCount;
+                        else if (tab.id === 'Ongoing') count = ongoingCount;
                         else if (tab.id === 'Completed') count = completedCount;
                         else if (tab.id === 'Archived') count = archivedCount;
 
@@ -1478,29 +1489,104 @@ export default function JobsDashboard() {
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 gap: '6px',
-                                padding: '6px 12px',
+                                padding: '5px 12px',
                                 borderRadius: '8px',
-                                border: '1px solid #cbd5e1',
-                                background: tableCompactWindow ? '#ffffff' : '#eff6ff',
-                                color: tableCompactWindow ? '#334155' : '#1d4ed8',
+                                border: '1px solid',
+                                borderColor: tableCompactWindow ? '#bfdbfe' : '#cbd5e1',
+                                background: tableCompactWindow ? '#eff6ff' : '#ffffff',
+                                color: tableCompactWindow ? '#1d4ed8' : '#334155',
                                 fontSize: '0.8rem',
                                 fontWeight: 700,
                                 cursor: 'pointer',
                                 transition: 'all 0.15s ease'
                             }}
-                            title={tableCompactWindow ? "Switch to full expanded table view" : "Switch to 5-6 row compact window view"}
+                            title={tableCompactWindow ? "Switch to full expanded table view" : "Switch to 6-row compact scroll view"}
                         >
-                            {tableCompactWindow ? '📐 Small Window (5-6 Rows)' : '📺 Full Screen View'}
+                            {tableCompactWindow ? '📐 Compact View (6 Rows)' : '📺 Full Screen View'}
                         </button>
                     </div>
                 </div>
+
+                {/* Smart Cross-Tab Search Notice Banner */}
+                {Boolean((tableSearchQuery || searchQuery) && filteredTableDocs.length === 0 && searchFilteredTableDocs.length > 0) && (
+                    <div style={{
+                        background: '#eff6ff',
+                        border: '1px solid #bfdbfe',
+                        borderRadius: '10px',
+                        padding: '12px 16px',
+                        marginBottom: '16px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: '10px'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#1e40af', fontSize: '0.85rem' }}>
+                            <Info size={18} color="#2563eb" />
+                            <span>
+                                No jobs in <strong>{tableSubTab} Jobs</strong> for "<em>{tableSearchQuery || searchQuery}</em>", but found <strong>{searchFilteredTableDocs.length} matching job(s)</strong> across other categories.
+                            </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {completedCount > 0 && tableSubTab !== 'Completed' && (
+                                <button
+                                    onClick={() => setTableSubTab('Completed')}
+                                    style={{
+                                        background: '#10b981',
+                                        color: '#ffffff',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        padding: '5px 12px',
+                                        fontSize: '0.78rem',
+                                        fontWeight: 700,
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    View Completed Jobs ({completedCount})
+                                </button>
+                            )}
+                            {ongoingCount > 0 && tableSubTab !== 'Ongoing' && (
+                                <button
+                                    onClick={() => setTableSubTab('Ongoing')}
+                                    style={{
+                                        background: '#3b82f6',
+                                        color: '#ffffff',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        padding: '5px 12px',
+                                        fontSize: '0.78rem',
+                                        fontWeight: 700,
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    View Ongoing Jobs ({ongoingCount})
+                                </button>
+                            )}
+                            <button
+                                onClick={() => setTableSubTab('All')}
+                                style={{
+                                    background: '#4f46e5',
+                                    color: '#ffffff',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    padding: '5px 12px',
+                                    fontSize: '0.78rem',
+                                    fontWeight: 700,
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                View All ({allCount})
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 {/* Table Container */}
                 <div
                     className="table-container custom-scrollbar"
                     style={{
-                        height: tableCompactWindow ? '360px' : 'auto',
-                        maxHeight: tableCompactWindow ? '360px' : 'calc(100vh - 240px)',
+                        height: tableCompactWindow ? '330px' : 'auto',
+                        maxHeight: tableCompactWindow ? '330px' : 'calc(100vh - 240px)',
                         minHeight: tableCompactWindow ? 'auto' : '560px',
                         overflowY: 'auto',
                         border: '1px solid #e2e8f0',
@@ -1509,56 +1595,94 @@ export default function JobsDashboard() {
                         position: 'relative'
                     }}
                 >
-                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
                         <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#f8fafc', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                             <tr>
-                                <th style={{ width: '130px', padding: '12px 14px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.8rem', textTransform: 'uppercase' }}>CEL Job No</th>
-                                <th style={{ width: '25%', minWidth: '220px', padding: '12px 14px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.8rem', textTransform: 'uppercase' }}>Customer</th>
-                                <th style={{ width: '180px', padding: '12px 14px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.8rem', textTransform: 'uppercase' }}>Purchase Order Info</th>
-                                <th style={{ width: '30%', minWidth: '250px', padding: '12px 14px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.8rem', textTransform: 'uppercase' }}>Description</th>
-                                <th style={{ width: '120px', textAlign: 'right', padding: '12px 14px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.8rem', textTransform: 'uppercase' }}>Value (SGD)</th>
-                                <th style={{ width: '110px', padding: '12px 14px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.8rem', textTransform: 'uppercase' }}>Attachment</th>
-                                <th style={{ width: '80px', textAlign: 'center', padding: '12px 14px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.8rem', textTransform: 'uppercase' }}>Folder</th>
-                                <th style={{ width: '280px', textAlign: 'right', padding: '12px 14px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.8rem', textTransform: 'uppercase' }}>Actions</th>
+                                <th style={{ width: '120px', padding: '8px 10px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>CEL Job No</th>
+                                <th style={{ width: '25%', minWidth: '200px', padding: '8px 10px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Customer</th>
+                                <th style={{ width: '170px', padding: '8px 10px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Purchase Order Info</th>
+                                <th style={{ width: '28%', minWidth: '220px', padding: '8px 10px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Description</th>
+                                <th style={{ width: '110px', textAlign: 'right', padding: '8px 10px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Value (SGD)</th>
+                                <th style={{ width: '100px', padding: '8px 10px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Attachment</th>
+                                <th style={{ width: '70px', textAlign: 'center', padding: '8px 10px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Folder</th>
+                                <th style={{ width: '260px', textAlign: 'right', padding: '8px 10px', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             {loading ? (
-                                <tr><td colSpan="8" style={{ textAlign: 'center', padding: '32px', color: 'var(--text-secondary)' }}>Loading job documents...</td></tr>
+                                <tr><td colSpan="8" style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>Loading job documents...</td></tr>
                             ) : sortedTableDocs.length === 0 ? (
                                 <tr>
                                     <td colSpan="8">
-                                        <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-secondary)' }}>
-                                            <FileText size={48} style={{ margin: '0 auto 16px', opacity: 0.5 }} />
-                                            <p>No documents found matching your criteria.</p>
+                                        <div style={{ textAlign: 'center', padding: '36px 0', color: 'var(--text-secondary)' }}>
+                                            <FileText size={36} style={{ margin: '0 auto 12px', opacity: 0.5 }} />
+                                            <p style={{ margin: '0 0 8px 0', fontSize: '0.88rem', fontWeight: 600 }}>
+                                                No documents found in <strong>{tableSubTab} Jobs</strong> matching your criteria.
+                                            </p>
+                                            {searchFilteredTableDocs.length > 0 && (
+                                                <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center', gap: '8px' }}>
+                                                    {completedCount > 0 && tableSubTab !== 'Completed' && (
+                                                        <button
+                                                            onClick={() => setTableSubTab('Completed')}
+                                                            style={{ background: '#10b981', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '6px', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}
+                                                        >
+                                                            Switch to Completed Jobs ({completedCount})
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => setTableSubTab('All')}
+                                                        style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '6px', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}
+                                                    >
+                                                        Show All Jobs ({allCount})
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                     </td>
                                 </tr>
                             ) : (
                                 sortedTableDocs.map((doc) => (
-                                    <tr key={doc.id || doc.assigned_job_no} className="table-row" style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                        <td style={{ color: '#1e3a8a', padding: '12px 14px', fontWeight: 700 }}>{doc.assigned_job_no || 'TBD'}</td>
-                                        <td style={{ padding: '12px 14px' }}>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                                <div style={{ fontWeight: 600, color: '#1e3a8a', fontSize: '0.9rem' }}>{doc.delivery_verification?.po_description || doc.partners?.name || 'Walk-in'}</div>
-                                                <div style={{ fontSize: '0.8rem', color: 'var(--accent)', fontWeight: 600 }}>
+                                    <tr key={doc.id || doc.assigned_job_no} className="table-row" style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s ease' }}>
+                                        <td style={{ padding: '6px 10px' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                                <span style={{ color: '#1e3a8a', fontWeight: 800, fontSize: '0.82rem' }}>
+                                                    {doc.assigned_job_no || 'TBD'}
+                                                </span>
+                                                <span style={{
+                                                    fontSize: '0.65rem',
+                                                    fontWeight: 700,
+                                                    padding: '1px 6px',
+                                                    borderRadius: '10px',
+                                                    width: 'fit-content',
+                                                    background: doc.subTabState === 'Ongoing' ? '#eff6ff' : doc.subTabState === 'Completed' ? '#ecfdf5' : '#f1f5f9',
+                                                    color: doc.subTabState === 'Ongoing' ? '#1d4ed8' : doc.subTabState === 'Completed' ? '#047857' : '#475569',
+                                                    border: `1px solid ${doc.subTabState === 'Ongoing' ? '#bfdbfe' : doc.subTabState === 'Completed' ? '#a7f3d0' : '#cbd5e1'}`
+                                                }}>
+                                                    {doc.subTabState || 'Ongoing'}
+                                                </span>
+                                            </div>
+                                        </td>
+                                        <td style={{ padding: '6px 10px' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                                                <div style={{ fontWeight: 600, color: '#1e3a8a', fontSize: '0.82rem', lineHeight: '1.25' }}>{doc.delivery_verification?.po_description || doc.partners?.name || 'Walk-in'}</div>
+                                                <div style={{ fontSize: '0.74rem', color: 'var(--accent)', fontWeight: 600, lineHeight: '1.2' }}>
                                                     {doc.contacts?.name || 'N/A'}
                                                 </div>
-                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px', opacity: 0.8 }}>
+                                                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', opacity: 0.85, lineHeight: '1.2', marginTop: '1px' }}>
                                                     {doc.subject || '-'}
                                                 </div>
-                                                {doc.customer_ref && <div style={{ opacity: 0.6, fontSize: '0.7rem' }}>Ref: {doc.customer_ref}</div>}
+                                                {doc.customer_ref && <div style={{ opacity: 0.6, fontSize: '0.68rem', lineHeight: '1.1' }}>Ref: {doc.customer_ref}</div>}
                                                 {(() => {
                                                     const imgSrc = extractFirstImageSrc(doc.notes);
                                                     if (!imgSrc) return null;
                                                     return (
-                                                        <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <div style={{ marginTop: '3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                             <img 
                                                                 src={imgSrc} 
                                                                 alt="Proof thumbnail" 
                                                                 style={{ 
-                                                                    width: '38px', 
-                                                                    height: '38px', 
+                                                                    width: '26px', 
+                                                                    height: '26px', 
                                                                     objectFit: 'cover', 
                                                                     borderRadius: '4px', 
                                                                     border: '1px solid var(--border-color)', 
@@ -1573,19 +1697,19 @@ export default function JobsDashboard() {
                                                                 }}
                                                                 title="Click to view full payment proof"
                                                             />
-                                                            <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
-                                                                Paid Proof Attached
+                                                            <span style={{ fontSize: '0.68rem', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                                <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#10b981' }} />
+                                                                Paid Proof
                                                             </span>
                                                         </div>
                                                     );
                                                 })()}
                                             </div>
                                         </td>
-                                        <td style={{ padding: '12px 14px' }}>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                    <span style={{ fontWeight: 700, color: '#4f46e5', fontSize: '0.85rem' }}>{doc.customer_po_no || 'N/A'}</span>
+                                        <td style={{ padding: '6px 10px' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                    <span style={{ fontWeight: 700, color: '#4f46e5', fontSize: '0.8rem', lineHeight: '1.2' }}>{doc.customer_po_no || 'N/A'}</span>
                                                     {doc.customer_po_attachment_url && (
                                                         <a 
                                                             href={doc.customer_po_attachment_url} 
@@ -1594,50 +1718,60 @@ export default function JobsDashboard() {
                                                             style={{ color: '#6366f1' }}
                                                             title="View PO File"
                                                         >
-                                                            <FileText size={12} />
+                                                            <FileText size={11} />
                                                         </a>
                                                     )}
                                                 </div>
-                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontWeight: 500, lineHeight: '1.2' }}>
                                                     {doc.customer_po_date ? formatDate(doc.customer_po_date) : 'No Date'}
                                                 </div>
-                                                <div style={{ fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic' }}>
+                                                <div style={{ fontSize: '0.7rem', color: '#64748b', fontStyle: 'italic', lineHeight: '1.2' }}>
                                                     By: {doc.contacts?.first_name || '-'}
                                                 </div>
                                             </div>
                                         </td>
-                                        <td style={{ padding: '12px 14px' }}>
-                                            <div style={{ maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.85rem' }} title={doc.subject}>
+                                        <td style={{ padding: '6px 10px' }}>
+                                            <div style={{ maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.78rem', lineHeight: '1.3' }} title={doc.subject}>
                                                 {doc.subject || '-'}
                                             </div>
                                         </td>
-                                        <td className="font-bold" style={{ textAlign: 'right', padding: '12px 14px', fontWeight: 700 }}>
+                                        <td className="font-bold" style={{ textAlign: 'right', padding: '6px 10px', fontWeight: 700, fontSize: '0.82rem' }}>
                                             SGD {(doc.total_amount || doc.delivery_verification?.po_value || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                         </td>
-                                        <td style={{ padding: '12px 14px' }}>
+                                        <td style={{ padding: '6px 10px' }}>
                                             {doc.customer_po_attachment_url ? (
-                                                <a href={doc.customer_po_attachment_url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', fontWeight: 600 }}>
-                                                    <FileText size={12} /> View PO
+                                                <a href={doc.customer_po_attachment_url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '3px', textDecoration: 'none', fontWeight: 600 }}>
+                                                    <FileText size={11} /> View PO
                                                 </a>
                                             ) : (
-                                                <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>No Upload</span>
+                                                <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No Upload</span>
                                             )}
                                         </td>
-                                        <td style={{ textAlign: 'center', padding: '12px 14px' }}>
+                                        <td style={{ textAlign: 'center', padding: '6px 10px' }}>
                                             <button
                                                 onClick={() => handleDocDriveFolder(doc)}
-                                                style={{ background: 'none', border: 'none', color: (doc.drive_folder_id || doc.gdrive_folder_id) ? '#f59e0b' : '#6366f1', cursor: 'pointer', opacity: (doc.drive_folder_id || doc.gdrive_folder_id) ? 1 : 0.6 }}
-                                                title={(doc.drive_folder_id || doc.gdrive_folder_id) ? "Open Project Folder" : "Provision Project Folder"}
+                                                style={{ 
+                                                    background: 'none', 
+                                                    border: 'none', 
+                                                    color: (doc.drive_folder_id || doc.gdrive_folder_id) ? '#f59e0b' : '#6366f1', 
+                                                    cursor: 'pointer', 
+                                                    opacity: (doc.drive_folder_id || doc.gdrive_folder_id) ? 1 : 0.8, 
+                                                    padding: '4px 6px',
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '3px'
+                                                }}
+                                                title={(doc.drive_folder_id || doc.gdrive_folder_id) ? "Open Google Drive Folder" : "Connect/Open Google Drive"}
                                             >
-                                                <Folder size={20} fill={(doc.drive_folder_id || doc.gdrive_folder_id) ? "#f59e0b" : "currentColor"} fillOpacity={0.2} />
+                                                <Folder size={17} fill={(doc.drive_folder_id || doc.gdrive_folder_id) ? "#f59e0b" : "currentColor"} fillOpacity={0.2} />
                                             </button>
                                         </td>
-                                        <td style={{ textAlign: 'right', padding: '12px 14px' }}>
-                                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                        <td style={{ textAlign: 'right', padding: '6px 10px' }}>
+                                            <div style={{ display: 'flex', gap: '5px', justifyContent: 'flex-end', alignItems: 'center' }}>
                                                 <button
                                                     type="button"
                                                     className="btn btn-sm btn-secondary"
-                                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', fontSize: '0.78rem', borderRadius: '6px' }}
+                                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', fontSize: '0.74rem', borderRadius: '5px' }}
                                                     onClick={() => {
                                                         if (doc.document_type === 'Enquiry') {
                                                             navigate(`/workflows/enquiry/${doc.id}`);
@@ -1647,12 +1781,12 @@ export default function JobsDashboard() {
                                                     }}
                                                     title="Open Job Suite"
                                                 >
-                                                    <Eye size={14} /> Open
+                                                    <Eye size={12} /> Open
                                                 </button>
                                                 <button
                                                     type="button"
                                                     className="btn btn-sm btn-secondary"
-                                                    style={{ color: '#6366f1', padding: '6px', borderRadius: '6px' }}
+                                                    style={{ color: '#6366f1', padding: '4px', borderRadius: '5px' }}
                                                     onClick={(e) => {
                                                         e.preventDefault();
                                                         e.stopPropagation();
@@ -1660,30 +1794,30 @@ export default function JobsDashboard() {
                                                     }}
                                                     title="Duplicate Job Document"
                                                 >
-                                                    <Copy size={14} />
+                                                    <Copy size={12} />
                                                 </button>
                                                 <button
                                                     type="button"
                                                     className="btn btn-sm btn-secondary"
-                                                    style={{ color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', fontSize: '0.78rem', borderRadius: '6px' }}
+                                                    style={{ color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', fontSize: '0.74rem', borderRadius: '5px' }}
                                                     onClick={() => setEditingJob(doc)}
                                                     title="Edit Job Details"
                                                 >
-                                                    <Plus size={14} /> Edit
+                                                    <Plus size={12} /> Edit
                                                 </button>
                                                 <button
                                                     type="button"
                                                     className="btn btn-sm btn-secondary"
-                                                    style={{ padding: '6px', borderRadius: '6px' }}
+                                                    style={{ padding: '4px', borderRadius: '5px' }}
                                                     onClick={() => handlePrintPreview(doc.id)}
                                                     title="Print Preview"
                                                 >
-                                                    <Printer size={14} />
+                                                    <Printer size={12} />
                                                 </button>
                                                 <button
                                                     type="button"
                                                     className="btn btn-sm btn-secondary"
-                                                    style={{ color: '#ef4444', borderColor: '#fecaca', background: '#fef2f2', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', fontSize: '0.78rem', borderRadius: '6px' }}
+                                                    style={{ color: '#ef4444', borderColor: '#fecaca', background: '#fef2f2', display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', fontSize: '0.74rem', borderRadius: '5px' }}
                                                     onClick={(e) => {
                                                         e.preventDefault();
                                                         e.stopPropagation();
@@ -1691,27 +1825,17 @@ export default function JobsDashboard() {
                                                     }}
                                                     title="Revert to Quotation (Cancel Job)"
                                                 >
-                                                    <ArrowRightLeft size={14} /> Revert
+                                                    <ArrowRightLeft size={12} /> Revert
                                                 </button>
                                                 <button
                                                     type="button"
                                                     className="btn btn-sm btn-secondary"
-                                                    style={{ color: 'var(--danger)', padding: '6px', borderRadius: '6px' }}
+                                                    style={{ color: 'var(--danger)', padding: '4px', borderRadius: '5px' }}
                                                     onClick={() => handleDeleteJobDoc(doc)}
                                                     title="Delete Job Suite"
                                                 >
-                                                    <Trash2 size={14} />
+                                                    <Trash2 size={12} />
                                                 </button>
-                                                <label style={{ cursor: 'pointer', margin: 0 }} title="Upload Signed Copy to Job Folder">
-                                                    <div className="btn btn-sm btn-secondary" style={{ color: '#059669', padding: '6px', borderRadius: '6px' }}>
-                                                        <Upload size={14} />
-                                                    </div>
-                                                    <input 
-                                                        type="file" 
-                                                        hidden 
-                                                        onChange={(e) => handleUploadSignedProof(doc, e.target.files[0])} 
-                                                    />
-                                                </label>
                                             </div>
                                         </td>
                                     </tr>
@@ -1719,12 +1843,12 @@ export default function JobsDashboard() {
                             )}
                         </tbody>
                         {sortedTableDocs.length > 0 && (
-                            <tfoot style={{ background: '#f8fafc', fontWeight: 'bold', borderTop: '2px solid var(--border-color)' }}>
+                            <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 9, background: '#f8fafc', fontWeight: 'bold', borderTop: '2px solid var(--border-color)', boxShadow: '0 -1px 3px rgba(0,0,0,0.05)' }}>
                                 <tr>
-                                    <td colSpan={4} style={{ textAlign: 'right', padding: '12px 14px', color: 'var(--text-secondary)' }}>
+                                    <td colSpan={4} style={{ textAlign: 'right', padding: '6px 10px', color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
                                         Total for {sortedTableDocs.length} {sortedTableDocs.length === 1 ? 'Record' : 'Records'}:
                                     </td>
-                                    <td style={{ color: 'var(--text-primary)', fontSize: '1.05em', textAlign: 'right', padding: '12px 14px' }}>
+                                    <td style={{ color: 'var(--text-primary)', fontSize: '0.88rem', fontWeight: 800, textAlign: 'right', padding: '6px 10px' }}>
                                         SGD {sortedTableDocs.reduce((sum, doc) => sum + (parseFloat(doc.delivery_verification?.po_value || doc.total_amount) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                     </td>
                                     <td colSpan={3}></td>
@@ -1736,7 +1860,7 @@ export default function JobsDashboard() {
 
                 {/* Footer status bar for small window */}
                 <div style={{
-                    padding: '10px 18px',
+                    padding: '8px 16px',
                     background: '#f8fafc',
                     border: '1px solid #e2e8f0',
                     borderTop: 'none',
@@ -1751,10 +1875,10 @@ export default function JobsDashboard() {
                     gap: '8px'
                 }}>
                     <span>
-                        Showing {tableCompactWindow ? `top 5-6 rows per window` : `all ${sortedTableDocs.length} rows`} for tile: <strong style={{ color: '#4f46e5' }}>{tableSubTab}</strong> ({sortedTableDocs.length} matching jobs/docs)
+                        Showing {tableCompactWindow ? `top 6 rows (scroll for more)` : `all ${sortedTableDocs.length} rows`} for tile: <strong style={{ color: '#4f46e5' }}>{tableSubTab}</strong> ({sortedTableDocs.length} matching jobs/docs)
                     </span>
                     <button
-                        onClick={() => navigate('/workflows?type=Job')}
+                        onClick={() => setTableCompactWindow(!tableCompactWindow)}
                         style={{
                             background: 'none',
                             border: 'none',
@@ -1767,7 +1891,7 @@ export default function JobsDashboard() {
                             fontSize: '0.78rem'
                         }}
                     >
-                        Expand to Full List View ↓
+                        {tableCompactWindow ? 'Expand to Full List View ↓' : 'Collapse to 6 Rows (Compact Scroll) ↑'}
                     </button>
                 </div>
             </div>
