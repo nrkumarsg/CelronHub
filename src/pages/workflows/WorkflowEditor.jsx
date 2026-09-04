@@ -4286,6 +4286,178 @@ export default function WorkflowEditor() {
             )}
 
             <div className="editor-content">
+                {/* 1. Project Costing & Profit Summary */}
+                <div id="section-costing" style={{ marginBottom: '24px' }}>
+                    <div className="glass-panel project-costing">
+                        <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <Calculator size={20} className="text-accent" />
+                                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#1e293b' }}>Project Costing & Profit Summary</h3>
+                            </div>
+                        </div>
+
+                        {/* Summary Cards */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px', marginBottom: '16px' }}>
+                            {/* Card 1: Total Revenue */}
+                            <div style={{ 
+                                background: 'linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%)', 
+                                padding: '28px 24px', 
+                                borderRadius: '24px', 
+                                border: '1.5px solid #dbeafe', 
+                                boxShadow: '0 10px 25px rgba(59, 130, 246, 0.05)',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                transition: 'all 0.3s ease'
+                            }}>
+                                <div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Revenue</div>
+                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#1e3a8a' }}>
+                                        {formData.currency} {formData.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </div>
+                                </div>
+                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
+                                    <TrendingUp size={24} />
+                                </div>
+                            </div>
+
+                            {/* Card 2: Total Expenses */}
+                            <div style={{ 
+                                background: 'linear-gradient(135deg, #ffffff 0%, #fff1f2 100%)', 
+                                padding: '28px 24px', 
+                                borderRadius: '24px', 
+                                border: '1.5px solid #fecdd3', 
+                                boxShadow: '0 10px 25px rgba(244, 63, 94, 0.05)',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                transition: 'all 0.3s ease'
+                            }}>
+                                <div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Expenses</div>
+                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#9f1239' }}>
+                                        {formData.currency} {expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </div>
+                                </div>
+                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e' }}>
+                                    <TrendingDown size={24} />
+                                </div>
+                            </div>
+
+                            {(() => {
+                                const totalRevenue = parseFloat(formData.total_amount) || 0;
+                                const totalExpenses = expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0);
+                                const profit = totalRevenue - totalExpenses;
+                                const margin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
+                                return (
+                                    <>
+                                        {/* Card 3: Gross Profit */}
+                                        <div style={{ 
+                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdf4' : '#fff1f2'} 100%)`, 
+                                            padding: '28px 24px', 
+                                            borderRadius: '24px', 
+                                            border: `1.5px solid ${profit >= 0 ? '#bbf7d0' : '#fecdd3'}`, 
+                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(34, 197, 94, 0.05)' : 'rgba(244, 63, 94, 0.05)'}`,
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            transition: 'all 0.3s ease'
+                                        }}>
+                                            <div>
+                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#10b981' : '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Gross Profit</div>
+                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#14532d' : '#9f1239' }}>
+                                                    {formData.currency} {profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </div>
+                                            </div>
+                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdf4' : '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#10b981' : '#f43f5e' }}>
+                                                <Calculator size={24} />
+                                            </div>
+                                        </div>
+
+                                        {/* Card 4: Profit Margin */}
+                                        <div style={{ 
+                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdfa' : '#fff7ed'} 100%)`, 
+                                            padding: '28px 24px', 
+                                            borderRadius: '24px', 
+                                            border: `1.5px solid ${profit >= 0 ? '#ccfbf1' : '#ffedd5'}`, 
+                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(20, 184, 166, 0.05)' : 'rgba(249, 115, 22, 0.05)'}`,
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            transition: 'all 0.3s ease'
+                                        }}>
+                                            <div>
+                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#14b8a6' : '#f97316', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Profit Margin</div>
+                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#0f766e' : '#9a3412' }}>
+                                                    {margin.toFixed(1)}%
+                                                </div>
+                                            </div>
+                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdfa' : '#fff7ed', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#14b8a6' : '#f97316' }}>
+                                                <Percent size={24} />
+                                            </div>
+                                        </div>
+                                    </>
+                                );
+                            })()}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Smart Document Upload Component (Embedded) */}
+                <div id="section-gallery" style={{ marginBottom: '24px' }}>
+                    <SmartUploadPanel 
+                        isOpen={true}
+                        embedded={true}
+                        documentType={formData.document_type || "Job Documentation"}
+                        accept="*/*"
+                        activeFolderId={formData.drive_folder_id || formData.gdrive_folder_id || '1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w'}
+                        activeFolderName={`${formData.assigned_job_no || formData.document_no || 'Job'} > Photos & Gallery`}
+                        runningEnquiryNo={formData.assigned_job_no || formData.document_no || null}
+                        onSelect={async (file, metadata) => {
+                            if (!file) return;
+                            const loadToast = toast.loading(`Uploading ${file.name || 'document'} to Google Drive...`);
+                            try {
+                                let targetId = metadata?.targetFolder?.id || metadata?.targetFolder?.folderId;
+                                let targetName = metadata?.targetFolder?.name || metadata?.targetFolder?.label || 'Photos & Gallery';
+                                const token = getStoredToken();
+                                if (!token) {
+                                    toast.dismiss(loadToast);
+                                    toast.error('Google Drive is not authenticated. Please connect Google Drive first.');
+                                    return;
+                                }
+
+                                if (!targetId) {
+                                    const rootId = await ensureJobFolder();
+                                    if (rootId) {
+                                        targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
+                                    } else {
+                                        targetId = formData.drive_folder_id || formData.gdrive_folder_id || '1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w';
+                                    }
+                                }
+
+                                if (file.isGoogleDrive) {
+                                    await copyFile(token, file.id, targetId);
+                                } else {
+                                    await uploadFileToDrive(token, file, { 
+                                        folderId: targetId, 
+                                        title: file.name 
+                                    });
+                                }
+
+                                toast.dismiss(loadToast);
+                                toast.success(`Saved "${file.name}" to Google Drive [${targetName}]!`);
+                                if (typeof fetchExplorerFiles === 'function') {
+                                    fetchExplorerFiles();
+                                }
+                            } catch (err) {
+                                toast.dismiss(loadToast);
+                                console.error('Drive upload failed:', err);
+                                toast.error('Upload failed: ' + (err.message || 'Error uploading file'));
+                            }
+                        }}
+                    />
+                </div>
+
                 {/* Google Drive Integration card */}
                 <div className="glass-panel animate-fade-in" style={{ padding: '20px', borderRadius: '16px', border: '1px solid var(--border-color)', marginBottom: '24px', background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.04) 0%, rgba(16, 185, 129, 0.04) 100%)', backdropFilter: 'blur(8px)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
@@ -5896,178 +6068,9 @@ export default function WorkflowEditor() {
                     </div>
                         </div>
 
-                        {/* 3. Project Costing */}
-                        <div id="section-costing" style={{ marginTop: '12px' }}>
-                            <div className="glass-panel project-costing">
-                        <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <Calculator size={20} className="text-accent" />
-                                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#1e293b' }}>Project Costing & Profit Summary</h3>
-                            </div>
-                        </div>
-
-                        {/* Summary Cards */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px', marginBottom: '16px' }}>
-                            {/* Card 1: Total Revenue */}
-                            <div style={{ 
-                                background: 'linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%)', 
-                                padding: '28px 24px', 
-                                borderRadius: '24px', 
-                                border: '1.5px solid #dbeafe', 
-                                boxShadow: '0 10px 25px rgba(59, 130, 246, 0.05)',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                transition: 'all 0.3s ease'
-                            }}>
-                                <div>
-                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Revenue</div>
-                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#1e3a8a' }}>
-                                        {formData.currency} {formData.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                    </div>
-                                </div>
-                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
-                                    <TrendingUp size={24} />
-                                </div>
-                            </div>
-
-                            {/* Card 2: Total Expenses */}
-                            <div style={{ 
-                                background: 'linear-gradient(135deg, #ffffff 0%, #fff1f2 100%)', 
-                                padding: '28px 24px', 
-                                borderRadius: '24px', 
-                                border: '1.5px solid #fecdd3', 
-                                boxShadow: '0 10px 25px rgba(244, 63, 94, 0.05)',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                transition: 'all 0.3s ease'
-                            }}>
-                                <div>
-                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Expenses</div>
-                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#9f1239' }}>
-                                        {formData.currency} {expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                    </div>
-                                </div>
-                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e' }}>
-                                    <TrendingDown size={24} />
-                                </div>
-                            </div>
-
-                            {(() => {
-                                const totalRevenue = parseFloat(formData.total_amount) || 0;
-                                const totalExpenses = expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0);
-                                const profit = totalRevenue - totalExpenses;
-                                const margin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
-                                return (
-                                    <>
-                                        {/* Card 3: Gross Profit */}
-                                        <div style={{ 
-                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdf4' : '#fff1f2'} 100%)`, 
-                                            padding: '28px 24px', 
-                                            borderRadius: '24px', 
-                                            border: `1.5px solid ${profit >= 0 ? '#bbf7d0' : '#fecdd3'}`, 
-                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(34, 197, 94, 0.05)' : 'rgba(244, 63, 94, 0.05)'}`,
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            transition: 'all 0.3s ease'
-                                        }}>
-                                            <div>
-                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#10b981' : '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Gross Profit</div>
-                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#14532d' : '#9f1239' }}>
-                                                    {formData.currency} {profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                </div>
-                                            </div>
-                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdf4' : '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#10b981' : '#f43f5e' }}>
-                                                <Calculator size={24} />
-                                            </div>
-                                        </div>
-
-                                        {/* Card 4: Profit Margin */}
-                                        <div style={{ 
-                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdfa' : '#fff7ed'} 100%)`, 
-                                            padding: '28px 24px', 
-                                            borderRadius: '24px', 
-                                            border: `1.5px solid ${profit >= 0 ? '#ccfbf1' : '#ffedd5'}`, 
-                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(20, 184, 166, 0.05)' : 'rgba(249, 115, 22, 0.05)'}`,
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            transition: 'all 0.3s ease'
-                                        }}>
-                                            <div>
-                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#14b8a6' : '#f97316', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Profit Margin</div>
-                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#0f766e' : '#9a3412' }}>
-                                                    {margin.toFixed(1)}%
-                                                </div>
-                                            </div>
-                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdfa' : '#fff7ed', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#14b8a6' : '#f97316' }}>
-                                                <Percent size={24} />
-                                            </div>
-                                        </div>
-                                    </>
-                                );
-                            })()}
-                        </div>
-                    </div>
-                        </div>
-
-                        {/* 4. Smart Document Upload Component (Embedded) */}
-                        <div id="section-gallery" style={{ marginTop: '16px' }}>
-                            <SmartUploadPanel 
-                                isOpen={true}
-                                embedded={true}
-                                documentType="Job Documentation"
-                                accept="*/*"
-                                activeFolderId={formData.drive_folder_id || formData.gdrive_folder_id || '1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w'}
-                                activeFolderName={`${formData.assigned_job_no || formData.document_no || 'Job'} > Photos & Gallery`}
-                                runningEnquiryNo={formData.assigned_job_no || formData.document_no || null}
-                                onSelect={async (file, metadata) => {
-                                    if (!file) return;
-                                    const loadToast = toast.loading(`Uploading ${file.name || 'document'} to Google Drive...`);
-                                    try {
-                                        let targetId = metadata?.targetFolder?.id || metadata?.targetFolder?.folderId;
-                                        let targetName = metadata?.targetFolder?.name || metadata?.targetFolder?.label || 'Photos & Gallery';
-                                        const token = getStoredToken();
-                                        if (!token) {
-                                            toast.dismiss(loadToast);
-                                            toast.error('Google Drive is not authenticated. Please connect Google Drive first.');
-                                            return;
-                                        }
 
 
-                                        if (!targetId) {
-                                            const rootId = await ensureJobFolder();
-                                            if (rootId) {
-                                                targetId = await getOrCreateFolder(token, 'Photos & Gallery', rootId);
-                                            } else {
-                                                targetId = formData.drive_folder_id || formData.gdrive_folder_id || '1Bui_mkB4d3Ae9Ll-3UHlWXYAauJz-d3w';
-                                            }
-                                        }
 
-                                        if (file.isGoogleDrive) {
-                                            await copyFile(token, file.id, targetId);
-                                        } else {
-                                            await uploadFileToDrive(token, file, { 
-                                                folderId: targetId, 
-                                                title: file.name 
-                                            });
-                                        }
-
-                                        toast.dismiss(loadToast);
-                                        toast.success(`Saved "${file.name}" to Google Drive [${targetName}]!`);
-                                        if (typeof fetchExplorerFiles === 'function') {
-                                            fetchExplorerFiles();
-                                        }
-                                    } catch (err) {
-                                        toast.dismiss(loadToast);
-                                        console.error('Drive upload failed:', err);
-                                        toast.error('Upload failed: ' + (err.message || 'Error uploading file'));
-                                    }
-                                }}
-                            />
-                        </div>
 
                         {/* 5. Explorer */}
                         <div id="section-explorer" style={{ marginTop: '12px' }}>

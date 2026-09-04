@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
     ArrowLeft, LayoutDashboard, ShoppingCart, FileText, FolderOpen, 
     DollarSign, TrendingUp, Clock, CheckCircle2, AlertCircle, Plus, 
     Edit3, Trash2, ExternalLink, RefreshCcw, Loader2, Sparkles, Building2, 
-    Ship, MapPin, Eye, Printer, Send, Package, Receipt 
+    Ship, MapPin, Eye, Printer, Send, Package, Receipt, ChevronDown, ChevronRight 
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getJobEagleViewData, saveWorkflowDocument, deleteWorkflowDocument } from '../../lib/workflowV2Service';
@@ -34,6 +34,8 @@ export default function JobEagleView() {
     const [jobSuite, setJobSuite] = useState(null);
     const [activeTab, setActiveTab] = useState('drive'); // 'drive' | 'supplier' | 'enquiry' | 'quotation' | 'customer_po'
     const [selectedStageKey, setSelectedStageKey] = useState('ENQ');
+    const [showEditDropdown, setShowEditDropdown] = useState(false);
+    const editDropdownRef = useRef(null);
     
     // Modal states
     const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
@@ -44,6 +46,21 @@ export default function JobEagleView() {
             loadEagleViewData();
         }
     }, [id]);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (editDropdownRef.current && !editDropdownRef.current.contains(event.target)) {
+                setShowEditDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const getDocSlug = (type) => {
+        if (!type) return 'job';
+        return type.toLowerCase().replace(/\s+/g, '-');
+    };
 
     const loadEagleViewData = async () => {
         setLoading(true);
@@ -154,14 +171,118 @@ export default function JobEagleView() {
         PAID: isJobPaid ? 1 : 0,
     };
 
+    // Compile all individual documents in this Job Suite for editing
+    const allSuiteItems = [];
+    if (masterJob) {
+        allSuiteItems.push({
+            id: masterJob.id,
+            type: masterJob.document_type || 'Job Suite',
+            no: masterJob.document_no || jobNo,
+            subtitle: 'Master Record',
+            badge: masterJob.status || 'Active',
+            badgeBg: 'rgba(16, 185, 129, 0.15)',
+            badgeColor: '#059669',
+            icon: <FileText size={15} />,
+            iconBg: '#e0e7ff',
+            iconColor: '#4f46e5',
+            url: `/workflows/editor/${getDocSlug(masterJob.document_type || 'job')}/${masterJob.id}`
+        });
+    }
+    if (enquiryDoc) {
+        allSuiteItems.push({
+            id: enquiryDoc.id,
+            type: 'Customer Enquiry',
+            no: enquiryDoc.document_no,
+            subtitle: enquiryDoc.subject || 'Enquiry',
+            badge: enquiryDoc.status || 'Open',
+            badgeBg: 'rgba(59, 130, 246, 0.15)',
+            badgeColor: '#2563eb',
+            icon: <FileText size={15} />,
+            iconBg: '#eff6ff',
+            iconColor: '#3b82f6',
+            url: `/workflows/editor/enquiry/${enquiryDoc.id}`
+        });
+    }
+    if (quotationDocs && quotationDocs.length > 0) {
+        quotationDocs.forEach(q => {
+            allSuiteItems.push({
+                id: q.id,
+                type: 'Customer Quote',
+                no: q.document_no,
+                subtitle: `${q.currency || 'SGD'} ${parseFloat(q.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                badge: q.status || 'Quoted',
+                badgeBg: 'rgba(245, 158, 11, 0.15)',
+                badgeColor: '#d97706',
+                icon: <Receipt size={15} />,
+                iconBg: '#fffbeb',
+                iconColor: '#f59e0b',
+                url: `/workflows/editor/quotation/${q.id}`
+            });
+        });
+    }
+    if (doDocs && doDocs.length > 0) {
+        doDocs.forEach(d => {
+            allSuiteItems.push({
+                id: d.id,
+                type: 'Delivery Order',
+                no: d.document_no,
+                subtitle: 'DO Dispatch',
+                badge: d.status || 'Dispatched',
+                badgeBg: 'rgba(6, 182, 212, 0.15)',
+                badgeColor: '#0891b2',
+                icon: <Package size={15} />,
+                iconBg: '#ecfeff',
+                iconColor: '#06b6d4',
+                url: `/workflows/editor/delivery-order/${d.id}`
+            });
+        });
+    }
+    if (invoiceDocs && invoiceDocs.length > 0) {
+        invoiceDocs.forEach(inv => {
+            allSuiteItems.push({
+                id: inv.id,
+                type: 'Tax Invoice',
+                no: inv.document_no,
+                subtitle: `${inv.currency || 'SGD'} ${parseFloat(inv.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                badge: inv.status || 'Draft',
+                badgeBg: 'rgba(16, 185, 129, 0.15)',
+                badgeColor: '#059669',
+                icon: <DollarSign size={15} />,
+                iconBg: '#ecfdf5',
+                iconColor: '#10b981',
+                url: `/workflows/editor/tax-invoice/${inv.id}`
+            });
+        });
+    }
+    if (supplierPoDocs && supplierPoDocs.length > 0) {
+        supplierPoDocs.forEach(po => {
+            allSuiteItems.push({
+                id: po.id,
+                type: 'Supplier PO',
+                no: po.document_no,
+                subtitle: `${po.partners?.name || 'Supplier'} • ${po.currency || 'SGD'} ${parseFloat(po.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                badge: po.status || 'Confirmed',
+                badgeBg: 'rgba(245, 158, 11, 0.15)',
+                badgeColor: '#d97706',
+                icon: <ShoppingCart size={15} />,
+                iconBg: '#fffbeb',
+                iconColor: '#f59e0b',
+                onClick: () => {
+                    setSelectedSupplierOrder(po);
+                    setIsSupplierModalOpen(true);
+                }
+            });
+        });
+    }
+
     return (
         <div style={{ minHeight: '100vh', background: '#f8fafc', color: '#0f172a', display: 'flex', flexDirection: 'column' }}>
             {/* Top Navigation Bar */}
-            <div style={{ background: '#1e2544', color: '#ffffff', position: 'sticky', top: 0, zIndex: 100, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '14px 24px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyBetween: 'space-between', gap: '16px' }}>
+            <div style={{ background: '#1e2544', color: '#ffffff', position: 'sticky', top: 0, zIndex: 100, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '14px 24px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                     <button
                         onClick={handleBack}
-                        style={{ background: 'rgba(255,255,255,0.1)', hoverBackground: 'rgba(255,255,255,0.2)', color: '#ffffff', border: '1px solid rgba(255,255,255,0.15)', padding: '8px 16px', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease' }}
+                        style={{ background: 'rgba(255,255,255,0.1)', color: '#ffffff', border: '1px solid rgba(255,255,255,0.15)', padding: '8px 16px', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease' }}
                         title="Back to Previous View"
                     >
                         <ArrowLeft size={16} /> Back
@@ -193,12 +314,132 @@ export default function JobEagleView() {
                         <Plus size={16} /> Create Supplier Order
                     </button>
 
-                    <button
-                        onClick={() => navigate(`/workflows/editor/job/${masterJob.id}`)}
-                        style={{ background: '#4f46e5', color: '#ffffff', fontWeight: 700, border: 'none', padding: '9px 16px', borderRadius: '10px', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(79,70,229,0.3)' }}
-                    >
-                        <Edit3 size={15} /> Edit Job Suite
-                    </button>
+                    {/* Multi-Document Edit Job Suite Dropdown */}
+                    <div ref={editDropdownRef} style={{ position: 'relative' }}>
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <button
+                                onClick={() => {
+                                    const primarySlug = getDocSlug(masterJob.document_type || 'job');
+                                    navigate(`/workflows/editor/${primarySlug}/${masterJob.id}`);
+                                }}
+                                style={{ 
+                                    background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)', 
+                                    color: '#ffffff', 
+                                    fontWeight: 800, 
+                                    border: 'none', 
+                                    padding: '9px 16px', 
+                                    borderRadius: allSuiteItems.length > 1 ? '10px 0 0 10px' : '10px', 
+                                    fontSize: '0.8rem', 
+                                    cursor: 'pointer', 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: '6px', 
+                                    boxShadow: '0 4px 12px rgba(79,70,229,0.35)',
+                                    transition: 'all 0.2s ease' 
+                                }}
+                                title={`Open Main Editor (${masterJob.document_no || jobNo})`}
+                            >
+                                <Edit3 size={15} /> Edit Job Suite
+                            </button>
+
+                            {allSuiteItems.length > 1 && (
+                                <button
+                                    onClick={() => setShowEditDropdown(prev => !prev)}
+                                    style={{
+                                        background: '#3730a3',
+                                        color: '#ffffff',
+                                        border: 'none',
+                                        borderLeft: '1px solid rgba(255,255,255,0.2)',
+                                        padding: '9px 10px',
+                                        borderRadius: '0 10px 10px 0',
+                                        fontSize: '0.8rem',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        boxShadow: '0 4px 12px rgba(79,70,229,0.35)',
+                                        transition: 'all 0.2s ease'
+                                    }}
+                                    title="Choose specific document to edit"
+                                >
+                                    <ChevronDown size={15} style={{ transform: showEditDropdown ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Interactive Dropdown Menu */}
+                        {showEditDropdown && (
+                            <div style={{
+                                position: 'absolute',
+                                top: 'calc(100% + 8px)',
+                                right: 0,
+                                width: '330px',
+                                background: '#ffffff',
+                                borderRadius: '14px',
+                                boxShadow: '0 12px 36px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.1)',
+                                border: '1px solid #e2e8f0',
+                                zIndex: 1000,
+                                overflow: 'hidden'
+                            }}>
+                                <div style={{ padding: '12px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                        Suite Documents ({allSuiteItems.length})
+                                    </span>
+                                    <span style={{ fontSize: '0.7rem', color: '#6366f1', fontWeight: 700 }}>{jobNo}</span>
+                                </div>
+                                <div style={{ maxHeight: '340px', overflowY: 'auto', padding: '6px' }}>
+                                    {allSuiteItems.map((item, idx) => (
+                                        <button
+                                            key={idx}
+                                            onClick={() => {
+                                                setShowEditDropdown(false);
+                                                if (item.onClick) {
+                                                    item.onClick();
+                                                } else if (item.url) {
+                                                    navigate(item.url);
+                                                }
+                                            }}
+                                            style={{
+                                                width: '100%',
+                                                textAlign: 'left',
+                                                background: 'transparent',
+                                                border: 'none',
+                                                padding: '10px 12px',
+                                                borderRadius: '8px',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                gap: '10px',
+                                                transition: 'background 0.15s ease'
+                                            }}
+                                            onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
+                                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                        >
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                                                <div style={{ width: '28px', height: '28px', borderRadius: '7px', background: item.iconBg || '#e0e7ff', color: item.iconColor || '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                    {item.icon}
+                                                </div>
+                                                <div style={{ minWidth: 0 }}>
+                                                    <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                        {item.no}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                                        {item.type} {item.subtitle ? `• ${item.subtitle}` : ''}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                                                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: item.badgeColor || '#4f46e5', background: item.badgeBg || '#eef2ff', padding: '2px 8px', borderRadius: '6px' }}>
+                                                    {item.badge || 'Edit'}
+                                                </span>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
 
                     <button
                         onClick={loadEagleViewData}
@@ -231,7 +472,7 @@ export default function JobEagleView() {
                     </div>
 
                     {/* PO Cost Metric */}
-                    <div style={{ background: '#ffffff', padding: '20px', borderRadius: '16px', border: '1px solid #fde68a', boxShadow: '0 4px 20px rgba(245,158,11,0.08)', display: 'flex', alignItems: 'center', justifyBetween: 'space-between', position: 'relative', overflow: 'hidden' }}>
+                    <div style={{ background: '#ffffff', padding: '20px', borderRadius: '16px', border: '1px solid #fde68a', boxShadow: '0 4px 20px rgba(245,158,11,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative', overflow: 'hidden' }}>
                         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '4px', background: '#f59e0b' }} />
                         <div>
                             <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#d97706', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>Supplier PO Cost</span>
@@ -242,13 +483,13 @@ export default function JobEagleView() {
                                 {supplierPoDocs.length} Linked Supplier Order(s)
                             </span>
                         </div>
-                        <div style={{ width: '48px', height: '48px', background: '#fffbe finished', color: '#d97706', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyCenter: 'center', fontWeight: 800 }}>
+                        <div style={{ width: '48px', height: '48px', background: '#fffbeb', color: '#d97706', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>
                             <ShoppingCart size={24} />
                         </div>
                     </div>
 
                     {/* Gross Profit Metric */}
-                    <div style={{ background: '#ffffff', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', justifyBetween: 'space-between' }}>
+                    <div style={{ background: '#ffffff', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <div>
                             <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>Net Gross Profit</span>
                             <span style={{ fontSize: '1.4rem', fontWeight: 900, color: metrics.grossProfit >= 0 ? '#4f46e5' : '#ef4444', marginTop: '4px', display: 'block' }}>
@@ -258,13 +499,13 @@ export default function JobEagleView() {
                                 Profit Margin: {metrics.profitMarginPercent}%
                             </span>
                         </div>
-                        <div style={{ width: '48px', height: '48px', background: '#eef2ff', color: '#4f46e5', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyCenter: 'center', fontWeight: 800 }}>
+                        <div style={{ width: '48px', height: '48px', background: '#eef2ff', color: '#4f46e5', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>
                             <TrendingUp size={24} />
                         </div>
                     </div>
 
                     {/* Overall Status */}
-                    <div style={{ background: '#ffffff', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', justifyBetween: 'space-between' }}>
+                    <div style={{ background: '#ffffff', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <div>
                             <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>Lifecycle Status</span>
                             <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#1e293b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -275,7 +516,7 @@ export default function JobEagleView() {
                                 Created: {masterJob.created_at?.split('T')[0] || 'N/A'}
                             </span>
                         </div>
-                        <div style={{ width: '48px', height: '48px', background: '#f1f5f9', color: '#475569', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyCenter: 'center', fontWeight: 800 }}>
+                        <div style={{ width: '48px', height: '48px', background: '#f1f5f9', color: '#475569', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>
                             <Clock size={24} />
                         </div>
                     </div>
@@ -283,37 +524,91 @@ export default function JobEagleView() {
 
                 {/* Transaction Lifecycle Activity Stepper */}
                 <div style={{ background: '#0f172a', color: '#ffffff', padding: '20px', borderRadius: '16px', border: '1px solid #1e293b', boxShadow: '0 8px 32px rgba(0,0,0,0.1)' }}>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', display: 'flex', justifyBetween: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span>Transaction Lifecycle Stepper</span>
                         <span style={{ fontSize: '0.75rem', color: '#fbbf24', fontWeight: 700 }}>Job ID: {jobNo}</span>
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
                         {/* 1. Enquiry Step */}
-                        <div style={{ padding: '12px', borderRadius: '12px', border: enquiryDoc ? '1px solid rgba(16,185,129,0.5)' : '1px solid #1e293b', background: enquiryDoc ? '#1e293b' : 'rgba(15,23,42,0.6)' }}>
-                            <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', display: 'block' }}>1. Enquiry</span>
+                        <div 
+                            onClick={() => {
+                                if (enquiryDoc?.id) navigate(`/workflows/editor/enquiry/${enquiryDoc.id}`);
+                                else navigate(`/workflows/editor/enquiry/new?assigned_job_no=${encodeURIComponent(jobNo)}`);
+                            }}
+                            style={{ 
+                                padding: '12px', 
+                                borderRadius: '12px', 
+                                border: enquiryDoc ? '1px solid rgba(16,185,129,0.5)' : '1px solid #1e293b', 
+                                background: enquiryDoc ? '#1e293b' : 'rgba(15,23,42,0.6)',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease'
+                            }}
+                            title={enquiryDoc ? `Click to open Enquiry ${enquiryDoc.document_no}` : 'Click to create new Enquiry for this Job'}
+                            onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseLeave={(e) => e.currentTarget.style.transform = 'none'}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>1. Enquiry</span>
+                                <ChevronRight size={13} style={{ color: '#64748b' }} />
+                            </div>
                             <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#ffffff', display: 'block', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {enquiryDoc ? enquiryDoc.document_no : 'Not Recorded'}
                             </span>
                             <span style={{ fontSize: '0.65rem', display: 'inline-block', marginTop: '8px', padding: '2px 8px', borderRadius: '10px', fontWeight: 800, background: enquiryDoc ? 'rgba(16,185,129,0.2)' : '#1e293b', color: enquiryDoc ? '#6ee7b7' : '#64748b' }}>
-                                {enquiryDoc ? enquiryDoc.status : 'Pending'}
+                                {enquiryDoc ? enquiryDoc.status : '+ Add Enquiry'}
                             </span>
                         </div>
 
                         {/* 2. Quotation Step */}
-                        <div style={{ padding: '12px', borderRadius: '12px', border: quotationDocs.length > 0 ? '1px solid rgba(16,185,129,0.5)' : '1px solid #1e293b', background: quotationDocs.length > 0 ? '#1e293b' : 'rgba(15,23,42,0.6)' }}>
-                            <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', display: 'block' }}>2. Customer Quote</span>
+                        <div 
+                            onClick={() => {
+                                if (quotationDocs.length > 0) navigate(`/workflows/editor/quotation/${quotationDocs[0].id}`);
+                                else navigate(`/workflows/editor/quotation/new?job_id=${masterJob.id}&assigned_job_no=${encodeURIComponent(jobNo)}`);
+                            }}
+                            style={{ 
+                                padding: '12px', 
+                                borderRadius: '12px', 
+                                border: quotationDocs.length > 0 ? '1px solid rgba(16,185,129,0.5)' : '1px solid #1e293b', 
+                                background: quotationDocs.length > 0 ? '#1e293b' : 'rgba(15,23,42,0.6)',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease'
+                            }}
+                            title={quotationDocs.length > 0 ? `Click to open Quotation ${quotationDocs[0].document_no}` : 'Click to create Quotation'}
+                            onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseLeave={(e) => e.currentTarget.style.transform = 'none'}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>2. Customer Quote</span>
+                                <ChevronRight size={13} style={{ color: '#64748b' }} />
+                            </div>
                             <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#ffffff', display: 'block', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {quotationDocs.length > 0 ? `${quotationDocs.length} Quote(s)` : 'None'}
                             </span>
                             <span style={{ fontSize: '0.65rem', display: 'inline-block', marginTop: '8px', padding: '2px 8px', borderRadius: '10px', fontWeight: 800, background: quotationDocs.length > 0 ? 'rgba(16,185,129,0.2)' : '#1e293b', color: quotationDocs.length > 0 ? '#6ee7b7' : '#64748b' }}>
-                                {quotationDocs.length > 0 ? quotationDocs[0].status : 'Pending'}
+                                {quotationDocs.length > 0 ? quotationDocs[0].status : '+ Add Quote'}
                             </span>
                         </div>
 
                         {/* 3. Customer PO Step */}
-                        <div style={{ padding: '12px', borderRadius: '12px', border: customerPoDocs.length > 0 ? '1px solid rgba(16,185,129,0.5)' : '1px solid #1e293b', background: customerPoDocs.length > 0 ? '#1e293b' : 'rgba(15,23,42,0.6)' }}>
-                            <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', display: 'block' }}>3. Customer PO</span>
+                        <div 
+                            onClick={() => setActiveTab('customer_po')}
+                            style={{ 
+                                padding: '12px', 
+                                borderRadius: '12px', 
+                                border: customerPoDocs.length > 0 ? '1px solid rgba(16,185,129,0.5)' : '1px solid #1e293b', 
+                                background: customerPoDocs.length > 0 ? '#1e293b' : 'rgba(15,23,42,0.6)',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease'
+                            }}
+                            title="Click to view Customer PO Details"
+                            onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseLeave={(e) => e.currentTarget.style.transform = 'none'}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>3. Customer PO</span>
+                                <ChevronRight size={13} style={{ color: '#64748b' }} />
+                            </div>
                             <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#ffffff', display: 'block', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {customerPoDocs.length > 0 ? customerPoDocs[0].customer_ref || customerPoDocs[0].document_no : 'Ref: N/A'}
                             </span>
@@ -323,35 +618,89 @@ export default function JobEagleView() {
                         </div>
 
                         {/* 4. Supplier PO Step */}
-                        <div style={{ padding: '12px', borderRadius: '12px', border: supplierPoDocs.length > 0 ? '1px solid rgba(245,158,11,0.6)' : '1px solid #1e293b', background: supplierPoDocs.length > 0 ? 'rgba(245,158,11,0.1)' : 'rgba(15,23,42,0.6)' }}>
-                            <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#fbbf24', textTransform: 'uppercase', display: 'block' }}>4. Supplier PO</span>
+                        <div 
+                            onClick={() => setActiveTab('supplier')}
+                            style={{ 
+                                padding: '12px', 
+                                borderRadius: '12px', 
+                                border: supplierPoDocs.length > 0 ? '1px solid rgba(245,158,11,0.6)' : '1px solid #1e293b', 
+                                background: supplierPoDocs.length > 0 ? 'rgba(245,158,11,0.1)' : 'rgba(15,23,42,0.6)',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease'
+                            }}
+                            title="Click to view Supplier Orders"
+                            onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseLeave={(e) => e.currentTarget.style.transform = 'none'}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#fbbf24', textTransform: 'uppercase' }}>4. Supplier PO</span>
+                                <ChevronRight size={13} style={{ color: '#fbbf24' }} />
+                            </div>
                             <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#fef08a', display: 'block', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {supplierPoDocs.length > 0 ? `${supplierPoDocs.length} PO(s)` : 'SGD 0 Cost'}
                             </span>
                             <span style={{ fontSize: '0.65rem', display: 'inline-block', marginTop: '8px', padding: '2px 8px', borderRadius: '10px', fontWeight: 800, background: supplierPoDocs.length > 0 ? 'rgba(245,158,11,0.2)' : '#1e293b', color: supplierPoDocs.length > 0 ? '#fde68a' : '#64748b', border: supplierPoDocs.length > 0 ? '1px solid rgba(245,158,11,0.3)' : 'none' }}>
-                                {supplierPoDocs.length > 0 ? `SGD ${metrics.supplierPoTotal.toLocaleString()}` : 'None'}
+                                {supplierPoDocs.length > 0 ? `SGD ${metrics.supplierPoTotal.toLocaleString()}` : '+ Add Supplier PO'}
                             </span>
                         </div>
 
                         {/* 5. Delivery Order Step */}
-                        <div style={{ padding: '12px', borderRadius: '12px', border: doDocs.length > 0 ? '1px solid rgba(16,185,129,0.5)' : '1px solid #1e293b', background: doDocs.length > 0 ? '#1e293b' : 'rgba(15,23,42,0.6)' }}>
-                            <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', display: 'block' }}>5. Delivery Order</span>
+                        <div 
+                            onClick={() => {
+                                if (doDocs.length > 0) navigate(`/workflows/editor/delivery-order/${doDocs[0].id}`);
+                                else navigate(`/workflows/editor/delivery-order/new?job_id=${masterJob.id}&assigned_job_no=${encodeURIComponent(jobNo)}`);
+                            }}
+                            style={{ 
+                                padding: '12px', 
+                                borderRadius: '12px', 
+                                border: doDocs.length > 0 ? '1px solid rgba(16,185,129,0.5)' : '1px solid #1e293b', 
+                                background: doDocs.length > 0 ? '#1e293b' : 'rgba(15,23,42,0.6)',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease'
+                            }}
+                            title={doDocs.length > 0 ? `Click to open Delivery Order ${doDocs[0].document_no}` : 'Click to create Delivery Order'}
+                            onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseLeave={(e) => e.currentTarget.style.transform = 'none'}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>5. Delivery Order</span>
+                                <ChevronRight size={13} style={{ color: '#64748b' }} />
+                            </div>
                             <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#ffffff', display: 'block', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {doDocs.length > 0 ? `${doDocs.length} DO(s)` : 'Pending'}
                             </span>
                             <span style={{ fontSize: '0.65rem', display: 'inline-block', marginTop: '8px', padding: '2px 8px', borderRadius: '10px', fontWeight: 800, background: doDocs.length > 0 ? 'rgba(16,185,129,0.2)' : '#1e293b', color: doDocs.length > 0 ? '#6ee7b7' : '#64748b' }}>
-                                {doDocs.length > 0 ? 'Dispatched' : 'Pending'}
+                                {doDocs.length > 0 ? 'Dispatched' : '+ Add DO'}
                             </span>
                         </div>
 
                         {/* 6. Tax Invoice Step */}
-                        <div style={{ padding: '12px', borderRadius: '12px', border: invoiceDocs.length > 0 ? '1px solid rgba(16,185,129,0.5)' : '1px solid #1e293b', background: invoiceDocs.length > 0 ? '#1e293b' : 'rgba(15,23,42,0.6)' }}>
-                            <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', display: 'block' }}>6. Tax Invoice</span>
+                        <div 
+                            onClick={() => {
+                                if (invoiceDocs.length > 0) navigate(`/workflows/editor/tax-invoice/${invoiceDocs[0].id}`);
+                                else navigate(`/workflows/editor/tax-invoice/new?job_id=${masterJob.id}&assigned_job_no=${encodeURIComponent(jobNo)}`);
+                            }}
+                            style={{ 
+                                padding: '12px', 
+                                borderRadius: '12px', 
+                                border: invoiceDocs.length > 0 ? '1px solid rgba(16,185,129,0.5)' : '1px solid #1e293b', 
+                                background: invoiceDocs.length > 0 ? '#1e293b' : 'rgba(15,23,42,0.6)',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease'
+                            }}
+                            title={invoiceDocs.length > 0 ? `Click to open Tax Invoice ${invoiceDocs[0].document_no}` : 'Click to create Tax Invoice'}
+                            onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseLeave={(e) => e.currentTarget.style.transform = 'none'}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>6. Tax Invoice</span>
+                                <ChevronRight size={13} style={{ color: '#64748b' }} />
+                            </div>
                             <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#ffffff', display: 'block', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {invoiceDocs.length > 0 ? `SGD ${metrics.billedTotal.toLocaleString()}` : 'Unbilled'}
                             </span>
                             <span style={{ fontSize: '0.65rem', display: 'inline-block', marginTop: '8px', padding: '2px 8px', borderRadius: '10px', fontWeight: 800, background: invoiceDocs.length > 0 ? 'rgba(16,185,129,0.2)' : '#1e293b', color: invoiceDocs.length > 0 ? '#6ee7b7' : '#64748b' }}>
-                                {invoiceDocs.length > 0 ? invoiceDocs[0].status : 'Draft'}
+                                {invoiceDocs.length > 0 ? invoiceDocs[0].status : '+ Add Invoice'}
                             </span>
                         </div>
                     </div>
