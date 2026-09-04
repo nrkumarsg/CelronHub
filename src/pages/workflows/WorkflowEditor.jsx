@@ -5720,6 +5720,24 @@ export default function WorkflowEditor() {
                                                 </tr>
                                             </thead>
                                             <tbody>
+                                                {linkedEnquiry && (
+                                                    <tr style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
+                                                        <td style={{ padding: '12px 16px' }}><span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700, background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', whiteSpace: 'nowrap' }}><span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#b45309', flexShrink: 0 }} />Customer Enquiry</span></td>
+                                                        <td style={{ padding: '12px 16px', fontWeight: 800, color: '#b45309', fontSize: '0.9rem' }}>#0</td>
+                                                        <td style={{ padding: '12px 16px' }}><span style={{ fontWeight: 700, color: '#1e293b' }}>{linkedEnquiry.enquiry_no}</span></td>
+                                                        <td style={{ padding: '12px 16px', color: '#64748b' }}>{linkedEnquiry.issue_date ? new Date(linkedEnquiry.issue_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
+                                                        <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, color: '#94a3b8' }}>—</td>
+                                                        <td style={{ padding: '12px 16px', textAlign: 'center' }}><span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '0.72rem', fontWeight: 700, background: '#fef3c7', color: '#b45309' }}>{linkedEnquiry.status || 'Active'}</span></td>
+                                                        <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                                                            <button 
+                                                                onClick={() => navigate(`/workflows/enquiry/${linkedEnquiry.id}`)}
+                                                                style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}
+                                                            >
+                                                                <Eye size={13} /> Open
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                )}
                                                 {suiteDocs.map((doc) => {
                                                     const clr = SUITE_DOC_COLORS[doc.document_type] || { bg: '#f8fafc', color: '#475569', border: '#e2e8f0' };
                                                     const seqLabel = getSuiteDocSequenceLabel(doc, suiteDocs);
@@ -5768,91 +5786,8 @@ export default function WorkflowEditor() {
                             </div>
                         );
                     })()}
-                    {/* ══════════════════════════════════════════════════════════ */}
-                    </div>
 
                         {/* ═══════════════ EMBEDDED VERTICAL STACK SECTIONS ═══════════════ */}
-                        {/* 1. Workflow Suite */}
-                        <div id="section-workflow" style={{ marginTop: '12px' }}>
-                            <div className="glass-panel workflow-suite">
-                        <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <FileCheck size={20} className="text-accent" />
-                            <h3 style={{ margin: 0 }}>Documents Linked to Job: <span style={{ color: 'var(--accent)' }}>{formData.assigned_job_no}</span></h3>
-                        </div>
-                        
-                        <div className="table-container">
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead style={{ background: '#f8fafc' }}>
-                                    <tr>
-                                        <th style={{ padding: '12px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Type</th>
-                                        <th style={{ padding: '12px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Document No</th>
-                                        <th style={{ padding: '12px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Issue Date</th>
-                                        <th style={{ padding: '12px', textAlign: 'right', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Amount</th>
-                                        <th style={{ padding: '12px', textAlign: 'center', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Status</th>
-                                        <th style={{ padding: '12px', textAlign: 'right', fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {linkedEnquiry && (
-                                        <tr style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem', fontWeight: 600 }}>Customer Enquiry</td>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem', color: '#b45309', fontWeight: 600 }}>{linkedEnquiry.enquiry_no}</td>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem' }}>{new Date(linkedEnquiry.issue_date).toLocaleDateString('en-GB')}</td>
-                                            <td style={{ padding: '12px', textAlign: 'right', fontSize: '0.85rem', color: '#94a3b8' }}>-</td>
-                                            <td style={{ padding: '12px', textAlign: 'center' }}>
-                                                <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 600, background: '#fffbeb', color: '#b45309' }}>
-                                                    {linkedEnquiry.status || 'Active'}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '12px', textAlign: 'right' }}>
-                                                <button 
-                                                    className="btn btn-sm btn-secondary" 
-                                                    type="button"
-                                                    onClick={() => navigate(`/workflows/enquiry/${linkedEnquiry.id}`)}
-                                                >
-                                                    Open
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    )}
-                                    {workflowDocs.map(doc => (
-                                        <tr key={doc.id} style={{ borderBottom: '1px solid #f1f5f9', background: doc.id === id ? '#f0f9ff' : 'transparent' }}>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem', fontWeight: 600 }}>{doc.document_type}</td>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem', color: 'var(--accent)' }}>{doc.document_no}</td>
-                                            <td style={{ padding: '12px', fontSize: '0.85rem' }}>{new Date(doc.issue_date).toLocaleDateString('en-GB')}</td>
-                                            <td style={{ padding: '12px', textAlign: 'right', fontSize: '0.85rem' }}>{doc.currency} {doc.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                            <td style={{ padding: '12px', textAlign: 'center' }}>
-                                                <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 600, background: doc.status === 'Draft' ? '#f1f5f9' : '#dcfce7', color: doc.status === 'Draft' ? '#64748b' : '#15803d' }}>
-                                                    {doc.status}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '12px', textAlign: 'right' }}>
-                                                {doc.id !== id ? (
-                                                    <button 
-                                                        className="btn btn-sm btn-secondary" 
-                                                onClick={() => {
-                                                             const targetType = doc.document_type.toLowerCase().replace(/\s+/g, '-');
-                                                             if (doc.document_type === 'Enquiry') {
-                                                                 navigate(`/workflows/enquiry/${doc.id}`);
-                                                             } else {
-                                                                 navigate(`/workflows/editor/${targetType}/${doc.id}`);
-                                                             }
-                                                         }}
-                                                    >
-                                                        Open
-                                                    </button>
-                                                ) : (
-                                                    <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic' }}>Current</span>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                        </div>
-
                         {/* 2. Payments & GST */}
                         <div id="section-payments" style={{ marginTop: '12px' }}>
                             <div className="glass-panel job-payments">
