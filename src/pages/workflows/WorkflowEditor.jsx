@@ -5550,79 +5550,82 @@ export default function WorkflowEditor() {
                             )}
                         </div>
                         
-                        {/* Terms & Conditions */}
-                        <div className="glass-panel" style={{ marginTop: '24px', padding: '16px', border: '1px solid #cbd5e1', borderRadius: '16px', background: '#f8fafc' }}>
-                            <div className="form-item" style={{ margin: 0 }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                                    <div style={{ width: '36px', height: '36px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                                        <FileText size={18} color="#2563eb" />
+                        {/* Terms & Conditions + Notes & Comments (50% + 50% 2-Column Grid) */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px', marginTop: '24px' }}>
+                            {/* Terms & Conditions */}
+                            <div className="glass-panel" style={{ margin: 0, padding: '16px', border: '1px solid #cbd5e1', borderRadius: '16px', background: '#f8fafc', display: 'flex', flexDirection: 'column' }}>
+                                <div className="form-item" style={{ margin: 0, display: 'flex', flexDirection: 'column', flex: 1 }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                                        <div style={{ width: '36px', height: '36px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                                            <FileText size={18} color="#2563eb" />
+                                        </div>
+                                        <span style={{ fontWeight: 800, fontSize: '1.05rem', color: '#1e3a8a', letterSpacing: '-0.01em' }}>Terms & Conditions</span>
+                                        <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+                                            <select 
+                                                className="form-select-sm"
+                                                onChange={(e) => {
+                                                    if (e.target.value) {
+                                                        handleEditorChange('terms_conditions', TC_PRESETS[e.target.value]);
+                                                    }
+                                                }}
+                                                style={{ fontSize: '0.75rem', padding: '4px 8px', borderRadius: '8px' }}
+                                            >
+                                                <option value="">Load Preset...</option>
+                                                <option value="Enquiry">Enquiry Terms</option>
+                                                <option value="Quotation">Quotation Terms</option>
+                                                <option value="Purchase Order">P.O. Terms</option>
+                                            </select>
+                                        </div>
+                                    </label>
+                                    <div style={{ background: '#fff', borderRadius: '12px', padding: '8px', border: '1px solid #e2e8f0', flex: 1, display: 'flex', flexDirection: 'column' }}>
+                                        <RichTextEditor
+                                            value={formData.terms_conditions}
+                                            onChange={(val) => handleEditorChange('terms_conditions', val)}
+                                            placeholder="Payment terms, delivery details..."
+                                            height="180px"
+                                        />
                                     </div>
-                                    <span style={{ fontWeight: 800, fontSize: '1.05rem', color: '#1e3a8a', letterSpacing: '-0.01em' }}>Terms & Conditions</span>
-                                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
-                                        <select 
-                                            className="form-select-sm"
-                                            onChange={(e) => {
-                                                if (e.target.value) {
-                                                    handleEditorChange('terms_conditions', TC_PRESETS[e.target.value]);
-                                                }
-                                            }}
-                                            style={{ fontSize: '0.75rem', padding: '4px 8px', borderRadius: '8px' }}
-                                        >
-                                            <option value="">Load Preset...</option>
-                                            <option value="Enquiry">Enquiry Terms</option>
-                                            <option value="Quotation">Quotation Terms</option>
-                                            <option value="Purchase Order">P.O. Terms</option>
-                                        </select>
-                                    </div>
-                                </label>
-                                <div style={{ background: '#fff', borderRadius: '12px', padding: '8px', border: '1px solid #e2e8f0' }}>
-                                    <RichTextEditor
-                                        value={formData.terms_conditions}
-                                        onChange={(val) => handleEditorChange('terms_conditions', val)}
-                                        placeholder="Payment terms, delivery details..."
-                                        height="160px"
-                                    />
                                 </div>
                             </div>
-                        </div>
 
-                        {/* Notes & Comments */}
-                        <div className="glass-panel" style={{ marginTop: '24px', padding: '16px', border: '1px solid #cbd5e1', borderRadius: '16px', background: '#f8fafc' }}>
-                            <div className="form-item" style={{ margin: 0 }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                                    <div style={{ width: '36px', height: '36px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                                        <FileText size={18} color="#2563eb" />
+                            {/* Notes & Comments */}
+                            <div className="glass-panel" style={{ margin: 0, padding: '16px', border: '1px solid #cbd5e1', borderRadius: '16px', background: '#f8fafc', display: 'flex', flexDirection: 'column' }}>
+                                <div className="form-item" style={{ margin: 0, display: 'flex', flexDirection: 'column', flex: 1 }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                                        <div style={{ width: '36px', height: '36px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                                            <FileText size={18} color="#2563eb" />
+                                        </div>
+                                        <span style={{ fontWeight: 800, fontSize: '1.05rem', color: '#1e3a8a', letterSpacing: '-0.01em' }}>Notes & Comments</span>
+                                        
+                                        <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+                                            <select 
+                                                className="form-select-sm"
+                                                onChange={(e) => {
+                                                    if (e.target.value) {
+                                                        const currentVal = formData.notes || '';
+                                                        const templateVal = NOTES_PRESETS[e.target.value];
+                                                        handleEditorChange('notes', currentVal + (currentVal ? '<br/><br/>' : '') + templateVal);
+                                                        e.target.value = ''; // Reset select
+                                                    }
+                                                }}
+                                                style={{ fontSize: '0.75rem', padding: '4px 8px', borderRadius: '8px' }}
+                                                defaultValue=""
+                                            >
+                                                <option value="" disabled>Load Standard Note...</option>
+                                                <option value="General">General Note</option>
+                                                <option value="Delivery">Delivery Details</option>
+                                                <option value="Payment">Payment Info</option>
+                                            </select>
+                                        </div>
+                                    </label>
+                                    <div style={{ background: '#fff', borderRadius: '12px', padding: '8px', border: '1px solid #e2e8f0', flex: 1, display: 'flex', flexDirection: 'column' }}>
+                                        <RichTextEditor
+                                            value={formData.notes}
+                                            onChange={(val) => handleEditorChange('notes', val)}
+                                            placeholder="Add additional notes, technical details, or comments for this document (Included in PDF)..."
+                                            height="180px"
+                                        />
                                     </div>
-                                    <span style={{ fontWeight: 800, fontSize: '1.05rem', color: '#1e3a8a', letterSpacing: '-0.01em' }}>Notes & Comments</span>
-                                    
-                                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
-                                        <select 
-                                            className="form-select-sm"
-                                            onChange={(e) => {
-                                                if (e.target.value) {
-                                                    const currentVal = formData.notes || '';
-                                                    const templateVal = NOTES_PRESETS[e.target.value];
-                                                    handleEditorChange('notes', currentVal + (currentVal ? '<br/><br/>' : '') + templateVal);
-                                                    e.target.value = ''; // Reset select
-                                                }
-                                            }}
-                                            style={{ fontSize: '0.75rem', padding: '4px 8px', borderRadius: '8px' }}
-                                            defaultValue=""
-                                        >
-                                            <option value="" disabled>Load Standard Note...</option>
-                                            <option value="General">General Note</option>
-                                            <option value="Delivery">Delivery Details</option>
-                                            <option value="Payment">Payment Info</option>
-                                        </select>
-                                    </div>
-                                </label>
-                                <div style={{ background: '#fff', borderRadius: '12px', padding: '8px', border: '1px solid #e2e8f0' }}>
-                                    <RichTextEditor
-                                        value={formData.notes}
-                                        onChange={(val) => handleEditorChange('notes', val)}
-                                        placeholder="Add additional notes, technical details, or comments for this document (Included in PDF)..."
-                                        height="210px"
-                                    />
                                 </div>
                             </div>
                         </div>
