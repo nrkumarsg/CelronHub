@@ -6038,7 +6038,8 @@ export default function WorkflowEditor() {
                                 </>
                             );
                         })()}
-                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}
