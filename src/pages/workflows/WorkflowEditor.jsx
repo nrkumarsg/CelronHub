@@ -2015,20 +2015,35 @@ export default function WorkflowEditor() {
 
     const handleOpenPartnerVault = async () => {
         if (!formData.partner_id) {
-            alert("Please select a partner first.");
+            toast.error("Please select a partner first.");
             return;
         }
-        setLoadingExplorer(true);
+        const loadToast = toast.loading('Opening Partner Vault in Google Drive...');
         try {
             const token = getStoredToken();
+            if (!token) {
+                toast.dismiss(loadToast);
+                toast.error('Google Drive is not authenticated. Please connect Google Drive first.');
+                return;
+            }
             const partner = partners.find(p => p.id === formData.partner_id);
-            const partnerFolderId = await provisionPartnerStructure(token, settings?.gdrive_partners_root_id, partner.name);
-            window.open(`https://drive.google.com/drive/folders/${partnerFolderId}`, '_blank');
+            if (!partner?.name) {
+                toast.dismiss(loadToast);
+                toast.error('Partner name not found.');
+                return;
+            }
+            const rootParentId = settings?.gdrive_partners_root_id || settings?.gdrive_celron_root_id || settings?.google_drive_folder_id;
+            const res = await provisionPartnerStructure(token, partner.name, rootParentId);
+            toast.dismiss(loadToast);
+            if (res?.link) {
+                window.open(res.link, '_blank');
+            } else if (res?.id) {
+                window.open(`https://drive.google.com/drive/folders/${res.id}`, '_blank');
+            }
         } catch (err) {
+            toast.dismiss(loadToast);
             console.error('Partner Vault error:', err);
-            alert('Failed to open partner vault.');
-        } finally {
-            setLoadingExplorer(false);
+            toast.error('Failed to open partner vault: ' + (err.message || 'Error'));
         }
     };
 
@@ -4500,6 +4515,16 @@ export default function WorkflowEditor() {
                             >
                                 <ExternalLink size={16} /> Open Drive Root
                             </button>
+                            {formData.partner_id && (
+                                <button 
+                                    onClick={handleOpenPartnerVault} 
+                                    className="btn btn-secondary" 
+                                    style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#818cf8', color: '#4338ca', background: '#eef2ff', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
+                                    title={`Open ${formData.partners?.name || 'Partner'}'s Master Folder`}
+                                >
+                                    <Users size={16} /> Open Partner Vault
+                                </button>
+                            )}
                         </div>
 
                     </div>
@@ -4536,14 +4561,24 @@ export default function WorkflowEditor() {
                                             addNewText={formData.document_type === 'Purchase Order' ? "Add New Supplier" : "Add New Customer"}
                                         />
                                         {formData.partner_id && (
-                                            <button 
-                                                className="icon-btn" 
-                                                onClick={() => handleEditMaster('partner_id')} 
-                                                style={{ padding: '8px', background: '#f8fafc' }}
-                                                title="Edit Customer (Opens full form in new window)"
-                                            >
-                                                <Pencil size={16} />
-                                            </button>
+                                            <>
+                                                <button 
+                                                    className="icon-btn" 
+                                                    onClick={() => handleEditMaster('partner_id')} 
+                                                    style={{ padding: '8px', background: '#f8fafc' }}
+                                                    title="Edit Customer (Opens full form in new window)"
+                                                >
+                                                    <Pencil size={16} />
+                                                </button>
+                                                <button 
+                                                    className="icon-btn" 
+                                                    onClick={handleOpenPartnerVault} 
+                                                    style={{ padding: '8px', background: '#e0e7ff', color: '#4338ca' }}
+                                                    title={`Open Partner Vault Folder (${formData.partners?.name || 'Customer'})`}
+                                                >
+                                                    <FolderOpen size={16} />
+                                                </button>
+                                            </>
                                         )}
                                         <button 
                                             className="icon-btn" 
@@ -6065,253 +6100,6 @@ export default function WorkflowEditor() {
                                 </>
                             );
                         })()}
-                    </div>
-                        </div>
-
-
-
-
-
-                        {/* 5. Explorer */}
-                        <div id="section-explorer" style={{ marginTop: '12px' }}>
-                            <div className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
-                        {/* Auth Status Bar */}
-                        <div style={{ 
-                            display: 'flex', 
-                            justifyContent: 'space-between', 
-                            alignItems: 'center', 
-                            background: authStatus === 'connected' ? '#f0fdf4' : authStatus === 'checking' ? '#f8fafc' : '#fef2f2', 
-                            padding: '12px 20px', 
-                            borderRadius: '12px', 
-                            marginBottom: '24px',
-                            border: `1px solid ${authStatus === 'connected' ? '#bbf7d0' : authStatus === 'checking' ? '#e2e8f0' : '#fecaca'}`
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: authStatus === 'connected' ? '#22c55e' : authStatus === 'checking' ? '#94a3b8' : '#ef4444' }} />
-                                <span style={{ fontSize: '0.9rem', fontWeight: 600, color: authStatus === 'connected' ? '#166534' : authStatus === 'checking' ? '#64748b' : '#991b1b' }}>
-                                    Google Drive: {authStatus === 'connected' ? 'Connected' : authStatus === 'checking' ? 'Checking Connection...' : authStatus === 'expired' ? 'Session Expired' : 'Disconnected'}
-                                </span>
-                            </div>
-                            {authStatus !== 'connected' && authStatus !== 'checking' && (
-                                <button onClick={handleExplorerReconnect} className="btn btn-sm btn-primary" style={{ fontSize: '0.8rem', padding: '6px 16px' }}>
-                                    <RefreshCw size={14} style={{ marginRight: '6px' }} /> Reconnect Now
-                                </button>
-                            )}
-                        </div>
-
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <button 
-                                    onClick={() => handleExplorerBack(explorerPath.length - 2)} 
-                                    disabled={explorerPath.length <= 1}
-                                    style={{ background: 'none', border: 'none', cursor: explorerPath.length > 1 ? 'pointer' : 'default', color: explorerPath.length > 1 ? 'var(--accent)' : '#cbd5e1' }}
-                                >
-                                    <ArrowLeft size={20} />
-                                </button>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '1rem', fontWeight: 600 }}>
-                                    {explorerPath.map((segment, idx) => (
-                                        <React.Fragment key={segment.id}>
-                                            <span 
-                                                onClick={() => handleExplorerBack(idx)}
-                                                style={{ cursor: 'pointer', color: idx === explorerPath.length - 1 ? '#1e293b' : '#64748b' }}
-                                            >
-                                                {segment.name}
-                                            </span>
-                                            {idx < explorerPath.length - 1 && <span style={{ color: '#cbd5e1' }}>/</span>}
-                                        </React.Fragment>
-                                    ))}
-                                </div>
-                            </div>
-                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                                <button onClick={() => fetchExplorerFiles()} className="btn btn-secondary" title="Refresh list" style={{ height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <RefreshCw size={18} className={loadingExplorer ? 'animate-spin' : ''} />
-                                </button>
-                                <button 
-                                    type="button"
-                                    onClick={async () => {
-                                        if (authStatus !== 'connected') {
-                                            toast.error('Google Drive is not connected. Please connect/reconnect at the status bar or Settings first.');
-                                            return;
-                                        }
-                                        const rootId = await ensureJobFolder();
-                                        setQrModal({ isOpen: true, folderId: rootId, folderName: 'Job Root Folder' });
-                                    }} 
-                                    className="btn btn-secondary" 
-                                    title="Mobile Upload via QR Code"
-                                    style={{ 
-                                        display: 'flex', 
-                                        alignItems: 'center', 
-                                        gap: '8px',
-                                        background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', 
-                                        border: '1px solid #bbf7d0', 
-                                        color: '#166534',
-                                        height: '42px',
-                                        padding: '0 16px',
-                                        borderRadius: '10px',
-                                        fontWeight: 600,
-                                        fontSize: '0.85rem'
-                                    }}
-                                >
-                                    <Smartphone size={16} /> Mobile Scan
-                                </button>
-                                <div
-                                    onDragOver={(e) => { e.preventDefault(); setIsDraggingExplorer(true); }}
-                                    onDragLeave={(e) => { e.preventDefault(); setIsDraggingExplorer(false); }}
-                                    onDrop={async (e) => {
-                                        e.preventDefault();
-                                        setIsDraggingExplorer(false);
-                                        const files = Array.from(e.dataTransfer.files);
-                                        if (files.length > 0) {
-                                            setUploadingExplorer(true);
-                                            setUploadProgress(0);
-                                            try {
-                                                const token = getStoredToken();
-                                                const rootId = await ensureJobFolder();
-                                                for (let i = 0; i < files.length; i++) {
-                                                    await uploadFileToDrive(token, files[i], { folderId: rootId });
-                                                    setUploadProgress(((i + 1) / files.length) * 100);
-                                                }
-                                                fetchExplorerFiles();
-                                            } catch (err) {
-                                                console.error('Upload error:', err);
-                                                alert('Failed to upload files.');
-                                            } finally {
-                                                setUploadingExplorer(false);
-                                                setUploadProgress(0);
-                                            }
-                                        }
-                                    }}
-                                    onClick={() => handleTriggerSmartUpload(async (file) => {
-                                        if (!file) return;
-                                        setUploadingExplorer(true);
-                                        setUploadProgress(0);
-                                        try {
-                                            const token = getStoredToken();
-                                            const rootId = await ensureJobFolder();
-                                            if (file.isGoogleDrive) {
-                                                await copyFile(token, file.id, rootId);
-                                            } else {
-                                                await uploadFileToDrive(token, file, { folderId: rootId });
-                                            }
-                                            fetchExplorerFiles();
-                                            toast.success("File added successfully!");
-                                        } catch (err) {
-                                            console.error('Upload error:', err);
-                                            toast.error('Failed to add file: ' + err.message);
-                                        } finally {
-                                            setUploadingExplorer(false);
-                                            setUploadProgress(0);
-                                        }
-                                    }, '*', 'Explorer', 'recent')}
-                                    style={{
-                                        border: isDraggingExplorer ? '2px dashed var(--accent)' : '2px dashed #cbd5e1',
-                                        background: isDraggingExplorer ? '#eff6ff' : '#f8fafc',
-                                        padding: '0 20px',
-                                        borderRadius: '10px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '8px',
-                                        cursor: 'pointer',
-                                        color: 'var(--accent)',
-                                        fontWeight: 600,
-                                        fontSize: '0.85rem',
-                                        transition: 'all 0.2s ease',
-                                        height: '42px',
-                                        justifyContent: 'center',
-                                        position: 'relative',
-                                        overflow: 'hidden'
-                                    }}
-                                >
-                                    <Upload size={18} />
-                                    <span>{isDraggingExplorer ? 'Drop Files Here' : 'Drop Files to Upload'}</span>
-                                    {uploadingExplorer && (
-                                        <div style={{ 
-                                            position: 'absolute', 
-                                            left: 0, 
-                                            top: 0, 
-                                            bottom: 0, 
-                                            width: `${uploadProgress}%`, 
-                                            background: 'rgba(99, 102, 241, 0.15)', 
-                                            transition: 'width 0.2s ease',
-                                            pointerEvents: 'none'
-                                        }} />
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        {explorerError && (
-                            <div style={{ color: '#ef4444', background: '#fef2f2', padding: '12px', borderRadius: '8px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <AlertCircle size={18} /> {explorerError}
-                            </div>
-                        )}
-
-                        {loadingExplorer && explorerFiles.length === 0 ? (
-                            <div style={{ textAlign: 'center', padding: '60px', color: '#94a3b8' }}>
-                                <Loader2 size={32} className="animate-spin" style={{ margin: '0 auto 16px' }} />
-                                <p>Syncing with Google Drive...</p>
-                            </div>
-                        ) : explorerFiles.length === 0 ? (
-                            <div style={{ textAlign: 'center', padding: '80px', color: '#94a3b8', background: '#f8fafc', borderRadius: '16px', border: '2px dashed #e2e8f0' }}>
-                                <Folder size={48} style={{ margin: '0 auto 16px', opacity: 0.2 }} />
-                                <p style={{ fontSize: '1.1rem' }}>This folder is empty.</p>
-                                <p style={{ fontSize: '0.9rem', marginTop: '4px' }}>Upload drawings, photos, or documents to keep them with this job.</p>
-                            </div>
-                        ) : (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' }}>
-                                {explorerFiles.map(file => (
-                                    <div key={file.id} className="glass-panel" style={{ padding: '16px', borderRadius: '12px', background: '#fff', border: '1px solid #e2e8f0', transition: 'transform 0.2s' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                                            <div 
-                                                style={{ display: 'flex', gap: '10px', alignItems: 'center', cursor: file.mimeType.includes('folder') ? 'pointer' : 'default', flex: 1, overflow: 'hidden' }}
-                                                onClick={() => file.mimeType.includes('folder') && handleExplorerNavigate(file)}
-                                            >
-                                                {getExplorerFileIcon(file.mimeType)}
-                                                <div style={{ overflow: 'hidden' }}>
-                                                    <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={file.name}>
-                                                        {file.name}
-                                                    </div>
-                                                    <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{file.size ? `${(file.size / 1024).toFixed(1)} KB` : 'Folder'}</div>
-                                                </div>
-                                            </div>
-                                            <button 
-                                                onClick={() => handleExplorerDelete(file.id, file.name)}
-                                                style={{ background: 'none', border: 'none', color: '#cbd5e1', padding: '4px', cursor: 'pointer' }}
-                                                onMouseOver={(e) => e.currentTarget.style.color = '#ef4444'}
-                                                onMouseOut={(e) => e.currentTarget.style.color = '#cbd5e1'}
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
-                                        <div style={{ display: 'flex', gap: '8px' }}>
-                                            <a href={file.webViewLink} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ flex: 1, padding: '6px', fontSize: '0.75rem', gap: '4px' }}>
-                                                <ExternalLink size={12} /> View
-                                            </a>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Partner Vault Shortcut */}
-                        <div style={{ marginTop: '32px', paddingTop: '20px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <div style={{ width: '40px', height: '40px', background: '#e0e7ff', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <Users size={20} color="#4338ca" />
-                                </div>
-                                <div>
-                                    <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>Partner Vault Bridge</div>
-                                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Quick access to {formData.partners?.name || 'Customer'}'s master documents</div>
-                                </div>
-                            </div>
-                            <button 
-                                className="btn btn-secondary" 
-                                style={{ fontSize: '0.8rem', gap: '8px' }}
-                                onClick={handleOpenPartnerVault}
-                            >
-                                <ExternalLink size={14} /> Open Partner Folder
-                            </button>
-                        </div>
                     </div>
                         </div>
                     </div>
