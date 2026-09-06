@@ -609,6 +609,7 @@ export default function UnifiedSupplierHubPro() {
 
     // ─── Indicator (1) Smart Upload & Checking Facility State ─────────────────
     const [showSmartUpload, setShowSmartUpload] = useState(true);
+    const [gatewayViewMode, setGatewayViewMode] = useState('upload'); // 'upload' | 'viewer'
     const [uploadTargetEnquiryId, setUploadTargetEnquiryId] = useState('');
     const [checkingModal, setCheckingModal] = useState({ isOpen: false, enquiry: null });
     const [allPartners, setAllPartners] = useState([]);
@@ -1011,24 +1012,36 @@ export default function UnifiedSupplierHubPro() {
             toast.dismiss(toastId);
             toast.success(
                 (t) => (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                         <span style={{ fontWeight: 800, color: '#166534' }}>
                             ✓ Uploaded to {targetSubName}!
                         </span>
                         <span style={{ fontSize: '0.74rem', color: '#475569' }}>{file.name}</span>
-                        {uploadRes?.webViewLink && (
-                            <a
-                                href={uploadRes.webViewLink}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{ color: '#2563eb', fontSize: '0.75rem', fontWeight: 700, textDecoration: 'underline' }}
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '2px', alignItems: 'center' }}>
+                            <button
+                                onClick={() => { setGatewayViewMode('viewer'); setShowSmartUpload(true); toast.dismiss(t.id); }}
+                                style={{
+                                    background: '#059669', color: '#ffffff', border: 'none',
+                                    borderRadius: '6px', padding: '3px 9px', fontSize: '0.72rem',
+                                    fontWeight: 700, cursor: 'pointer'
+                                }}
                             >
-                                Open in Google Drive ↗
-                            </a>
-                        )}
+                                Open in Tree Viewer 👁
+                            </button>
+                            {uploadRes?.webViewLink && (
+                                <a
+                                    href={uploadRes.webViewLink}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ color: '#2563eb', fontSize: '0.75rem', fontWeight: 700, textDecoration: 'underline' }}
+                                >
+                                    Drive ↗
+                                </a>
+                            )}
+                        </div>
                     </div>
                 ),
-                { duration: 6000 }
+                { duration: 8000 }
             );
         } catch (err) {
             console.error('[HubPro] Upload error:', err);
@@ -1355,7 +1368,37 @@ export default function UnifiedSupplierHubPro() {
                                         <Plus size={14} /> New Folder
                                     </button>
 
-                                    {/* Check Drive Repository Modal Button */}
+                                    {/* View Switcher: Uploader vs Tree Viewer */}
+                                    <div style={{ display: 'flex', background: '#e2e8f0', padding: '3px', borderRadius: '8px', gap: '3px' }}>
+                                        <button
+                                            onClick={() => { setGatewayViewMode('upload'); setShowSmartUpload(true); }}
+                                            style={{
+                                                padding: '5px 12px', borderRadius: '6px', border: 'none',
+                                                fontSize: '0.74rem', fontWeight: 800, cursor: 'pointer',
+                                                background: gatewayViewMode === 'upload' ? '#ffffff' : 'transparent',
+                                                color: gatewayViewMode === 'upload' ? '#4f46e5' : '#64748b',
+                                                boxShadow: gatewayViewMode === 'upload' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                display: 'flex', alignItems: 'center', gap: '5px', transition: 'all 0.15s'
+                                            }}
+                                        >
+                                            <Upload size={13} /> Uploader
+                                        </button>
+                                        <button
+                                            onClick={() => { setGatewayViewMode('viewer'); setShowSmartUpload(true); }}
+                                            style={{
+                                                padding: '5px 12px', borderRadius: '6px', border: 'none',
+                                                fontSize: '0.74rem', fontWeight: 800, cursor: 'pointer',
+                                                background: gatewayViewMode === 'viewer' ? '#ffffff' : 'transparent',
+                                                color: gatewayViewMode === 'viewer' ? '#059669' : '#64748b',
+                                                boxShadow: gatewayViewMode === 'viewer' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                display: 'flex', alignItems: 'center', gap: '5px', transition: 'all 0.15s'
+                                            }}
+                                        >
+                                            <Eye size={13} /> 📁 Tree &amp; Viewer
+                                        </button>
+                                    </div>
+
+                                    {/* Check Drive Repository Fullscreen Modal Button */}
                                     <button
                                         onClick={() => handleOpenCheckingFacility(activeUploadEnquiry)}
                                         style={{
@@ -1373,9 +1416,9 @@ export default function UnifiedSupplierHubPro() {
                                             boxShadow: '0 2px 8px rgba(16,185,129,0.25)',
                                             transition: 'all 0.15s',
                                         }}
-                                        title="Open live interactive Google Drive tree viewer and document inspection modal"
+                                        title="Open live interactive Google Drive tree viewer and document inspection in full dialog"
                                     >
-                                        <Eye size={14} /> 🔍 Check Drive Repository / Live Viewer
+                                        <Eye size={14} /> Fullscreen Viewer
                                     </button>
 
                                     {/* Open Root Drive Button */}
@@ -1399,7 +1442,7 @@ export default function UnifiedSupplierHubPro() {
                                         <FolderOpen size={14} /> Root Drive
                                     </button>
 
-                                    {/* Toggle Smart Upload Panel */}
+                                    {/* Toggle Panel */}
                                     <button
                                         onClick={() => setShowSmartUpload(prev => !prev)}
                                         style={{
@@ -1416,23 +1459,75 @@ export default function UnifiedSupplierHubPro() {
                                             gap: '5px',
                                         }}
                                     >
-                                        <Upload size={14} /> {showSmartUpload ? 'Hide Upload Panel' : 'Show Upload Panel'}
+                                        <Upload size={14} /> {showSmartUpload ? 'Hide Panel' : 'Show Panel'}
                                     </button>
                                 </div>
                             </div>
 
-                            {/* Embedded Smart Document Upload Panel (Image 4) */}
+                            {/* Embedded Gateway Body (Uploader OR Live Tree Viewer) */}
                             {showSmartUpload && (
                                 <div style={{ background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
-                                    <SmartUploadPanel
-                                        isOpen={true}
-                                        embedded={true}
-                                        activeFolderId={activeUploadEnquiry?.gdrive_folder_id || settings?.gdrive_celron_root_id || settings?.google_drive_folder_id}
-                                        activeFolderName={activeUploadEnquiry ? `${activeUploadEnquiry.enquiry_no} - ${activeUploadEnquiry.customer?.name || 'Enquiry'}` : 'Enquiries Workspace'}
-                                        runningEnquiryNo={activeUploadEnquiry?.enquiry_no || 'ENQ-WORKSPACE'}
-                                        onSelect={handleSmartUploadFile}
-                                        onClose={() => setShowSmartUpload(false)}
-                                    />
+                                    {gatewayViewMode === 'upload' ? (
+                                        <SmartUploadPanel
+                                            isOpen={true}
+                                            embedded={true}
+                                            activeFolderId={activeUploadEnquiry?.gdrive_folder_id || settings?.gdrive_celron_root_id || settings?.google_drive_folder_id}
+                                            activeFolderName={activeUploadEnquiry ? `${activeUploadEnquiry.enquiry_no} - ${activeUploadEnquiry.customer?.name || 'Enquiry'}` : 'Enquiries Workspace'}
+                                            runningEnquiryNo={activeUploadEnquiry?.enquiry_no || 'ENQ-WORKSPACE'}
+                                            onSelect={handleSmartUploadFile}
+                                            onClose={() => setShowSmartUpload(false)}
+                                        />
+                                    ) : (
+                                        <div style={{ minHeight: '660px', overflow: 'hidden' }}>
+                                            {activeUploadEnquiry?.gdrive_folder_id ? (
+                                                <EagleDriveTreeViewer
+                                                    jobFolderId={activeUploadEnquiry.gdrive_folder_id}
+                                                    jobNo={activeUploadEnquiry.enquiry_no}
+                                                    customerName={activeUploadEnquiry.customer?.name || ''}
+                                                    companyId={profile?.company_id}
+                                                />
+                                            ) : (
+                                                <div style={{ padding: '50px 20px', textAlign: 'center', background: '#ffffff', minHeight: '440px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px' }}>
+                                                    <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: '#eff6ff', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                        <FolderOpen size={30} />
+                                                    </div>
+                                                    <div>
+                                                        <h4 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0f172a' }}>
+                                                            {activeUploadEnquiry ? `No Google Drive Folder Linked for ${activeUploadEnquiry.enquiry_no}` : 'No Enquiry Selected'}
+                                                        </h4>
+                                                        <p style={{ margin: '6px 0 0', fontSize: '0.8rem', color: '#64748b', maxWidth: '440px' }}>
+                                                            Provision the bilateral Google Drive folder with 7 standard subfolders to inspect files and view documents live in the tree.
+                                                        </p>
+                                                    </div>
+                                                    {activeUploadEnquiry ? (
+                                                        <button
+                                                            onClick={() => openDriveFolder(activeUploadEnquiry)}
+                                                            style={{
+                                                                background: 'linear-gradient(135deg, #2563eb, #1d4ed8)', color: '#ffffff',
+                                                                padding: '9px 18px', borderRadius: '8px', border: 'none', fontWeight: 700,
+                                                                fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
+                                                                boxShadow: '0 2px 8px rgba(37,99,235,0.3)'
+                                                            }}
+                                                        >
+                                                            <Plus size={15} /> Provision Drive Folders Now
+                                                        </button>
+                                                    ) : (
+                                                        <button
+                                                            onClick={handleOpenNewFolderModal}
+                                                            style={{
+                                                                background: 'linear-gradient(135deg, #4f46e5, #6366f1)', color: '#ffffff',
+                                                                padding: '9px 18px', borderRadius: '8px', border: 'none', fontWeight: 700,
+                                                                fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
+                                                                boxShadow: '0 2px 8px rgba(79,70,229,0.3)'
+                                                            }}
+                                                        >
+                                                            <Plus size={15} /> ➕ Initialize New Enquiry Folder
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
