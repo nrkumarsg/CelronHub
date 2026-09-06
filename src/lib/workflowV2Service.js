@@ -147,7 +147,19 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
             console.warn('Error fetching existing job suite docs for suffix:', e);
         }
 
-        let letterIdx = existingCount;
+        // Check if baseDocNo itself is free (e.g. CN-2609-6117)
+        const { data: baseCheck } = await supabase
+            .from('workflow_documents')
+            .select('id')
+            .eq('document_no', baseDocNo)
+            .maybeSingle();
+
+        if (!baseCheck) {
+            return baseDocNo;
+        }
+
+        // If baseDocNo already exists, assign dynamic letter suffix (A, B, C...)
+        let letterIdx = existingCount > 0 ? existingCount - 1 : 0;
         let candidateNo = `${baseDocNo}${getLetterSuffix(letterIdx)}`;
         let isUnique = false;
         let attempts = 0;
@@ -1785,9 +1797,11 @@ export const getJobEagleViewData = async (jobIdOrNo) => {
         const doDocs = docsWithItems.filter(d => d.document_type === 'Delivery Order');
         const invoiceDocs = docsWithItems.filter(d => d.document_type === 'Tax Invoice' || d.document_type === 'Proforma Invoice');
 
-        // Calculate Totals
+        // Calculate Totals: Total Revenue is Invoice Amount, Total Expenses is Expenses + Credit Note Amount
         const customerBilledTotal = invoiceDocs.reduce((sum, d) => sum + (parseFloat(d.total_amount) || 0), 0);
-        const supplierPoTotal = supplierPoDocs.reduce((sum, d) => sum + (parseFloat(d.total_amount) || 0), 0);
+        const creditNoteDocs = docsWithItems.filter(d => d.document_type === 'Credit Note');
+        const creditNoteTotal = creditNoteDocs.reduce((sum, d) => sum + (parseFloat(d.total_amount) || 0), 0);
+        const supplierPoTotal = supplierPoDocs.reduce((sum, d) => sum + (parseFloat(d.total_amount) || 0), 0) + creditNoteTotal;
         const grossProfit = customerBilledTotal - supplierPoTotal;
         const profitMargin = customerBilledTotal > 0 ? ((grossProfit / customerBilledTotal) * 100).toFixed(1) : '0.0';
 
@@ -1801,11 +1815,13 @@ export const getJobEagleViewData = async (jobIdOrNo) => {
                 quotationDocs,
                 customerPoDocs,
                 supplierPoDocs,
+                creditNoteDocs,
                 doDocs,
                 invoiceDocs,
                 metrics: {
                     billedTotal: customerBilledTotal,
                     supplierPoTotal: supplierPoTotal,
+                    creditNoteTotal: creditNoteTotal,
                     grossProfit: grossProfit,
                     profitMarginPercent: profitMargin
                 }

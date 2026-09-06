@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Ship, User, Users, MapPin, X, Save, Globe, Mail, Phone, Map, ExternalLink, Plus, Sparkles, Loader2, RefreshCw, Upload, ChevronDown, Paperclip, FileCheck, Calculator, FileText, Search, Check, RotateCcw, Pencil, Camera, Archive, Trash2, Receipt, Smartphone, Image, HardDrive, Info } from 'lucide-react';
+import { Ship, User, Users, MapPin, X, Save, Globe, Mail, Phone, Map, ExternalLink, Plus, Sparkles, Loader2, RefreshCw, Upload, ChevronDown, Paperclip, FileCheck, Calculator, FileText, Search, Check, RotateCcw, Pencil, Camera, Archive, Trash2, Receipt, Smartphone, Image, HardDrive, Info, Folder, FolderOpen } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { savePartner, saveContact, deleteContact, saveJobMajorCategory, getJobMajorCategories, deleteJobMajorCategory } from '../../lib/store';
 import { saveJobExpense } from '../../lib/jobExpenseService';
@@ -2486,6 +2486,9 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
         category: 'Material'
     });
 
+    // Active Tab for Right Column: 'upload' or 'viewer'
+    const [activeMediaTab, setActiveMediaTab] = useState(formData.bill_url ? 'viewer' : 'upload');
+
     // Initial job if editing or provided
     React.useEffect(() => {
         if (formData.job_id && jobs) {
@@ -2506,9 +2509,15 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
     const [aiStatus, setAiStatus] = useState('');
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
     const [showPhotoPicker, setShowPhotoPicker] = useState(false);
+    const [jobBillsModal, setJobBillsModal] = useState({ isOpen: false, files: [], folderName: '', jobNo: '', isLoading: false });
+    const [selectedDriveFolder, setSelectedDriveFolder] = useState('supplier_bills');
+    const [driveFolderFiles, setDriveFolderFiles] = useState([]);
+    const [loadingDriveFolder, setLoadingDriveFolder] = useState(false);
+    const [currentFolderMeta, setCurrentFolderMeta] = useState({ id: null, name: 'Supplier Bills', jobNo: '' });
 
     const [localQrModal, setLocalQrModal] = useState({ isOpen: false, folderId: null, folderName: '', isLoading: false });
     const pollingIntervalRef = React.useRef(null);
+    const supplierDropdownRef = React.useRef(null);
 
     React.useEffect(() => {
         return () => {
@@ -2516,6 +2525,17 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                 clearInterval(pollingIntervalRef.current);
             }
         };
+    }, []);
+
+    // Close supplier dropdown on outside click
+    React.useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (supplierDropdownRef.current && !supplierDropdownRef.current.contains(e.target)) {
+                setShowSupplierDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
     const handleOpenLocalQR = async () => {
@@ -2576,6 +2596,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                             bill_url: newFile.webViewLink,
                             notes: (prev.notes || '') + `\n[Linked via Mobile QR Upload: ${newFile.name}]`
                         }));
+                        setActiveMediaTab('viewer');
 
                         setIsAiProcessing(true);
                         setAiStatus('🤖 Reading mobile upload...');
@@ -2593,13 +2614,16 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                                     if (result) {
                                         let supplierId = formData.supplier_id;
                                         if (!supplierId && result.supplier_name) {
-                                            const matched = partners.find(p => 
+                                            const matched = partners?.find(p => 
                                                 p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
                                                 (result.uen && p.registration_no === result.uen)
                                             );
                                             if (matched) {
                                                 supplierId = matched.id;
                                                 setSupplierSearch(matched.name);
+                                            } else {
+                                                supplierId = '';
+                                                setSupplierSearch(result.supplier_name);
                                             }
                                         }
                                         setFormData(prev => calculateTotals({
@@ -2680,6 +2704,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                         bill_url: selectedFile.webViewLink,
                         notes: (prev.notes || '') + `\n[Linked from Account Payable: ${selectedFile.name}]`
                     }));
+                    setActiveMediaTab('viewer');
                     
                     try {
                         setAiStatus('🤖 Reading document...');
@@ -2701,13 +2726,16 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                             if (result) {
                                 let supplierId = formData.supplier_id;
                                 if (!supplierId && result.supplier_name) {
-                                    const matched = partners.find(p => 
+                                    const matched = partners?.find(p => 
                                         p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
                                         (result.uen && p.registration_no === result.uen)
                                     );
                                     if (matched) {
                                         supplierId = matched.id;
                                         setSupplierSearch(matched.name);
+                                    } else {
+                                        supplierId = '';
+                                        setSupplierSearch(result.supplier_name);
                                     }
                                 }
 
@@ -2758,6 +2786,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
             bill_url: file.webViewLink,
             notes: (prev.notes || '') + `\n[Linked from Job Photos & Gallery: ${file.name}]`
         }));
+        setActiveMediaTab('viewer');
         
         // Also trigger AI OCR if possible
         const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
@@ -2786,13 +2815,16 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                 if (result) {
                     let supplierId = formData.supplier_id;
                     if (!supplierId && result.supplier_name) {
-                        const matched = partners.find(p => 
+                        const matched = partners?.find(p => 
                             p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
                             (result.uen && p.registration_no === result.uen)
                         );
                         if (matched) {
                             supplierId = matched.id;
                             setSupplierSearch(matched.name);
+                        } else {
+                            supplierId = '';
+                            setSupplierSearch(result.supplier_name);
                         }
                     }
 
@@ -2822,33 +2854,348 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
         }
     };
 
+    const handlePickFromJobSupplierBills = async () => {
+        const selectedJobId = formData.job_id || job_id;
+        const selectedJob = jobs?.find(j => j.id === selectedJobId);
+        if (!selectedJobId || !selectedJob) {
+            alert("Please select a Job No from the 'Job No' dropdown on the left first.");
+            return;
+        }
+
+        const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
+        if (!token || !isTokenValid()) {
+            setIsAuthModalOpen(true);
+            return;
+        }
+
+        const jobNo = selectedJob.document_no || 'Job';
+        setJobBillsModal({ isOpen: true, files: [], folderName: 'SupplierBills&Expenses', jobNo, isLoading: true });
+
+        try {
+            let parentFolderId = selectedJob.drive_folder_id || selectedJob.gdrive_folder_id;
+
+            if (!parentFolderId) {
+                try {
+                    const query = `name contains '${jobNo}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+                    const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    if (searchRes.ok) {
+                        const { files } = await searchRes.json();
+                        if (files && files.length > 0) {
+                            parentFolderId = files[0].id;
+                        }
+                    }
+                } catch (searchErr) {
+                    console.warn("Error searching for job folder:", searchErr);
+                }
+            }
+
+            if (!parentFolderId) {
+                alert(`Could not find a Google Drive folder for Job ${jobNo}. Please make sure the job folder is provisioned.`);
+                setJobBillsModal(prev => ({ ...prev, isOpen: false, isLoading: false }));
+                return;
+            }
+
+            const subItems = await listFolderContent(token, parentFolderId);
+            let targetFolder = subItems.find(f => 
+                f.mimeType === 'application/vnd.google-apps.folder' && 
+                (f.name.toLowerCase().includes('supplier') || f.name.toLowerCase().includes('bill') || f.name.toLowerCase().includes('expense'))
+            );
+
+            if (!targetFolder) {
+                const createdId = await getOrCreateFolder(token, 'SupplierBills&Expenses', parentFolderId);
+                targetFolder = { id: createdId, name: 'SupplierBills&Expenses' };
+            }
+
+            const files = await listFolderContent(token, targetFolder.id);
+            const onlyFiles = files.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
+
+            setJobBillsModal({
+                isOpen: true,
+                files: onlyFiles,
+                folderName: targetFolder.name,
+                jobNo,
+                isLoading: false
+            });
+
+        } catch (err) {
+            console.error("Failed to load job supplier bills folder:", err);
+            alert("Failed to load supplier bills folder: " + err.message);
+            setJobBillsModal(prev => ({ ...prev, isOpen: false, isLoading: false }));
+        }
+    };
+
+    const handleSelectJobBill = async (file) => {
+        setJobBillsModal(prev => ({ ...prev, isOpen: false }));
+        setFormData(prev => ({ 
+            ...prev, 
+            bill_url: file.webViewLink,
+            notes: (prev.notes || '') + `\n[Linked from Job ${jobBillsModal.jobNo || ''} (${jobBillsModal.folderName}): ${file.name}]`
+        }));
+        setActiveMediaTab('viewer');
+
+        const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
+        if (!token || !isTokenValid()) return;
+
+        setIsAiProcessing(true);
+        setAiStatus(`🤖 Reading ${file.name} with AI...`);
+
+        try {
+            const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!fileRes.ok) throw new Error('Failed to retrieve file contents from Google Drive');
+
+            const blob = await fileRes.blob();
+            const extractedText = await performOCR(blob);
+
+            if (extractedText) {
+                setAiStatus('🤖 Gemini AI is parsing supplier bill details...');
+                const result = await parseSupplierBillWithAi('', extractedText);
+
+                if (result) {
+                    let supplierId = formData.supplier_id;
+                    if (!supplierId && result.supplier_name) {
+                        const matched = partners?.find(p => 
+                            p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
+                            (result.uen && p.registration_no === result.uen)
+                        );
+                        if (matched) {
+                            supplierId = matched.id;
+                            setSupplierSearch(matched.name);
+                        } else {
+                            supplierId = '';
+                            setSupplierSearch(result.supplier_name);
+                        }
+                    }
+
+                    setFormData(prev => calculateTotals({
+                        ...prev,
+                        supplier_id: supplierId,
+                        invoice_no: result.invoice_no || prev.invoice_no,
+                        invoice_date: result.invoice_date || prev.invoice_date,
+                        description: result.supplier_name ? `Bill from ${result.supplier_name}` : prev.description,
+                        unit_price: result.subtotal || prev.unit_price,
+                        quantity: 1,
+                        gst_amount: result.gst_amount || prev.gst_amount,
+                        grand_total: result.total_amount || prev.grand_total,
+                        notes: (prev.notes || '') + `\nAI Extraction: ${result.supplier_name || 'Unknown'}. UEN: ${result.uen || 'N/A'}`
+                    }));
+                    setAiStatus('✅ Supplier bill parsed successfully!');
+                }
+            } else {
+                setAiStatus('⚠️ No text detected in document.');
+            }
+        } catch (ocrErr) {
+            console.error('OCR/AI extraction failed:', ocrErr);
+            setAiStatus('⚠️ Document linked, but AI extraction failed.');
+        } finally {
+            setIsAiProcessing(false);
+            setTimeout(() => setAiStatus(''), 4000);
+        }
+    };
+
+    const fetchFolderStructureFiles = async (folderKey = selectedDriveFolder, targetJobId = formData.job_id || job_id) => {
+        const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
+        if (!token || !isTokenValid()) return;
+
+        setLoadingDriveFolder(true);
+        try {
+            let targetFolderId = null;
+            let folderDisplayName = 'Supplier Bills';
+            const selectedJob = jobs?.find(j => j.id === targetJobId);
+            const jobNo = selectedJob?.document_no || formData.job_no || 'Job';
+
+            if (folderKey === 'supplier_bills') {
+                folderDisplayName = `${jobNo} › Supplier Bills`;
+                let parentFolderId = selectedJob?.drive_folder_id || selectedJob?.gdrive_folder_id;
+
+                if (!parentFolderId && jobNo && jobNo !== 'Job') {
+                    try {
+                        const query = `name contains '${jobNo}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+                        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        if (searchRes.ok) {
+                            const { files } = await searchRes.json();
+                            if (files && files.length > 0) parentFolderId = files[0].id;
+                        }
+                    } catch (e) {
+                        console.warn("Could not find job folder by query:", e);
+                    }
+                }
+
+                if (parentFolderId) {
+                    const subItems = await listFolderContent(token, parentFolderId);
+                    const found = subItems.find(f => 
+                        f.mimeType === 'application/vnd.google-apps.folder' && 
+                        (f.name.toLowerCase().includes('supplier') || f.name.toLowerCase().includes('bill') || f.name.toLowerCase().includes('expense'))
+                    );
+                    if (found) {
+                        targetFolderId = found.id;
+                        folderDisplayName = `${jobNo} › ${found.name}`;
+                    } else {
+                        targetFolderId = await getOrCreateFolder(token, 'SupplierBills&Expenses', parentFolderId);
+                        folderDisplayName = `${jobNo} › SupplierBills&Expenses`;
+                    }
+                }
+            } else if (folderKey === 'photos') {
+                folderDisplayName = `${jobNo} › Photos & Gallery`;
+                let parentFolderId = selectedJob?.drive_folder_id || selectedJob?.gdrive_folder_id;
+                if (parentFolderId) {
+                    const subItems = await listFolderContent(token, parentFolderId);
+                    const found = subItems.find(f => 
+                        f.mimeType === 'application/vnd.google-apps.folder' && 
+                        f.name.toLowerCase().includes('photo')
+                    );
+                    if (found) targetFolderId = found.id;
+                }
+            } else if (folderKey === 'account_payable') {
+                folderDisplayName = 'Account Payable';
+                targetFolderId = '1MVrJO3j9xc9Ls9JpovmduW62i2YtfrRq';
+            } else if (folderKey === 'scans') {
+                folderDisplayName = 'Celron Scans';
+                targetFolderId = await getOrCreateFolder(token, 'Celron_Scans');
+            }
+
+            setCurrentFolderMeta({ id: targetFolderId, name: folderDisplayName, jobNo });
+
+            if (targetFolderId) {
+                const files = await listFolderContent(token, targetFolderId);
+                const onlyFiles = files.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
+                setDriveFolderFiles(onlyFiles);
+            } else {
+                setDriveFolderFiles([]);
+            }
+        } catch (err) {
+            console.error("Failed to load folder structure files:", err);
+            setDriveFolderFiles([]);
+        } finally {
+            setLoadingDriveFolder(false);
+        }
+    };
+
+    React.useEffect(() => {
+        fetchFolderStructureFiles(selectedDriveFolder, formData.job_id || job_id);
+    }, [selectedDriveFolder, formData.job_id]);
+
+    const handleSelectDriveFile = async (file) => {
+        setFormData(prev => ({ 
+            ...prev, 
+            bill_url: file.webViewLink,
+            notes: (prev.notes || '') + `\n[Linked from ${currentFolderMeta.name}: ${file.name}]`
+        }));
+        setActiveMediaTab('viewer');
+
+        const token = sessionStorage.getItem('google_contacts_token') || localStorage.getItem('google_access_token');
+        if (!token || !isTokenValid()) return;
+
+        setIsAiProcessing(true);
+        setAiStatus(`🤖 Reading ${file.name} with AI...`);
+
+        try {
+            const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!fileRes.ok) throw new Error('Failed to retrieve file contents from Google Drive');
+
+            const blob = await fileRes.blob();
+            const extractedText = await performOCR(blob);
+
+            if (extractedText) {
+                setAiStatus('🤖 Gemini AI is parsing bill details...');
+                const result = await parseSupplierBillWithAi('', extractedText);
+
+                if (result) {
+                    let supplierId = formData.supplier_id;
+                    if (!supplierId && result.supplier_name) {
+                        const matched = partners?.find(p => 
+                            p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
+                            (result.uen && p.registration_no === result.uen)
+                        );
+                        if (matched) {
+                            supplierId = matched.id;
+                            setSupplierSearch(matched.name);
+                        } else {
+                            supplierId = '';
+                            setSupplierSearch(result.supplier_name);
+                        }
+                    }
+
+                    setFormData(prev => calculateTotals({
+                        ...prev,
+                        supplier_id: supplierId,
+                        invoice_no: result.invoice_no || prev.invoice_no,
+                        invoice_date: result.invoice_date || prev.invoice_date,
+                        description: result.supplier_name ? `Bill from ${result.supplier_name}` : prev.description,
+                        unit_price: result.subtotal || prev.unit_price,
+                        quantity: 1,
+                        gst_amount: result.gst_amount || prev.gst_amount,
+                        grand_total: result.total_amount || prev.grand_total,
+                        notes: (prev.notes || '') + `\nAI Extraction: ${result.supplier_name || 'Unknown'}. UEN: ${result.uen || 'N/A'}`
+                    }));
+                    setAiStatus('✅ Bill parsed successfully!');
+                }
+            } else {
+                setAiStatus('⚠️ No text detected in document.');
+            }
+        } catch (ocrErr) {
+            console.error('OCR/AI extraction failed:', ocrErr);
+            setAiStatus('⚠️ Document linked, but AI extraction failed.');
+        } finally {
+            setIsAiProcessing(false);
+            setTimeout(() => setAiStatus(''), 4000);
+        }
+    };
+
     // Initial supplier name if editing
     React.useEffect(() => {
-        if (expense?.supplier_id) {
+        if (expense?.supplier_id && partners) {
             const s = partners.find(p => p.id === expense.supplier_id);
             if (s) setSupplierSearch(s.name);
         }
     }, [expense, partners]);
 
-    const suppliers = partners.filter(p => 
+    const suppliers = partners?.filter(p => 
         (p.types && p.types.includes('Supplier')) || 
         (p.category === 'Supplier') ||
         (p.name && p.name.toLowerCase().includes('supplier'))
-    );
+    ) || [];
 
     const filteredSuppliers = suppliers.filter(s => 
         s.name.toLowerCase().includes(supplierSearch.toLowerCase())
     );
 
+    // Exact match in partners
+    const matchedPartner = partners?.find(p => 
+        (formData.supplier_id && p.id === formData.supplier_id) || 
+        (supplierSearch.trim() && p.name.trim().toLowerCase() === supplierSearch.trim().toLowerCase())
+    );
+
     const handleSelectSupplier = (s) => {
-        setFormData(prev => ({ ...prev, supplier_id: s.id }));
+        setFormData(prev => ({ 
+            ...prev, 
+            supplier_id: s.id,
+            description: prev.description || `Bill from ${s.name}`
+        }));
         setSupplierSearch(s.name);
+        setShowSupplierDropdown(false);
+    };
+
+    const handleDirectNewSupplier = () => {
+        if (!supplierSearch.trim()) return;
+        setFormData(prev => ({ 
+            ...prev, 
+            supplier_id: '',
+            description: prev.description || `Bill from ${supplierSearch.trim()}`
+        }));
         setShowSupplierDropdown(false);
     };
 
     const handleEditSupplier = () => {
         if (!formData.supplier_id) return;
-        const s = partners.find(p => p.id === formData.supplier_id);
+        const s = partners?.find(p => p.id === formData.supplier_id);
         if (s) {
             setEditModal({ isOpen: true, type: 'partner_id', initialData: s });
         }
@@ -2857,7 +3204,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
     const [editModal, setEditModal] = useState({ isOpen: false, type: null, initialData: null });
     const handleEditSuccess = (updated) => {
         setEditModal({ isOpen: false, type: null, initialData: null });
-        onSuccess && typeof onSuccess === 'function' ? null : window.location.reload(); // Refresh to get new data if needed
+        onSuccess && typeof onSuccess === 'function' ? null : window.location.reload();
     };
 
     const calculateTotals = (updated) => {
@@ -2883,12 +3230,51 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
     };
 
     const handleSave = async () => {
-        if (!formData.supplier_id) return alert('Please select a supplier');
-        if (!formData.description) return alert('Description is required');
+        const trimmedSupplier = supplierSearch.trim();
+        if (!formData.supplier_id && !trimmedSupplier) {
+            return alert('Please enter or select a supplier');
+        }
+        if (!formData.description) {
+            return alert('Expense description is required');
+        }
         
         setLoading(true);
         try {
-            const { data, error } = await saveJobExpense(formData);
+            let finalSupplierId = formData.supplier_id;
+
+            // If no supplier_id is linked yet, auto-resolve or auto-create the supplier
+            if (!finalSupplierId && trimmedSupplier) {
+                const existing = partners?.find(p => p.name.trim().toLowerCase() === trimmedSupplier.toLowerCase());
+                if (existing) {
+                    finalSupplierId = existing.id;
+                } else {
+                    // Create new partner in Supabase database
+                    const newPartnerData = await savePartner({
+                        name: trimmedSupplier,
+                        type: 'supplier',
+                        category: 'Supplier',
+                        types: ['Supplier'],
+                        company_id: company_id || null
+                    });
+                    if (newPartnerData && newPartnerData.id) {
+                        finalSupplierId = newPartnerData.id;
+                        if (partners && Array.isArray(partners)) {
+                            partners.push(newPartnerData);
+                        }
+                    }
+                }
+            }
+
+            if (!finalSupplierId) {
+                throw new Error('Could not resolve or create supplier. Please try again.');
+            }
+
+            const payload = {
+                ...formData,
+                supplier_id: finalSupplierId
+            };
+
+            const { data, error } = await saveJobExpense(payload);
             if (error) throw error;
             onSuccess(data);
         } catch (err) {
@@ -2905,6 +3291,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
             bill_url: url,
             notes: (prev.notes || '') + `\n[Linked from Celron Scanner: ${name}]`
         }));
+        setActiveMediaTab('viewer');
     };
 
     const handleFileUpload = async (e) => {
@@ -2917,6 +3304,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
             const url = await onUploadBill(file);
             if (url) {
                 setFormData(prev => ({ ...prev, bill_url: url }));
+                setActiveMediaTab('viewer');
                 
                 // Trigger AI OCR
                 setAiStatus('🤖 Google Vision is reading document...');
@@ -2930,13 +3318,16 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                         // Find supplier if possible
                         let supplierId = formData.supplier_id;
                         if (!supplierId && result.supplier_name) {
-                            const matched = partners.find(p => 
+                            const matched = partners?.find(p => 
                                 p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
                                 (result.uen && p.registration_no === result.uen)
                             );
                             if (matched) {
                                 supplierId = matched.id;
                                 setSupplierSearch(matched.name);
+                            } else {
+                                supplierId = '';
+                                setSupplierSearch(result.supplier_name);
                             }
                         }
 
@@ -3004,6 +3395,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                             bill_url: selectedFile.webViewLink,
                             notes: (prev.notes || '') + `\n[Linked from Celron Scanner: ${selectedFile.name}]`
                         }));
+                        setActiveMediaTab('viewer');
                         
                         try {
                             setAiStatus('🤖 Reading document...');
@@ -3026,13 +3418,16 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                                 if (result) {
                                     let supplierId = formData.supplier_id;
                                     if (!supplierId && result.supplier_name) {
-                                        const matched = partners.find(p => 
+                                        const matched = partners?.find(p => 
                                             p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
                                             (result.uen && p.registration_no === result.uen)
                                         );
                                         if (matched) {
                                             supplierId = matched.id;
                                             setSupplierSearch(matched.name);
+                                        } else {
+                                            supplierId = '';
+                                            setSupplierSearch(result.supplier_name);
                                         }
                                     }
 
@@ -3121,13 +3516,16 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                     if (result) {
                         let supplierId = formData.supplier_id;
                         if (!supplierId && result.supplier_name) {
-                            const matched = partners.find(p => 
+                            const matched = partners?.find(p => 
                                 p.name.toLowerCase().includes(result.supplier_name.toLowerCase()) ||
                                 (result.uen && p.registration_no === result.uen)
                             );
                             if (matched) {
                                 supplierId = matched.id;
                                 setSupplierSearch(matched.name);
+                            } else {
+                                supplierId = '';
+                                setSupplierSearch(result.supplier_name);
                             }
                         }
                         
@@ -3245,9 +3643,36 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                 </div>
 
                 <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                    <div className="premium-form-item full-width" style={{ gridColumn: 'span 2', position: 'relative' }}>
-                        <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>
-                            <span>Supplier *</span>
+                    {/* Supplier Field with Direct Entry + Auto-Save */}
+                    <div className="premium-form-item full-width" style={{ gridColumn: 'span 2', position: 'relative' }} ref={supplierDropdownRef}>
+                        <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span>Supplier *</span>
+                                {supplierSearch.trim() && !matchedPartner && (
+                                    <span style={{ 
+                                        background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)', 
+                                        color: '#3730a3', 
+                                        fontSize: '0.72rem', 
+                                        padding: '2px 8px', 
+                                        borderRadius: '12px', 
+                                        fontWeight: 700 
+                                    }}>
+                                        ✨ New Supplier (Auto-creates)
+                                    </span>
+                                )}
+                                {matchedPartner && (
+                                    <span style={{ 
+                                        background: '#f0fdf4', 
+                                        color: '#166534', 
+                                        fontSize: '0.72rem', 
+                                        padding: '2px 8px', 
+                                        borderRadius: '12px', 
+                                        fontWeight: 700 
+                                    }}>
+                                        ✓ Existing Supplier
+                                    </span>
+                                )}
+                            </span>
                             {formData.supplier_id && (
                                 <button 
                                     type="button"
@@ -3262,11 +3687,15 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                             <div style={{ flex: 1, position: 'relative' }}>
                                 <input
                                     className="premium-form-input"
-                                    placeholder="Search supplier from database..."
+                                    placeholder="Type supplier name directly or search database..."
                                     value={supplierSearch}
                                     onChange={(e) => {
                                         setSupplierSearch(e.target.value);
                                         setShowSupplierDropdown(true);
+                                        // Reset supplier_id if user is typing something new
+                                        if (formData.supplier_id) {
+                                            setFormData(prev => ({ ...prev, supplier_id: '' }));
+                                        }
                                     }}
                                     onFocus={() => setShowSupplierDropdown(true)}
                                     style={{ paddingRight: '40px' }}
@@ -3276,14 +3705,40 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                                         display: 'block', 
                                         width: '100%', 
                                         top: '100%', 
-                                        position: 'absolute',
-                                        zIndex: 100,
-                                        background: '#fff',
-                                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                                        borderRadius: '8px',
-                                        maxHeight: '200px',
-                                        overflowY: 'auto'
+                                        position: 'absolute', 
+                                        zIndex: 100, 
+                                        background: '#fff', 
+                                        boxShadow: '0 8px 24px rgba(0,0,0,0.12)', 
+                                        borderRadius: '10px', 
+                                        maxHeight: '230px', 
+                                        overflowY: 'auto',
+                                        border: '1px solid #e2e8f0',
+                                        marginTop: '4px'
                                     }}>
+                                        {/* Direct New Supplier Shortcut */}
+                                        {supplierSearch.trim() && !suppliers.some(s => s.name.trim().toLowerCase() === supplierSearch.trim().toLowerCase()) && (
+                                            <div 
+                                                onClick={handleDirectNewSupplier}
+                                                style={{
+                                                    padding: '10px 14px',
+                                                    background: '#eff6ff',
+                                                    color: '#1d4ed8',
+                                                    cursor: 'pointer',
+                                                    fontSize: '0.85rem',
+                                                    fontWeight: 700,
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '8px',
+                                                    borderBottom: '1.5px solid #dbeafe'
+                                                }}
+                                                onMouseOver={(e) => e.currentTarget.style.background = '#dbeafe'}
+                                                onMouseOut={(e) => e.currentTarget.style.background = '#eff6ff'}
+                                            >
+                                                <Plus size={15} />
+                                                <span>Register "<strong>{supplierSearch}</strong>" as New Supplier</span>
+                                            </div>
+                                        )}
+
                                         {filteredSuppliers.length > 0 ? filteredSuppliers.map(s => (
                                             <button 
                                                 key={s.id} 
@@ -3297,17 +3752,25 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                                                     border: 'none',
                                                     borderBottom: '1px solid #f1f5f9',
                                                     cursor: 'pointer',
-                                                    fontSize: '0.9rem'
+                                                    fontSize: '0.9rem',
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    alignItems: 'center'
                                                 }}
-                                                onMouseOver={(e) => e.target.style.background = '#f8fafc'}
-                                                onMouseOut={(e) => e.target.style.background = 'none'}
+                                                onMouseOver={(e) => e.currentTarget.style.background = '#f8fafc'}
+                                                onMouseOut={(e) => e.currentTarget.style.background = 'none'}
                                             >
-                                                {s.name}
+                                                <span style={{ fontWeight: 600, color: '#1e293b' }}>{s.name}</span>
+                                                {s.registration_no && (
+                                                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>UEN: {s.registration_no}</span>
+                                                )}
                                             </button>
                                         )) : (
-                                            <div style={{ padding: '12px', fontSize: '0.85rem', color: '#94a3b8', textAlign: 'center' }}>
-                                                No suppliers matching "{supplierSearch}"
-                                            </div>
+                                            !supplierSearch.trim() && (
+                                                <div style={{ padding: '12px', fontSize: '0.85rem', color: '#94a3b8', textAlign: 'center' }}>
+                                                    Start typing to search or register a new supplier
+                                                </div>
+                                            )
                                         )}
                                     </div>
                                 )}
@@ -3441,7 +3904,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                         type="button" 
                         className="btn btn-primary" 
                         onClick={handleSave} 
-                        disabled={loading || !formData.supplier_id || !formData.description}
+                        disabled={loading || (!formData.supplier_id && !supplierSearch.trim()) || !formData.description}
                         style={{ flex: 2, background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)', border: 'none', height: '44px', fontWeight: 700 }}
                     >
                         {loading ? <Loader2 size={18} className="animate-spin" style={{ margin: 'auto' }} /> : <Save size={18} />}
@@ -3450,137 +3913,109 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                 </div>
             </div>
 
-            {/* RIGHT COLUMN: Interactive Bill Preview Sheet (Width 55%) */}
+            {/* RIGHT COLUMN: 2 TABS - (1) Attach / Upload Sources & (2) Invoice / Receipt Viewer */}
             <div style={{ 
                 flex: '1.2', 
                 minWidth: '50%', 
                 background: '#fafbfd', 
-                border: '1.5px dashed #cbd5e1', 
+                border: '1.5px solid #e2e8f0', 
                 borderRadius: '20px', 
-                padding: '24px', 
+                padding: '20px', 
                 display: 'flex', 
                 flexDirection: 'column', 
                 gap: '16px',
-                boxShadow: '0 4px 20px rgba(99, 102, 241, 0.02)'
+                boxShadow: '0 4px 20px rgba(99, 102, 241, 0.03)'
             }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
-                    <h4 style={{ margin: 0, fontWeight: 800, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Receipt size={18} color="var(--accent)" />
-                        <span>Invoice / Receipt Full Viewer</span>
-                    </h4>
-                    {formData.bill_url && (
-                        <span style={{ fontSize: '0.7rem', background: '#dcfce7', color: '#15803d', padding: '4px 8px', borderRadius: '20px', fontWeight: 800 }}>
-                            DOCUMENT LOADED
-                        </span>
-                    )}
+                {/* TAB NAVIGATION HEADER */}
+                <div style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between',
+                    background: '#f1f5f9',
+                    padding: '4px',
+                    borderRadius: '12px',
+                    border: '1px solid #e2e8f0'
+                }}>
+                    <div style={{ display: 'flex', gap: '4px', width: '100%' }}>
+                        <button
+                            type="button"
+                            onClick={() => setActiveMediaTab('upload')}
+                            style={{
+                                flex: 1,
+                                padding: '9px 14px',
+                                borderRadius: '9px',
+                                border: 'none',
+                                fontWeight: 700,
+                                fontSize: '0.85rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '8px',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                background: activeMediaTab === 'upload' ? '#ffffff' : 'transparent',
+                                color: activeMediaTab === 'upload' ? '#4f46e5' : '#64748b',
+                                boxShadow: activeMediaTab === 'upload' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none'
+                            }}
+                        >
+                            <Upload size={15} />
+                            <span>Attach / Upload Sources</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setActiveMediaTab('viewer')}
+                            style={{
+                                flex: 1,
+                                padding: '9px 14px',
+                                borderRadius: '9px',
+                                border: 'none',
+                                fontWeight: 700,
+                                fontSize: '0.85rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '8px',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                background: activeMediaTab === 'viewer' ? '#ffffff' : 'transparent',
+                                color: activeMediaTab === 'viewer' ? '#4f46e5' : '#64748b',
+                                boxShadow: activeMediaTab === 'viewer' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none'
+                            }}
+                        >
+                            <Receipt size={15} />
+                            <span>Invoice Viewer</span>
+                            {formData.bill_url ? (
+                                <span style={{ 
+                                    fontSize: '0.65rem', 
+                                    background: '#dcfce7', 
+                                    color: '#15803d', 
+                                    padding: '2px 8px', 
+                                    borderRadius: '12px', 
+                                    fontWeight: 800,
+                                    marginLeft: '4px'
+                                }}>
+                                    ATTACHED
+                                </span>
+                            ) : (
+                                <span style={{ 
+                                    fontSize: '0.65rem', 
+                                    background: '#e2e8f0', 
+                                    color: '#64748b', 
+                                    padding: '2px 8px', 
+                                    borderRadius: '12px', 
+                                    fontWeight: 700,
+                                    marginLeft: '4px'
+                                }}>
+                                    EMPTY
+                                </span>
+                            )}
+                        </button>
+                    </div>
                 </div>
 
-                {formData.bill_url ? (
-                    /* Attached Document Preview Mode */
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
-                        <div style={{ flex: 1, position: 'relative', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden', minHeight: '440px', background: '#f8fafc' }}>
-                            {formData.bill_url.includes('drive.google.com') ? (
-                                <iframe 
-                                    src={getEmbeddableUrl(formData.bill_url)} 
-                                    style={{ width: '100%', height: '100%', border: 'none', minHeight: '440px' }} 
-                                    title="Google Drive Preview"
-                                />
-                            ) : formData.bill_url.toLowerCase().endsWith('.pdf') ? (
-                                <iframe 
-                                    src={formData.bill_url} 
-                                    style={{ width: '100%', height: '100%', border: 'none', minHeight: '440px' }} 
-                                    title="PDF Preview"
-                                />
-                            ) : (
-                                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px' }}>
-                                    <img 
-                                        src={formData.bill_url} 
-                                        alt="Supplier Bill" 
-                                        style={{ maxWidth: '100%', maxHeight: '420px', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }} 
-                                    />
-                                </div>
-                            )}
-                            
-                            <button
-                                type="button"
-                                onClick={() => handleChange('bill_url', '')}
-                                style={{ 
-                                    position: 'absolute', 
-                                    bottom: '16px', 
-                                    right: '16px', 
-                                    background: 'rgba(239, 68, 68, 0.95)', 
-                                    color: 'white', 
-                                    border: 'none', 
-                                    borderRadius: '8px', 
-                                    padding: '8px 14px', 
-                                    fontSize: '0.8rem', 
-                                    fontWeight: 700, 
-                                    cursor: 'pointer', 
-                                    display: 'flex', 
-                                    alignItems: 'center', 
-                                    gap: '6px', 
-                                    boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)',
-                                    transition: 'all 0.2s'
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.background = '#ef4444'}
-                                onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.95)'}
-                            >
-                                <Trash2 size={14} /> Detach Bill Document
-                            </button>
-                        </div>
-
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <a 
-                                href={formData.bill_url} 
-                                target="_blank" 
-                                rel="noreferrer" 
-                                style={{ 
-                                    fontSize: '0.8rem', 
-                                    color: '#6366f1', 
-                                    fontWeight: 700, 
-                                    textDecoration: 'none',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '4px'
-                                }}
-                            >
-                                <ExternalLink size={14} /> Open in New Tab
-                            </a>
-
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                                <button
-                                    type="button"
-                                    onClick={handleManualExtraction}
-                                    disabled={isAiProcessing || uploading}
-                                    className="btn btn-sm"
-                                    style={{
-                                        background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
-                                        color: '#fff',
-                                        border: 'none',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '6px',
-                                        fontWeight: 700,
-                                        padding: '6px 12px',
-                                        borderRadius: '8px',
-                                        boxShadow: '0 4px 10px rgba(168, 85, 247, 0.2)',
-                                        cursor: 'pointer'
-                                    }}
-                                >
-                                    {isAiProcessing ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                                    <span>Run AI Extraction</span>
-                                </button>
-
-                                <label className="btn btn-sm btn-outline" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', margin: 0, padding: '6px 12px' }}>
-                                    <RefreshCw size={12} className={uploading ? 'animate-spin' : ''} />
-                                    <span style={{ fontSize: '0.8rem' }}>Replace Attachment</span>
-                                    <input type="file" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-                ) : (
-                    /* Drag and Drop / Action Portal */
+                {/* TAB 1: ATTACH / UPLOAD SOURCES */}
+                {activeMediaTab === 'upload' && (
                     <div style={{ 
                         flex: 1, 
                         display: 'flex', 
@@ -3590,15 +4025,15 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                         background: '#ffffff', 
                         border: '1px dashed #cbd5e1', 
                         borderRadius: '16px', 
-                        padding: '40px 24px', 
+                        padding: '30px 20px', 
                         textAlign: 'center', 
                         minHeight: '440px',
-                        gap: '24px'
+                        gap: '20px'
                     }}>
                         <div style={{ 
-                            width: '80px', 
-                            height: '80px', 
-                            background: 'rgba(99, 102, 241, 0.06)', 
+                            width: '68px', 
+                            height: '68px', 
+                            background: 'rgba(99, 102, 241, 0.08)', 
                             color: '#6366f1', 
                             borderRadius: '50%', 
                             display: 'flex', 
@@ -3606,17 +4041,17 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                             justifyContent: 'center',
                             boxShadow: '0 8px 16px rgba(99, 102, 241, 0.05)'
                         }}>
-                            <Upload size={32} />
+                            <Upload size={30} />
                         </div>
                         
                         <div>
-                            <h4 style={{ margin: '0 0 6px 0', fontSize: '1.1rem', fontWeight: 800, color: '#334155' }}>Attach Supplier Invoice / Bill</h4>
-                            <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748b', maxWidth: '340px', lineHeight: '1.5' }}>
+                            <h4 style={{ margin: '0 0 6px 0', fontSize: '1.05rem', fontWeight: 800, color: '#334155' }}>Attach Supplier Invoice / Bill</h4>
+                            <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748b', maxWidth: '340px', lineHeight: '1.4' }}>
                                 Snap a photo or link a scanned document. Gemini AI automatically reads details and pre-fills your form.
                             </p>
                         </div>
 
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', maxWidth: '320px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', maxWidth: '330px' }}>
                             
                             {/* Local File Upload Button */}
                             <label className="btn btn-primary" style={{ 
@@ -3627,7 +4062,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                                 gap: '8px', 
                                 background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)', 
                                 border: 'none', 
-                                height: '44px',
+                                height: '42px',
                                 borderRadius: '10px',
                                 fontWeight: 700,
                                 boxShadow: '0 4px 10px rgba(99,102,241,0.2)'
@@ -3644,7 +4079,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                                 alignItems: 'center', 
                                 justifyContent: 'center', 
                                 gap: '8px', 
-                                height: '44px',
+                                height: '42px',
                                 borderRadius: '10px',
                                 fontWeight: 700,
                                 background: '#fff',
@@ -3665,7 +4100,7 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                                     alignItems: 'center', 
                                     justifyContent: 'center', 
                                     gap: '8px', 
-                                    height: '44px',
+                                    height: '42px',
                                     borderRadius: '10px',
                                     fontWeight: 700,
                                     background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
@@ -3678,77 +4113,357 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                                 <span>Mobile Upload (QR)</span>
                             </button>
 
-                            <div style={{ display: 'flex', alignItems: 'center', margin: '8px 0', gap: '10px' }}>
-                                <div style={{ flex: 1, height: '1px', background: '#cbd5e1' }} />
-                                <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Google Scans Repository</span>
-                                <div style={{ flex: 1, height: '1px', background: '#cbd5e1' }} />
+                            {/* GOOGLE DRIVE REPOSITORY: Folder Structure with default pointing */}
+                            <div style={{ width: '100%', marginTop: '6px', textAlign: 'left' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', margin: '4px 0 10px 0', gap: '10px' }}>
+                                    <div style={{ flex: 1, height: '1px', background: '#cbd5e1' }} />
+                                    <span style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                        <HardDrive size={12} /> Google Drive Folder Structure
+                                    </span>
+                                    <div style={{ flex: 1, height: '1px', background: '#cbd5e1' }} />
+                                </div>
+
+                                {/* Folder Breadcrumb & Navigation */}
+                                <div style={{ background: '#f1f5f9', padding: '8px 10px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '8px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                                        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#334155', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <FolderOpen size={13} style={{ color: '#4f46e5' }} />
+                                            {currentFolderMeta.name || 'Folder'}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => fetchFolderStructureFiles(selectedDriveFolder)}
+                                            disabled={loadingDriveFolder}
+                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '3px', padding: 0 }}
+                                            title="Refresh folder files"
+                                        >
+                                            <RefreshCw size={11} className={loadingDriveFolder ? 'animate-spin' : ''} /> Refresh
+                                        </button>
+                                    </div>
+
+                                    {/* Subfolder pills - Default pointing to Supplier Bills */}
+                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedDriveFolder('supplier_bills')}
+                                            style={{
+                                                padding: '4px 9px',
+                                                borderRadius: '7px',
+                                                fontSize: '0.72rem',
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                                border: selectedDriveFolder === 'supplier_bills' ? '1.5px solid #10b981' : '1px solid #cbd5e1',
+                                                background: selectedDriveFolder === 'supplier_bills' ? '#ecfdf5' : '#ffffff',
+                                                color: selectedDriveFolder === 'supplier_bills' ? '#047857' : '#475569',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}
+                                            title="Default: Job's SupplierBills&Expenses folder"
+                                        >
+                                            <Folder size={11} style={{ color: '#10b981' }} />
+                                            <span>Supplier Bills</span>
+                                            <span style={{ fontSize: '0.6rem', background: selectedDriveFolder === 'supplier_bills' ? '#a7f3d0' : '#e2e8f0', color: selectedDriveFolder === 'supplier_bills' ? '#047857' : '#64748b', padding: '0 4px', borderRadius: '6px' }}>Default</span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedDriveFolder('photos')}
+                                            style={{
+                                                padding: '4px 9px',
+                                                borderRadius: '7px',
+                                                fontSize: '0.72rem',
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                                border: selectedDriveFolder === 'photos' ? '1.5px solid #3b82f6' : '1px solid #cbd5e1',
+                                                background: selectedDriveFolder === 'photos' ? '#eff6ff' : '#ffffff',
+                                                color: selectedDriveFolder === 'photos' ? '#1d4ed8' : '#475569',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}
+                                            title="Job's Photos & Gallery folder"
+                                        >
+                                            <Image size={11} style={{ color: '#3b82f6' }} />
+                                            <span>Photos & Media</span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedDriveFolder('account_payable')}
+                                            style={{
+                                                padding: '4px 9px',
+                                                borderRadius: '7px',
+                                                fontSize: '0.72rem',
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                                border: selectedDriveFolder === 'account_payable' ? '1.5px solid #f59e0b' : '1px solid #cbd5e1',
+                                                background: selectedDriveFolder === 'account_payable' ? '#fffbeb' : '#ffffff',
+                                                color: selectedDriveFolder === 'account_payable' ? '#b45309' : '#475569',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}
+                                            title="Central Account Payable folder"
+                                        >
+                                            <HardDrive size={11} style={{ color: '#f59e0b' }} />
+                                            <span>Account Payable</span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedDriveFolder('scans')}
+                                            style={{
+                                                padding: '4px 9px',
+                                                borderRadius: '7px',
+                                                fontSize: '0.72rem',
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                                border: selectedDriveFolder === 'scans' ? '1.5px solid #6366f1' : '1px solid #cbd5e1',
+                                                background: selectedDriveFolder === 'scans' ? '#eef2ff' : '#ffffff',
+                                                color: selectedDriveFolder === 'scans' ? '#4338ca' : '#475569',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}
+                                            title="Scanner inbox (Celron_Scans)"
+                                        >
+                                            <Archive size={11} style={{ color: '#6366f1' }} />
+                                            <span>Celron Scans</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Folder Content List - Direct click to attach without window.prompt */}
+                                <div style={{
+                                    border: '1.5px solid #e2e8f0',
+                                    borderRadius: '12px',
+                                    background: '#ffffff',
+                                    maxHeight: '180px',
+                                    overflowY: 'auto',
+                                    padding: '6px',
+                                    boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.03)'
+                                }}>
+                                    {loadingDriveFolder ? (
+                                        <div style={{ padding: '24px 0', textAlign: 'center', color: '#64748b', fontSize: '0.78rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                            <Loader2 size={15} className="animate-spin" style={{ color: '#4f46e5' }} />
+                                            <span>Loading files from Google Drive...</span>
+                                        </div>
+                                    ) : driveFolderFiles.length === 0 ? (
+                                        <div style={{ padding: '20px 10px', textAlign: 'center', color: '#94a3b8', fontSize: '0.78rem' }}>
+                                            <FolderOpen size={24} style={{ color: '#cbd5e1', margin: '0 auto 6px', display: 'block' }} />
+                                            <div>No documents found in <strong>{currentFolderMeta.name}</strong></div>
+                                            <div style={{ fontSize: '0.7rem', color: '#cbd5e1', marginTop: '3px' }}>Drop files into this Drive folder or upload above</div>
+                                        </div>
+                                    ) : (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                            {driveFolderFiles.map(file => (
+                                                <div
+                                                    key={file.id}
+                                                    onClick={() => handleSelectDriveFile(file)}
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '8px',
+                                                        padding: '6px 9px',
+                                                        borderRadius: '7px',
+                                                        background: '#f8fafc',
+                                                        border: '1px solid #e2e8f0',
+                                                        cursor: 'pointer',
+                                                        transition: 'all 0.15s ease'
+                                                    }}
+                                                    onMouseEnter={e => {
+                                                        e.currentTarget.style.borderColor = '#10b981';
+                                                        e.currentTarget.style.background = '#ecfdf5';
+                                                    }}
+                                                    onMouseLeave={e => {
+                                                        e.currentTarget.style.borderColor = '#e2e8f0';
+                                                        e.currentTarget.style.background = '#f8fafc';
+                                                    }}
+                                                    title={`Click to attach "${file.name}" & auto-extract with Gemini AI`}
+                                                >
+                                                    <FileText size={14} style={{ color: '#10b981', flexShrink: 0 }} />
+                                                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#1e293b', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                        {file.name}
+                                                    </span>
+                                                    {file.size && (
+                                                        <span style={{ fontSize: '0.68rem', color: '#94a3b8', flexShrink: 0 }}>
+                                                            {(file.size / 1024).toFixed(0)} KB
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-
-                            {/* Link from Celron Scanner Folder */}
-                            <button 
-                                type="button" 
-                                onClick={handlePickFromDrive}
-                                className="btn btn-outline"
-                                style={{ 
-                                    display: 'flex', 
-                                    alignItems: 'center', 
-                                    justifyContent: 'center', 
-                                    gap: '8px', 
-                                    height: '44px', 
-                                    borderRadius: '10px', 
-                                    fontWeight: 700,
-                                    background: 'rgba(255, 255, 255, 0.5)'
-                                }}
-                            >
-                                <Archive size={16} />
-                                <span>Link from Celron Scanner Folder</span>
-                            </button>
-
-                            {/* Link from Account Payable Folder */}
-                            <button 
-                                type="button" 
-                                onClick={handlePickFromAccountPayable}
-                                className="btn btn-outline"
-                                style={{ 
-                                    display: 'flex', 
-                                    alignItems: 'center', 
-                                    justifyContent: 'center', 
-                                    gap: '8px', 
-                                    height: '44px', 
-                                    borderRadius: '10px', 
-                                    fontWeight: 700,
-                                    borderColor: '#f59e0b',
-                                    color: '#d97706',
-                                    background: '#fffbeb'
-                                }}
-                            >
-                                <HardDrive size={16} />
-                                <span>Link from Account Payable Folder</span>
-                            </button>
-
-                            {/* Link from Job Photos & Gallery */}
-                            <button 
-                                type="button" 
-                                onClick={handlePickFromJobPhotos}
-                                className="btn btn-outline"
-                                style={{ 
-                                    display: 'flex', 
-                                    alignItems: 'center', 
-                                    justifyContent: 'center', 
-                                    gap: '8px', 
-                                    height: '44px', 
-                                    borderRadius: '10px', 
-                                    fontWeight: 700,
-                                    borderColor: '#3b82f6',
-                                    color: '#1d4ed8',
-                                    background: '#eff6ff'
-                                }}
-                            >
-                                <Image size={16} />
-                                <span>Link from Job Photos & Gallery</span>
-                            </button>
                         </div>
                     </div>
+                )}
+
+                {/* TAB 2: INVOICE VIEWER */}
+                {activeMediaTab === 'viewer' && (
+                    formData.bill_url ? (
+                        /* Attached Document Preview Mode */
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1 }}>
+                            <div style={{ flex: 1, position: 'relative', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden', minHeight: '430px', background: '#f8fafc' }}>
+                                {formData.bill_url.includes('drive.google.com') ? (
+                                    <iframe 
+                                        src={getEmbeddableUrl(formData.bill_url)} 
+                                        style={{ width: '100%', height: '100%', border: 'none', minHeight: '430px' }} 
+                                        title="Google Drive Preview"
+                                    />
+                                ) : formData.bill_url.toLowerCase().endsWith('.pdf') ? (
+                                    <iframe 
+                                        src={formData.bill_url} 
+                                        style={{ width: '100%', height: '100%', border: 'none', minHeight: '430px' }} 
+                                        title="PDF Preview"
+                                    />
+                                ) : (
+                                    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px' }}>
+                                        <img 
+                                            src={formData.bill_url} 
+                                            alt="Supplier Bill" 
+                                            style={{ maxWidth: '100%', maxHeight: '410px', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }} 
+                                        />
+                                    </div>
+                                )}
+                                
+                                <button
+                                    type="button"
+                                    onClick={() => handleChange('bill_url', '')}
+                                    style={{ 
+                                        position: 'absolute', 
+                                        bottom: '16px', 
+                                        right: '16px', 
+                                        background: 'rgba(239, 68, 68, 0.95)', 
+                                        color: 'white', 
+                                        border: 'none', 
+                                        borderRadius: '8px', 
+                                        padding: '8px 14px', 
+                                        fontSize: '0.8rem', 
+                                        fontWeight: 700, 
+                                        cursor: 'pointer', 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        gap: '6px', 
+                                        boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)',
+                                        transition: 'all 0.2s'
+                                    }}
+                                    onMouseEnter={(e) => e.currentTarget.style.background = '#ef4444'}
+                                    onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.95)'}
+                                >
+                                    <Trash2 size={14} /> Detach Document
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <a 
+                                    href={formData.bill_url} 
+                                    target="_blank" 
+                                    rel="noreferrer" 
+                                    style={{ 
+                                        fontSize: '0.8rem', 
+                                        color: '#6366f1', 
+                                        fontWeight: 700, 
+                                        textDecoration: 'none', 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        gap: '4px' 
+                                    }}
+                                >
+                                    <ExternalLink size={14} /> Open in New Tab
+                                </a>
+
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button
+                                        type="button"
+                                        onClick={handleManualExtraction}
+                                        disabled={isAiProcessing || uploading}
+                                        className="btn btn-sm"
+                                        style={{
+                                            background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
+                                            color: '#fff',
+                                            border: 'none',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                            fontWeight: 700,
+                                            padding: '7px 12px',
+                                            borderRadius: '8px',
+                                            boxShadow: '0 4px 10px rgba(168, 85, 247, 0.2)',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        {isAiProcessing ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                                        <span>Run AI Extraction</span>
+                                    </button>
+
+                                    <label className="btn btn-sm btn-outline" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', margin: 0, padding: '7px 12px', borderRadius: '8px' }}>
+                                        <RefreshCw size={12} className={uploading ? 'animate-spin' : ''} />
+                                        <span style={{ fontSize: '0.8rem' }}>Replace Attachment</span>
+                                        <input type="file" style={{ display: 'none' }} onChange={handleFileUpload} disabled={uploading} />
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        /* Empty State when no Document is Attached */
+                        <div style={{ 
+                            flex: 1, 
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            justifyContent: 'center', 
+                            alignItems: 'center', 
+                            background: '#ffffff', 
+                            border: '1px dashed #cbd5e1', 
+                            borderRadius: '16px', 
+                            padding: '40px 24px', 
+                            textAlign: 'center', 
+                            minHeight: '440px',
+                            gap: '16px'
+                        }}>
+                            <div style={{ 
+                                width: '64px', 
+                                height: '64px', 
+                                borderRadius: '50%', 
+                                background: '#f1f5f9', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center', 
+                                color: '#94a3b8' 
+                            }}>
+                                <Receipt size={28} />
+                            </div>
+                            <div>
+                                <h4 style={{ margin: '0 0 6px 0', fontSize: '1.05rem', fontWeight: 800, color: '#334155' }}>No Document Attached Yet</h4>
+                                <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748b', maxWidth: '300px', lineHeight: '1.5' }}>
+                                    Upload or link a scanned bill from the sources tab to view it in full and run AI OCR extraction.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setActiveMediaTab('upload')}
+                                className="btn btn-primary"
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
+                                    border: 'none',
+                                    padding: '10px 18px',
+                                    borderRadius: '10px',
+                                    fontWeight: 700,
+                                    fontSize: '0.85rem',
+                                    cursor: 'pointer',
+                                    marginTop: '8px'
+                                }}
+                            >
+                                <Upload size={16} />
+                                <span>Open Upload & Scans Tab</span>
+                            </button>
+                        </div>
+                    )
                 )}
             </div>
 
@@ -3899,6 +4614,108 @@ export const QuickExpenseAdd = ({ job_id, partners, jobs, expense, onSuccess, on
                                 Close
                             </button>
                         </div>
+                    </div>
+                </Modal>
+            )}
+
+            {/* Job Supplier Bills Modal Picker */}
+            {jobBillsModal.isOpen && (
+                <Modal
+                    isOpen={jobBillsModal.isOpen}
+                    onClose={() => setJobBillsModal(prev => ({ ...prev, isOpen: false }))}
+                    title={`Supplier Bills from Job: ${jobBillsModal.jobNo} (${jobBillsModal.folderName})`}
+                    icon={FolderOpen}
+                    size="lg"
+                >
+                    <div style={{ padding: '12px' }}>
+                        {jobBillsModal.isLoading ? (
+                            <div style={{ padding: '48px 0', textAlign: 'center', color: '#6366f1' }}>
+                                <Loader2 size={36} className="animate-spin" style={{ margin: '0 auto 12px', display: 'block' }} />
+                                <div style={{ fontSize: '0.9rem', color: '#475569', fontWeight: 600 }}>Scanning Job's Supplier Bills folder on Google Drive...</div>
+                            </div>
+                        ) : jobBillsModal.files.length === 0 ? (
+                            <div style={{ padding: '40px 16px', textAlign: 'center' }}>
+                                <Receipt size={44} color="#94a3b8" style={{ margin: '0 auto 12px', display: 'block' }} />
+                                <div style={{ fontWeight: 700, color: '#334155', fontSize: '1rem' }}>No bills found in {jobBillsModal.folderName}</div>
+                                <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '6px', maxWidth: '420px', margin: '6px auto 0', lineHeight: 1.5 }}>
+                                    No documents exist inside <strong>{jobBillsModal.jobNo}</strong>'s <strong>{jobBillsModal.folderName}</strong> folder yet. You can upload an invoice using "Upload local invoice / bill" or drop files into this Google Drive folder.
+                                </p>
+                                <div style={{ marginTop: '20px' }}>
+                                    <button 
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => setJobBillsModal(prev => ({ ...prev, isOpen: false }))}
+                                        style={{ padding: '8px 20px', borderRadius: '8px' }}
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                                    <p style={{ fontSize: '0.82rem', color: '#64748b', margin: 0 }}>
+                                        Select an invoice to attach. Gemini AI will automatically extract details and populate your expense form.
+                                    </p>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#047857', background: '#ecfdf5', padding: '2px 8px', borderRadius: '12px', border: '1px solid #a7f3d0' }}>
+                                        {jobBillsModal.files.length} document{jobBillsModal.files.length !== 1 ? 's' : ''}
+                                    </span>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '12px', maxHeight: '420px', overflowY: 'auto', padding: '2px' }}>
+                                    {jobBillsModal.files.map(file => (
+                                        <div
+                                            key={file.id}
+                                            onClick={() => handleSelectJobBill(file)}
+                                            style={{
+                                                border: '1.5px solid #e2e8f0',
+                                                borderRadius: '12px',
+                                                padding: '12px 14px',
+                                                cursor: 'pointer',
+                                                background: '#ffffff',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '12px',
+                                                transition: 'all 0.15s ease',
+                                                boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                                            }}
+                                            onMouseEnter={e => {
+                                                e.currentTarget.style.borderColor = '#10b981';
+                                                e.currentTarget.style.background = '#f0fdf4';
+                                                e.currentTarget.style.transform = 'translateY(-1px)';
+                                            }}
+                                            onMouseLeave={e => {
+                                                e.currentTarget.style.borderColor = '#e2e8f0';
+                                                e.currentTarget.style.background = '#ffffff';
+                                                e.currentTarget.style.transform = 'none';
+                                            }}
+                                        >
+                                            <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#dcfce7', color: '#15803d', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                <Receipt size={20} />
+                                            </div>
+                                            <div style={{ overflow: 'hidden', flex: 1, minWidth: 0 }}>
+                                                <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={file.name}>
+                                                    {file.name}
+                                                </div>
+                                                <div style={{ fontSize: '0.73rem', color: '#64748b', marginTop: '2px', display: 'flex', gap: '8px' }}>
+                                                    <span>{file.mimeType?.split('/')[1]?.toUpperCase() || 'FILE'}</span>
+                                                    {file.size && <span>• {(file.size / 1024).toFixed(0)} KB</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'flex-end' }}>
+                                    <button 
+                                        type="button"
+                                        className="btn btn-secondary" 
+                                        onClick={() => setJobBillsModal(prev => ({ ...prev, isOpen: false }))}
+                                        style={{ padding: '8px 18px', borderRadius: '8px' }}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </Modal>
             )}

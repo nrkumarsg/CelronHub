@@ -4,13 +4,13 @@ import {
     ArrowLeft, LayoutDashboard, ShoppingCart, FileText, FolderOpen, 
     DollarSign, TrendingUp, Clock, CheckCircle2, AlertCircle, Plus, 
     Edit3, Trash2, ExternalLink, RefreshCcw, Loader2, Sparkles, Building2, 
-    Ship, MapPin, Eye, Printer, Send, Package, Receipt, ChevronDown, ChevronRight 
+    Ship, MapPin, Eye, Printer, Send, Package, Receipt, ChevronDown, ChevronRight, Calendar 
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getJobEagleViewData, saveWorkflowDocument, deleteWorkflowDocument } from '../../lib/workflowV2Service';
 import { supabase } from '../../lib/supabase';
 import EagleDriveTreeViewer from '../../components/workflows/EagleDriveTreeViewer';
-import SupplierOrderCrudModal from '../../components/workflows/SupplierOrderCrudModal';
+import GoogleCalendarReminderModal from '../../components/common/GoogleCalendarReminderModal';
 import SmartUploadPanel from '../../components/upload/SmartUploadPanel';
 import { getStoredToken } from '../../lib/googleAuthService';
 import toast from 'react-hot-toast';
@@ -37,9 +37,29 @@ export default function JobEagleView() {
     const [showEditDropdown, setShowEditDropdown] = useState(false);
     const editDropdownRef = useRef(null);
     
-    // Modal states
-    const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
-    const [selectedSupplierOrder, setSelectedSupplierOrder] = useState(null);
+    // Calendar reminder modal state
+    const [calendarModal, setCalendarModal] = useState({
+        isOpen: false,
+        title: '',
+        date: '',
+        description: '',
+        location: '',
+        activityType: '',
+        jobNo: ''
+    });
+
+    const openCalendarModal = (params = {}) => {
+        const jobNoVal = masterJob?.assigned_job_no || masterJob?.document_no || 'Job';
+        setCalendarModal({
+            isOpen: true,
+            title: params.title || `[${jobNoVal}] Follow-up Reminder`,
+            date: params.date || new Date(Date.now() + 86400000).toISOString().split('T')[0],
+            description: params.description || `Job: ${jobNoVal}\nCustomer: ${customer}\nVessel: ${vessel}`,
+            location: params.location || (vessel ? `Vessel: ${vessel}` : ''),
+            activityType: params.activityType || 'Job Activity',
+            jobNo: jobNoVal
+        });
+    };
 
     useEffect(() => {
         if (id) {
@@ -268,8 +288,7 @@ export default function JobEagleView() {
                 iconBg: '#fffbeb',
                 iconColor: '#f59e0b',
                 onClick: () => {
-                    setSelectedSupplierOrder(po);
-                    setIsSupplierModalOpen(true);
+                    navigate(`/workflows/editor/purchase-order/${po.id}?return_to=${encodeURIComponent(window.location.pathname)}`);
                 }
             });
         });
@@ -306,21 +325,42 @@ export default function JobEagleView() {
                 </div>
 
                 {/* Right Quick Actions */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <button
-                        onClick={() => { setSelectedSupplierOrder(null); setIsSupplierModalOpen(true); }}
+                        onClick={() => {
+                            const targetJobId = masterJob?.id || (jobSuite?.allDocs && jobSuite.allDocs[0]?.id) || id;
+                            navigate(`/workflows/editor/purchase-order/new?job_id=${targetJobId}&assigned_job_no=${encodeURIComponent(jobNo)}&return_to=${encodeURIComponent(window.location.pathname)}`);
+                        }}
                         style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', color: '#0f172a', fontWeight: 900, border: 'none', padding: '9px 18px', borderRadius: '10px', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 4px 14px rgba(245,158,11,0.35)' }}
+                        title="Create Supplier Purchase Order in PO2 Suppliers Editor"
                     >
                         <Plus size={16} /> Create Supplier Order
+                    </button>
+
+                    <button
+                        onClick={() => openCalendarModal({
+                            title: `[${jobNo}] Milestone / Follow-up - ${customer || ''} (${vessel || ''})`,
+                            activityType: 'General Job Follow-up',
+                            location: vessel ? `Vessel: ${vessel}` : '',
+                            description: `Job: ${jobNo}\nCustomer: ${customer}\nVessel: ${vessel}\nStatus: ${metrics.lifecycleStatus}\nLink: ${window.location.href}`
+                        })}
+                        style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#93c5fd', border: '1px solid rgba(59, 130, 246, 0.3)', padding: '9px 14px', borderRadius: '10px', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700 }}
+                        title="Schedule Google Calendar Reminder for this Job"
+                    >
+                        <Calendar size={15} /> Set Reminder
                     </button>
 
                     {/* Multi-Document Edit Job Suite Dropdown */}
                     <div ref={editDropdownRef} style={{ position: 'relative' }}>
                         <div style={{ display: 'flex', alignItems: 'center' }}>
                             <button
-                                onClick={() => {
-                                    const primarySlug = getDocSlug(masterJob.document_type || 'job');
-                                    navigate(`/workflows/editor/${primarySlug}/${masterJob.id}`);
+                                type="button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    const targetId = masterJob?.id || (jobSuite?.allDocs && jobSuite.allDocs[0]?.id) || id;
+                                    const primaryType = masterJob?.document_type || (jobSuite?.allDocs && jobSuite.allDocs[0]?.document_type) || 'job';
+                                    const primarySlug = getDocSlug(primaryType);
+                                    navigate(`/workflows/editor/${primarySlug}/${targetId}`);
                                 }}
                                 style={{ 
                                     background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)', 
@@ -337,14 +377,18 @@ export default function JobEagleView() {
                                     boxShadow: '0 4px 12px rgba(79,70,229,0.35)',
                                     transition: 'all 0.2s ease' 
                                 }}
-                                title={`Open Main Editor (${masterJob.document_no || jobNo})`}
+                                title={`Open Main Editor (${masterJob?.document_no || jobNo || 'Job'})`}
                             >
                                 <Edit3 size={15} /> Edit Job Suite
                             </button>
 
                             {allSuiteItems.length > 1 && (
                                 <button
-                                    onClick={() => setShowEditDropdown(prev => !prev)}
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setShowEditDropdown(prev => !prev);
+                                    }}
                                     style={{
                                         background: '#3730a3',
                                         color: '#ffffff',
@@ -391,7 +435,9 @@ export default function JobEagleView() {
                                     {allSuiteItems.map((item, idx) => (
                                         <button
                                             key={idx}
-                                            onClick={() => {
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
                                                 setShowEditDropdown(false);
                                                 if (item.onClick) {
                                                     item.onClick();
@@ -619,7 +665,14 @@ export default function JobEagleView() {
 
                         {/* 4. Supplier PO Step */}
                         <div 
-                            onClick={() => setActiveTab('supplier')}
+                            onClick={() => {
+                                if (supplierPoDocs.length > 0) {
+                                    setActiveTab('supplier');
+                                } else {
+                                    const targetJobId = masterJob?.id || (jobSuite?.allDocs && jobSuite.allDocs[0]?.id) || id;
+                                    navigate(`/workflows/editor/purchase-order/new?job_id=${targetJobId}&assigned_job_no=${encodeURIComponent(jobNo)}&return_to=${encodeURIComponent(window.location.pathname)}`);
+                                }
+                            }}
                             style={{ 
                                 padding: '12px', 
                                 borderRadius: '12px', 
@@ -628,13 +681,30 @@ export default function JobEagleView() {
                                 cursor: 'pointer',
                                 transition: 'all 0.2s ease'
                             }}
-                            title="Click to view Supplier Orders"
+                            title={supplierPoDocs.length > 0 ? "Click to view Supplier Orders" : "Click to create Supplier Order in PO2 Suppliers"}
                             onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
                             onMouseLeave={(e) => e.currentTarget.style.transform = 'none'}
                         >
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#fbbf24', textTransform: 'uppercase' }}>4. Supplier PO</span>
-                                <ChevronRight size={13} style={{ color: '#fbbf24' }} />
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            openCalendarModal({
+                                                title: `[${jobNo}] Follow-up Supplier POs / Parts Arrival`,
+                                                activityType: 'Supplier PO Delivery / Tracking',
+                                                description: `Check supplier order status and parts delivery for Job ${jobNo}.\nVessel: ${vessel}\nSupplier Orders: ${supplierPoDocs.length} PO(s)\nLink: ${window.location.href}`
+                                            });
+                                        }}
+                                        style={{ background: 'none', border: 'none', color: '#fbbf24', cursor: 'pointer', padding: '1px', display: 'flex', alignItems: 'center' }}
+                                        title="Schedule Calendar Reminder"
+                                    >
+                                        <Calendar size={13} />
+                                    </button>
+                                    <ChevronRight size={13} style={{ color: '#fbbf24' }} />
+                                </div>
                             </div>
                             <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#fef08a', display: 'block', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {supplierPoDocs.length > 0 ? `${supplierPoDocs.length} PO(s)` : 'SGD 0 Cost'}
@@ -1008,12 +1078,25 @@ export default function JobEagleView() {
                                 </p>
                             </div>
 
-                            <button
-                                onClick={() => { setSelectedSupplierOrder(null); setIsSupplierModalOpen(true); }}
-                                style={{ background: '#f59e0b', color: '#0f172a', fontWeight: 900, border: 'none', padding: '8px 16px', borderRadius: '10px', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(245,158,11,0.3)' }}
-                            >
-                                <Plus size={15} /> Add Supplier Order
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <button
+                                    onClick={() => navigate(`/purchase-orders?search=${encodeURIComponent(jobNo)}`)}
+                                    style={{ background: '#ffffff', color: '#475569', fontWeight: 700, border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '10px', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                    title="Open full PO2 Suppliers workspace"
+                                >
+                                    <ExternalLink size={14} /> Open in PO2 Suppliers Hub
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        const targetJobId = masterJob?.id || (jobSuite?.allDocs && jobSuite.allDocs[0]?.id) || id;
+                                        navigate(`/workflows/editor/purchase-order/new?job_id=${targetJobId}&assigned_job_no=${encodeURIComponent(jobNo)}&return_to=${encodeURIComponent(window.location.pathname)}`);
+                                    }}
+                                    style={{ background: '#f59e0b', color: '#0f172a', fontWeight: 900, border: 'none', padding: '8px 16px', borderRadius: '10px', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(245,158,11,0.3)' }}
+                                    title="Create Supplier Purchase Order in PO2 Suppliers Editor"
+                                >
+                                    <Plus size={15} /> Add Supplier Order
+                                </button>
+                            </div>
                         </div>
 
                         {supplierPoDocs.length > 0 ? (
@@ -1047,11 +1130,23 @@ export default function JobEagleView() {
                                                 </td>
                                                 <td style={{ padding: '12px', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                                                     <button
-                                                        onClick={() => { setSelectedSupplierOrder(po); setIsSupplierModalOpen(true); }}
-                                                        style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                                                        title="Edit Supplier Order"
+                                                        onClick={() => navigate(`/workflows/editor/purchase-order/${po.id}?return_to=${encodeURIComponent(window.location.pathname)}`)}
+                                                        style={{ background: '#e0e7ff', color: '#3730a3', border: '1px solid #c7d2fe', padding: '4px 10px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                        title="Open in PO2 Suppliers Editor"
                                                     >
-                                                        <Edit3 size={14} /> Edit
+                                                        <Edit3 size={14} /> Open PO
+                                                    </button>
+                                                    <button
+                                                        onClick={() => openCalendarModal({
+                                                            title: `[${jobNo}] Follow up Supplier PO ${po.document_no} - ${po.partners?.name || 'Vendor'}`,
+                                                            date: po.expiry_date || po.issue_date || new Date().toISOString().split('T')[0],
+                                                            activityType: 'Supplier PO Delivery / Tracking',
+                                                            description: `Follow up on parts delivery for Purchase Order ${po.document_no}.\nVendor: ${po.partners?.name || 'Vendor'}\nAmount: ${po.currency || 'SGD'} ${po.total_amount}\nJob: ${jobNo} (Vessel: ${vessel})\nLink: ${window.location.origin}/workflows/editor/purchase-order/${po.id}`
+                                                        })}
+                                                        style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '4px 8px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.75rem', fontWeight: 700 }}
+                                                        title="Schedule Delivery Reminder in Google Calendar"
+                                                    >
+                                                        <Calendar size={13} /> Remind
                                                     </button>
                                                     <button
                                                         onClick={() => handleDeleteSupplierOrder(po.id, po.document_no)}
@@ -1067,17 +1162,20 @@ export default function JobEagleView() {
                                 </table>
                             </div>
                         ) : (
-                            <div style={{ background: '#fffbe finished', border: '2px dashed #fde68a', borderRadius: '12px', padding: '32px', textAlign: 'center', color: '#92400e' }}>
+                            <div style={{ background: '#fffbeb', border: '2px dashed #fde68a', borderRadius: '12px', padding: '32px', textAlign: 'center', color: '#92400e' }}>
                                 <ShoppingCart size={32} style={{ margin: '0 auto 8px', color: '#f59e0b' }} />
                                 <p style={{ fontSize: '0.9rem', fontWeight: 800, margin: 0 }}>No Supplier Orders Linked to {jobNo}</p>
                                 <p style={{ fontSize: '0.8rem', color: '#b45309', margin: '4px 0 16px' }}>
-                                    Click below to issue a supplier PO and update the PO Cost from SGD 0.
+                                    Click below to issue a supplier PO in the PO2 Suppliers module and update the PO Cost.
                                 </p>
                                 <button
-                                    onClick={() => { setSelectedSupplierOrder(null); setIsSupplierModalOpen(true); }}
+                                    onClick={() => {
+                                        const targetJobId = masterJob?.id || (jobSuite?.allDocs && jobSuite.allDocs[0]?.id) || id;
+                                        navigate(`/workflows/editor/purchase-order/new?job_id=${targetJobId}&assigned_job_no=${encodeURIComponent(jobNo)}&return_to=${encodeURIComponent(window.location.pathname)}`);
+                                    }}
                                     style={{ background: '#f59e0b', color: '#0f172a', fontWeight: 900, border: 'none', padding: '10px 20px', borderRadius: '10px', fontSize: '0.8rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(245,158,11,0.3)' }}
                                 >
-                                    <Plus size={16} /> Issue Supplier Order Now
+                                    <Plus size={16} /> Issue Supplier Order in PO2 Suppliers
                                 </button>
                             </div>
                         )}
@@ -1212,14 +1310,16 @@ export default function JobEagleView() {
                 )}
             </div>
 
-            {/* Supplier Order CRUD Modal */}
-            <SupplierOrderCrudModal
-                isOpen={isSupplierModalOpen}
-                onClose={() => setIsSupplierModalOpen(false)}
-                onSuccess={() => loadEagleViewData()}
-                job={masterJob}
-                existingOrder={selectedSupplierOrder}
-                companyId={profile?.company_id}
+            {/* Google Calendar Reminder Modal */}
+            <GoogleCalendarReminderModal
+                isOpen={calendarModal.isOpen}
+                onClose={() => setCalendarModal(prev => ({ ...prev, isOpen: false }))}
+                defaultTitle={calendarModal.title}
+                defaultDate={calendarModal.date}
+                defaultDescription={calendarModal.description}
+                defaultLocation={calendarModal.location}
+                jobNo={calendarModal.jobNo}
+                activityType={calendarModal.activityType}
             />
         </div>
     );

@@ -18,8 +18,9 @@ import {
     Info,
     Image, FolderOpen, DollarSign,
     List, TrendingUp, TrendingDown, Percent,
-    Truck, RotateCcw
+    Truck, RotateCcw, ArrowDownRight, Calendar
 } from 'lucide-react';
+import GoogleCalendarReminderModal from '../../components/common/GoogleCalendarReminderModal';
 import SearchableSelect from '../../components/common/SearchableSelect';
 import { getExchangeRateWithGemini } from '../../lib/geminiService';
 import { listFolderContent, uploadFileToDrive, deleteFile, getOrCreateFolder, provisionFullProjectStructure, provisionPartnerStructure, moveFolder, copyFile } from '../../lib/driveService';
@@ -46,7 +47,7 @@ import {
 } from '../../lib/workflowV2Service';
 
 import { getPartners, getContacts, getDocumentSettings, getJobMajorCategories, saveJobMajorCategory } from '../../lib/store';
-import { getCatalogItems } from '../../lib/catalogService';
+import { getCatalogItems, getAllCatalogItemsForExport } from '../../lib/catalogService';
 import { supabase } from '../../lib/supabase';
 import { getJobExpenses, saveJobExpense, deleteJobExpense } from '../../lib/jobExpenseService';
 import { getJobPayments, saveCustomerPayment, saveSupplierPayment, deletePayment } from '../../lib/paymentService';
@@ -100,6 +101,82 @@ import { WhatsAppShareModal } from '../../components/workflow/WhatsAppShareModal
 import SmartOCRModal from '../../components/common/SmartOCRModal';
 import DeliveryOrderLabelModal from '../../components/workflow/DeliveryOrderLabelModal';
 
+const resolveDocType = (slug) => {
+    if (!slug) return 'Enquiry';
+    const s = slug.toLowerCase();
+    const map = {
+        'enquiry': 'Enquiry',
+        'quotation': 'Quotation',
+        'purchase-order': 'Purchase Order',
+        'delivery-order': 'Delivery Order',
+        'service-report': 'Service Report',
+        'certificate': 'Certificate',
+        'proforma-invoice': 'Proforma Invoice',
+        'packing-list': 'Packing List',
+        'tax-invoice': 'Tax Invoice',
+        'credit-note': 'Credit Note',
+        'payment-received': 'Payment Received',
+        'statement-of-account': 'Statement of Account',
+        'soa': 'Statement of Account',
+        'job': 'Job',
+        'order-acknowledgment': 'Order Acknowledgment'
+    };
+    if (map[s]) return map[s];
+    return slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+};
+
+const buildInitialFormData = (docType, profile, defaultIssue, defaultExpiry) => {
+    const isAnithaDoc = ['Tax Invoice', 'Credit Note', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(docType);
+    return {
+        document_type: docType,
+        document_no: '',
+        job_id: '',
+        enquiry_id: '',
+        issue_date: defaultIssue ? defaultIssue.toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        expiry_date: defaultExpiry ? defaultExpiry.toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        partner_id: '',
+        contact_id: '',
+        vessel_id: '',
+        work_location_id: '',
+        salesperson_name: isAnithaDoc ? 'ANITHA' : (profile?.full_name || 'N.R.KUMAR'),
+        salesperson_phone: isAnithaDoc ? '+6591090347' : (profile?.phone || '+6597685891'),
+        salesperson_email: isAnithaDoc ? 'accounts@celron.net' : (profile?.professional_email || 'sales@celron.net'),
+        subject: '',
+        customer_ref: 'WALK IN',
+        original_invoice_no: '',
+        currency: 'SGD',
+        exchange_rate: 1.0,
+        base_currency: 'SGD',
+        tax_type: 'GST',
+        tax_rate: 9,
+        discount: 0,
+        status: 'Draft',
+        terms: TC_PRESETS[docType] || '',
+        notes: '',
+        vessel_name: '',
+        location_name: '',
+        customer_name: '',
+        subtotal: 0,
+        tax_amount: 0,
+        total_amount: 0,
+        discount_amount: 0,
+        discount_percent: 0,
+        customer_po_no: '',
+        customer_po_date: '',
+        customer_po_by_id: '',
+        customer_po_attachment_url: '',
+        is_job: false,
+        assigned_job_no: '',
+        payment_terms: '',
+        original_document_id: '',
+        revision_no: 0,
+        attachment_urls: [],
+        payment_method: 'Bank Transfer',
+        payment_ref: '',
+        delivery_verification: {}
+    };
+};
+
 export default function WorkflowEditor() {
     const { type, id } = useParams();
     const navigate = useNavigate();
@@ -127,6 +204,7 @@ export default function WorkflowEditor() {
     const [whatsappShareModal, setWhatsappShareModal] = useState({ isOpen: false });
     const [emailPreview, setEmailPreview] = useState(null);
     const [creditNotePickerModal, setCreditNotePickerModal] = useState({ isOpen: false, invoices: [], jobNo: '' });
+    const [calendarModal, setCalendarModal] = useState({ isOpen: false, title: '', date: '', description: '', location: '', activityType: '', jobNo: '' });
     
     const [smartUploadConfig, setSmartUploadConfig] = useState({
         isOpen: false,
@@ -200,6 +278,7 @@ export default function WorkflowEditor() {
     const [poFile, setPoFile] = useState(null);
     const [lineItems, setLineItems] = useState([]);
     const [workflowDocs, setWorkflowDocs] = useState([]); // Documents in the same job suite
+    const [linkedInvoiceDoc, setLinkedInvoiceDoc] = useState(null); // Reference / Parent Tax Invoice for Credit Notes
     const [suiteDocs, setSuiteDocs] = useState([]);          // For the Job Document Suite panel
     const [loadingSuiteDocs, setLoadingSuiteDocs] = useState(false);
     const [showCreateDocMenu, setShowCreateDocMenu] = useState(false);
@@ -297,6 +376,30 @@ export default function WorkflowEditor() {
     const [signatureBase64, setSignatureBase64] = useState('');
     const [paynowBase64, setPaynowBase64] = useState('');
     const printRef = useRef();
+
+    // Smooth scroll and highlight helper for summary cards
+    const scrollToSection = (sectionId, tabToActivate = 'items') => {
+        if (tabToActivate && activeTab !== tabToActivate) {
+            setActiveTab(tabToActivate);
+        }
+        setTimeout(() => {
+            const el = document.getElementById(sectionId);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                const prevOutline = el.style.outline;
+                const prevTransition = el.style.transition;
+                el.style.transition = 'all 0.4s ease';
+                el.style.outline = '3px solid #6366f1';
+                el.style.outlineOffset = '6px';
+                el.style.borderRadius = '16px';
+                setTimeout(() => {
+                    el.style.outline = prevOutline || 'none';
+                    el.style.outlineOffset = '0px';
+                    el.style.transition = prevTransition || '';
+                }, 2000);
+            }
+        }, 120);
+    };
 
     // Open General Celron Jobs Folder in Google Drive
     const handleOpenRootDrive = () => {
@@ -776,11 +879,27 @@ export default function WorkflowEditor() {
     const [staff, setStaff] = useState([]);
     const [catalogSearch, setCatalogSearch] = useState('');
     const [showCatalogDropdown, setShowCatalogDropdown] = useState(false);
+    const [activeSuggestRow, setActiveSuggestRow] = useState(null);
+    const [highlightedSuggestIndex, setHighlightedSuggestIndex] = useState(0);
     const [originalJobNo, setOriginalJobNo] = useState('');
     const [attachmentUploadProgress, setAttachmentUploadProgress] = useState(null); // { fileName, percent }
     const [modalItemIndex, setModalItemIndex] = useState(null);
     const [modalItemDetails, setModalItemDetails] = useState('');
     const [showDetailsModal, setShowDetailsModal] = useState(false);
+
+    // Close line item autocomplete dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (activeSuggestRow !== null) {
+                const isInside = e.target.closest('.catalog-suggest-box') || e.target.closest('.catalog-suggest-input');
+                if (!isInside) {
+                    setActiveSuggestRow(null);
+                }
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [activeSuggestRow]);
 
 
 
@@ -791,57 +910,8 @@ export default function WorkflowEditor() {
 
     // Form Data
     const [formData, setFormData] = useState(() => {
-        const docType = (type || 'Enquiry').split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-        const isAnithaDoc = ['Tax Invoice', 'Credit Note', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(docType);
-        
-        return {
-        document_type: docType,
-        document_no: '',
-        job_id: '',
-        enquiry_id: '',
-        issue_date: defaultIssue.toISOString().split('T')[0],
-        expiry_date: defaultExpiry.toISOString().split('T')[0],
-        partner_id: '',
-        contact_id: '',
-        vessel_id: '',
-        work_location_id: '',
-        salesperson_name: isAnithaDoc ? 'ANITHA' : (profile?.full_name || 'N.R.KUMAR'),
-        salesperson_phone: isAnithaDoc ? '+6591090347' : (profile?.phone || '+6597685891'),
-        salesperson_email: isAnithaDoc ? 'accounts@celron.net' : (profile?.professional_email || 'sales@celron.net'),
-        subject: '',
-        customer_ref: 'WALK IN',
-        original_invoice_no: '',
-        currency: 'SGD',
-        exchange_rate: 1.0,
-        base_currency: 'SGD',
-        tax_type: 'GST',
-        tax_rate: 9,
-        discount: 0,
-        status: 'Draft',
-        terms: TC_PRESETS[docType] || '',
-        notes: '',
-        vessel_name: '',
-        location_name: '',
-        customer_name: '',
-        subtotal: 0,
-        tax_amount: 0,
-        total_amount: 0,
-        discount_amount: 0,
-        discount_percent: 0,
-        customer_po_no: '',
-        customer_po_date: '',
-        customer_po_by_id: '',
-        customer_po_attachment_url: '',
-        is_job: false,
-        assigned_job_no: '',
-        payment_terms: '',
-        original_document_id: '',
-        revision_no: 0,
-        attachment_urls: [],
-        payment_method: 'Bank Transfer',
-        payment_ref: '',
-        delivery_verification: {}
-        };
+        const docType = resolveDocType(type);
+        return buildInitialFormData(docType, profile, defaultIssue, defaultExpiry);
     });
 
     const isAnithaType = ['Tax Invoice', 'Credit Note', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(formData.document_type);
@@ -861,7 +931,7 @@ export default function WorkflowEditor() {
             initNewDocument();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [id, type]);
+    }, [id, type, location.search]);
 
     useEffect(() => {
         if (formData.partner_id && formData.document_type === 'Payment Received') {
@@ -881,7 +951,7 @@ export default function WorkflowEditor() {
             getPartners(profile),
             supabase.from('vessels').select('*').order('vessel_name'),
             supabase.from('work_locations').select('*').order('location_name'),
-            getCatalogItems(1, 100),
+            getAllCatalogItemsForExport(),
             getDocumentSettings(profile?.company_id),
             getContacts(profile),
             getJobMajorCategories(profile?.company_id)
@@ -890,7 +960,7 @@ export default function WorkflowEditor() {
         if (pRes) setPartners(pRes);
         if (vRes.data) setVessels(vRes.data);
         if (wlRes.data) setWorkLocations(wlRes.data);
-        if (cRes.data) setCatalog(cRes.data);
+        if (cRes?.data) setCatalog(cRes.data);
         if (sRes) {
             setSettings(sRes);
             if (sRes.logo_url) toBase64(sRes.logo_url).then(setLogoBase64).catch(console.error);
@@ -2148,6 +2218,43 @@ export default function WorkflowEditor() {
                     }
                 }
 
+                // If Credit Note, fetch parent Tax Invoice details for Revenue and Costing calculations
+                if (data.document_type === 'Credit Note' || resolveDocType(type) === 'Credit Note') {
+                    let inv = null;
+                    if (data.original_document_id) {
+                        const { data: origDoc } = await supabase
+                            .from('workflow_documents')
+                            .select('id, document_no, document_type, status, total_amount, subtotal, tax_amount, currency, issue_date')
+                            .eq('id', data.original_document_id)
+                            .maybeSingle();
+                        inv = origDoc;
+                    }
+                    if (!inv && data.original_invoice_no && profile?.company_id) {
+                        const { data: origDoc } = await supabase
+                            .from('workflow_documents')
+                            .select('id, document_no, document_type, status, total_amount, subtotal, tax_amount, currency, issue_date')
+                            .eq('document_no', data.original_invoice_no)
+                            .eq('company_id', profile.company_id)
+                            .maybeSingle();
+                        inv = origDoc;
+                    }
+                    if (!inv && data.assigned_job_no && profile?.company_id) {
+                        const { data: origDoc } = await supabase
+                            .from('workflow_documents')
+                            .select('id, document_no, document_type, status, total_amount, subtotal, tax_amount, currency, issue_date')
+                            .eq('assigned_job_no', data.assigned_job_no)
+                            .eq('company_id', profile.company_id)
+                            .in('document_type', ['Tax Invoice', 'Proforma Invoice'])
+                            .order('issue_date', { ascending: false })
+                            .limit(1)
+                            .maybeSingle();
+                        inv = origDoc;
+                    }
+                    if (inv) {
+                        setLinkedInvoiceDoc(inv);
+                    }
+                }
+
                 // Fetch linked customer enquiry details
                 if (data.enquiry_id) {
                     const { data: enq } = await supabase
@@ -2172,215 +2279,363 @@ export default function WorkflowEditor() {
     };
 
     const initNewDocument = async () => {
-        const newNo = await generateDocNumber(profile.company_id, formData.document_type);
+        setLoading(true);
+        try {
+            const targetDocType = resolveDocType(type);
+            const docTypeUpper = targetDocType?.toUpperCase();
+            const isCN = docTypeUpper === 'CREDIT NOTE';
+            const isAnithaDoc = ['Tax Invoice', 'Credit Note', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(targetDocType);
 
-        let initialPartnerId = '';
-        let initialContactId = '';
+            const sourceEnquiryId = searchParams.get('sourceEnquiryId');
+            const sourceIdParam = searchParams.get('source_id') || sourceId;
+            const jobNoParam = searchParams.get('assigned_job_no') || '';
 
-        const docType = formData.document_type?.toUpperCase();
-        
-        const defaultNotes = '';
+            // Enforce invoice linkage for Credit Notes if created without source_id
+            if (isCN && !sourceIdParam) {
+                try {
+                    let invQuery = supabase
+                        .from('workflow_documents')
+                        .select('id, document_no, assigned_job_no, total_amount, currency, issue_date, partner_id, partners(name)')
+                        .eq('company_id', profile?.company_id)
+                        .eq('document_type', 'Tax Invoice')
+                        .order('issue_date', { ascending: false });
 
-        const sourceEnquiryId = searchParams.get('sourceEnquiryId');
-        if (sourceEnquiryId) {
-            const { data: enq } = await supabase.from('customer_enquiries').select('*').eq('id', sourceEnquiryId).single();
-            if (enq) {
-                setFormData(prev => ({
-                    ...prev,
-                    document_no: newNo,
-                    partner_id: enq.customer_id || '',
-                    contact_id: enq.contact_id || '',
-                    vessel_id: enq.vessel_id || '',
-                    work_location_id: enq.work_location_id || '',
-                    subject: enq.subject || `Ref: ${enq.enquiry_no}`,
-                    customer_ref: enq.customer_ref || '',
-                    currency: 'SGD',
-                    enquiry_id: enq.id,
-                    notes: enq.notes || defaultNotes,
-                    assigned_job_no: docType === 'JOB' ? newNo : '',
-                    terms_conditions: TC_PRESETS[docType === 'QUOTATION' ? 'Quotation' : ''] || ''
-                }));
-
-                if (enq.catalog_items && enq.catalog_items.length > 0) {
-                    const inheritedItems = enq.catalog_items.map((item, idx) => ({
-                        id: 'src-' + idx + '-' + Date.now(),
-                        item_id: item.id,
-                        description: item.name,
-                        details: item.specification || '',
-                        quantity: 1,
-                        unit_price: item.selling_price || 0,
-                        amount: item.selling_price || 0,
-                        tax_enabled: true,
-                        tax_rate: 9,
-                        uom: 'UNIT(S)'
-                    }));
-                    setLineItems(inheritedItems);
-                }
-                return;
-            }
-        }
-
-        if (sourceId) {
-            const { data: sourceDoc } = await getWorkflowDocumentById(sourceId);
-            if (sourceDoc) {
-                const isCN = docType === 'CREDIT NOTE';
-                setFormData(prev => ({
-                    ...prev,
-                    document_no: newNo,
-                    partner_id: sourceDoc.partner_id || '',
-                    contact_id: sourceDoc.contact_id || '',
-                    vessel_id: sourceDoc.vessel_id || '',
-                    work_location_id: sourceDoc.work_location_id || '',
-                    subject: isCN ? `Credit Note against Invoice #${sourceDoc.document_no}` : (sourceDoc.subject || `Derived from ${sourceDoc.document_no}`),
-                    customer_ref: isCN ? sourceDoc.document_no : (sourceDoc.customer_ref || ''),
-                    original_invoice_no: isCN ? sourceDoc.document_no : (sourceDoc.original_invoice_no || ''),
-                    original_document_id: isCN ? sourceDoc.id : (sourceDoc.original_document_id || ''),
-                    currency: sourceDoc.currency || 'SGD',
-                    enquiry_id: sourceDoc.enquiry_id || '',
-                    job_id: sourceDoc.job_id || '',
-                    assigned_job_no: sourceDoc.assigned_job_no || (sourceDoc.document_type === 'Job' ? sourceDoc.document_no : ''),
-                    notes: sourceDoc.notes || defaultNotes,
-                    terms_conditions: sourceDoc.terms_conditions || (TC_PRESETS[docType === 'QUOTATION' ? 'Quotation' : ''] || '')
-                }));
-
-                if (sourceDoc.items && sourceDoc.items.length > 0) {
-                    const inheritedItems = sourceDoc.items.map((item, idx) => ({
-                        ...item,
-                        id: 'src-' + idx + '-' + Date.now(),
-                        document_id: undefined // Will be set on save
-                    }));
-                    setLineItems(inheritedItems);
-                }
-                return; // Skip other inheritance if sourceId is used
-            }
-        }
-
-        // Enforce invoice linkage for Credit Notes if created without source_id
-        if (docType === 'CREDIT NOTE' && !sourceId) {
-            const jobNoParam = searchParams.get('assigned_job_no');
-            try {
-                let invQuery = supabase
-                    .from('workflow_documents')
-                    .select('id, document_no, assigned_job_no, total_amount, currency, issue_date, partner_id, partners(name)')
-                    .eq('company_id', profile?.company_id)
-                    .eq('document_type', 'Tax Invoice')
-                    .order('issue_date', { ascending: false });
-
-                if (jobNoParam) {
-                    invQuery = invQuery.eq('assigned_job_no', jobNoParam);
-                }
-
-                const { data: invList } = await invQuery;
-                if (invList && invList.length > 0) {
-                    if (invList.length === 1) {
-                        const targetInv = invList[0];
-                        navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(targetInv.assigned_job_no || jobNoParam || '')}&source_id=${targetInv.id}`, { replace: true });
-                        return;
-                    } else {
-                        setCreditNotePickerModal({ isOpen: true, invoices: invList, jobNo: jobNoParam || '' });
+                    if (jobNoParam) {
+                        invQuery = invQuery.eq('assigned_job_no', jobNoParam);
                     }
+
+                    const { data: invList } = await invQuery;
+                    if (invList && invList.length > 0) {
+                        if (invList.length === 1) {
+                            const targetInv = invList[0];
+                            navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(targetInv.assigned_job_no || jobNoParam || '')}&source_id=${targetInv.id}`, { replace: true });
+                            setLoading(false);
+                            return;
+                        } else {
+                            setCreditNotePickerModal({ isOpen: true, invoices: invList, jobNo: jobNoParam || '' });
+                        }
+                    } else {
+                        toast.error(jobNoParam 
+                            ? `Job ${jobNoParam} has no Tax Invoice. A Tax Invoice must be created first before issuing a Credit Note.` 
+                            : 'No Tax Invoices found. A Credit Note must be linked to an existing Tax Invoice.'
+                        );
+                    }
+                } catch (err) {
+                    console.error('Error finding invoices for credit note:', err);
+                }
+            }
+
+            if (sourceEnquiryId) {
+                const { data: enq } = await supabase.from('customer_enquiries').select('*').eq('id', sourceEnquiryId).single();
+                if (enq) {
+                    const effectiveJobNo = docTypeUpper === 'JOB' ? null : (jobNoParam || null);
+                    const newNo = await generateDocNumber(profile.company_id, targetDocType, false, null, effectiveJobNo);
+                    setFormData({
+                        ...buildInitialFormData(targetDocType, profile, defaultIssue, defaultExpiry),
+                        document_no: newNo,
+                        partner_id: enq.customer_id || '',
+                        contact_id: enq.contact_id || '',
+                        vessel_id: enq.vessel_id || '',
+                        work_location_id: enq.work_location_id || '',
+                        subject: enq.subject || `Ref: ${enq.enquiry_no}`,
+                        customer_ref: enq.customer_ref || '',
+                        currency: 'SGD',
+                        enquiry_id: enq.id,
+                        notes: enq.notes || '',
+                        assigned_job_no: docTypeUpper === 'JOB' ? newNo : (jobNoParam || ''),
+                        terms_conditions: TC_PRESETS[targetDocType] || ''
+                    });
+
+                    if (enq.catalog_items && enq.catalog_items.length > 0) {
+                        const inheritedItems = enq.catalog_items.map((item, idx) => ({
+                            id: 'src-' + idx + '-' + Date.now(),
+                            item_id: item.id,
+                            description: item.name,
+                            details: item.specification || '',
+                            quantity: 1,
+                            unit_price: item.selling_price || 0,
+                            amount: item.selling_price || 0,
+                            tax_enabled: true,
+                            tax_rate: 9,
+                            uom: 'UNIT(S)'
+                        }));
+                        setLineItems(inheritedItems);
+                    } else {
+                        setLineItems([{ id: 'temp-' + Date.now(), description: '', quantity: 1, unit_price: 0, tax_rate: 9, amount: 0, uom: 'UNIT(S)' }]);
+                    }
+                    if (jobNoParam) {
+                        fetchSuiteDocsPanel(jobNoParam);
+                    }
+                    setLoading(false);
+                    return;
+                }
+            }
+
+            if (sourceIdParam) {
+                const { data: sourceDoc } = await getWorkflowDocumentById(sourceIdParam);
+                if (sourceDoc) {
+                    if (isCN) {
+                        setLinkedInvoiceDoc(sourceDoc);
+                    }
+                    let effectiveJobNo = sourceDoc.assigned_job_no || jobNoParam || (sourceDoc.document_type === 'Job' ? sourceDoc.document_no : '');
+                    if (!effectiveJobNo && sourceDoc.document_no && isCN) {
+                        const docParts = sourceDoc.document_no.split('-');
+                        if (docParts.length > 1) {
+                            effectiveJobNo = 'CEL-' + docParts.slice(1).join('-');
+                        }
+                    }
+
+                    const newNo = await generateDocNumber(profile.company_id, targetDocType, false, null, effectiveJobNo || null);
+
+                    setFormData({
+                        ...buildInitialFormData(targetDocType, profile, defaultIssue, defaultExpiry),
+                        document_no: newNo,
+                        partner_id: sourceDoc.partner_id || '',
+                        contact_id: sourceDoc.contact_id || '',
+                        vessel_id: sourceDoc.vessel_id || '',
+                        work_location_id: sourceDoc.work_location_id || '',
+                        salesperson_name: isAnithaDoc ? 'ANITHA' : (sourceDoc.salesperson_name || profile?.full_name || 'N.R.KUMAR'),
+                        salesperson_phone: isAnithaDoc ? '+6591090347' : (sourceDoc.salesperson_phone || profile?.phone || '+6597685891'),
+                        salesperson_email: isAnithaDoc ? 'accounts@celron.net' : (sourceDoc.salesperson_email || profile?.professional_email || 'sales@celron.net'),
+                        subject: isCN ? `Credit Note against Invoice #${sourceDoc.document_no}` : (sourceDoc.subject || `Derived from ${sourceDoc.document_no}`),
+                        customer_ref: isCN ? sourceDoc.document_no : (sourceDoc.customer_ref || ''),
+                        original_invoice_no: isCN ? sourceDoc.document_no : (sourceDoc.original_invoice_no || ''),
+                        original_document_id: isCN ? sourceDoc.id : (sourceDoc.original_document_id || ''),
+                        currency: sourceDoc.currency || 'SGD',
+                        exchange_rate: sourceDoc.exchange_rate || 1.0,
+                        base_currency: sourceDoc.base_currency || 'SGD',
+                        tax_type: sourceDoc.tax_type || 'GST',
+                        tax_rate: sourceDoc.tax_rate ?? 9,
+                        discount: sourceDoc.discount || 0,
+                        discount_amount: sourceDoc.discount_amount || 0,
+                        discount_percent: sourceDoc.discount_percent || 0,
+                        status: 'Draft',
+                        terms: sourceDoc.terms || (TC_PRESETS[targetDocType] || ''),
+                        notes: sourceDoc.notes || '',
+                        vessel_name: sourceDoc.vessel_name || '',
+                        location_name: sourceDoc.location_name || '',
+                        customer_name: sourceDoc.customer_name || '',
+                        subtotal: sourceDoc.subtotal || 0,
+                        tax_amount: sourceDoc.tax_amount || 0,
+                        total_amount: sourceDoc.total_amount || 0,
+                        customer_po_no: sourceDoc.customer_po_no || '',
+                        customer_po_date: sourceDoc.customer_po_date || '',
+                        customer_po_by_id: sourceDoc.customer_po_by_id || '',
+                        customer_po_attachment_url: sourceDoc.customer_po_attachment_url || '',
+                        is_job: false,
+                        assigned_job_no: effectiveJobNo,
+                        payment_terms: sourceDoc.payment_terms || '',
+                        job_id: sourceDoc.job_id || '',
+                        enquiry_id: sourceDoc.enquiry_id || ''
+                    });
+
+                    if (sourceDoc.items && sourceDoc.items.length > 0) {
+                        const inheritedItems = sourceDoc.items.map((item, idx) => ({
+                            ...item,
+                            id: 'src-' + idx + '-' + Date.now(),
+                            document_id: undefined
+                        }));
+                        setLineItems(inheritedItems);
+                    } else {
+                        setLineItems([{ id: 'temp-' + Date.now(), description: '', quantity: 1, unit_price: 0, tax_rate: 9, amount: 0, uom: 'UNIT(S)' }]);
+                    }
+
+                    if (effectiveJobNo) {
+                        fetchSuiteDocsPanel(effectiveJobNo);
+                    }
+                    setLoading(false);
+                    return;
+                }
+            }
+
+            if (linkedJobId) {
+                const { getJobById } = await import('../../lib/workflowService');
+                const jobRes = await getJobById(profile.company_id, linkedJobId);
+                if (jobRes.data) {
+                    const job = jobRes.data;
+                    const enq = job.enquiries || {};
+                    const effectiveJobNo = job.job_no || '';
+                    const newNo = await generateDocNumber(profile.company_id, targetDocType, false, null, effectiveJobNo || null);
+                    
+                    setFormData({
+                        ...buildInitialFormData(targetDocType, profile, defaultIssue, defaultExpiry),
+                        document_no: newNo,
+                        job_id: linkedJobId,
+                        partner_id: enq.customer_id || '',
+                        contact_id: job.contact_id || '',
+                        vessel_id: job.vessel_id || enq.vessel_id || '',
+                        work_location_id: job.work_location_id || enq.work_location_id || '',
+                        subject: job.subject || enq.subject || `Ref: ${job.job_no}`,
+                        customer_ref: job.customer_ref || enq.customer_ref || '',
+                        assigned_job_no: effectiveJobNo,
+                        notes: job.notes || '',
+                        terms_conditions: TC_PRESETS[targetDocType] || ''
+                    });
+
+                    const sourceItems = enq.catalog_items || [];
+                    if (sourceItems.length > 0) {
+                        const inheritedItems = sourceItems.map((item, idx) => ({
+                            id: 'inherited-' + idx + '-' + Date.now(),
+                            item_id: item.id,
+                            description: item.name,
+                            details: item.specification || '',
+                            quantity: 1,
+                            unit_price: item.selling_price || 0,
+                            amount: item.selling_price || 0,
+                            tax_enabled: true,
+                            tax_rate: 9,
+                            uom: 'UNIT(S)'
+                        }));
+                        setLineItems(inheritedItems);
+                    } else {
+                        setLineItems([{ id: 'temp-' + Date.now(), description: '', quantity: 1, unit_price: 0, tax_rate: 9, amount: 0, uom: 'UNIT(S)' }]);
+                    }
+                    if (effectiveJobNo) {
+                        fetchSuiteDocsPanel(effectiveJobNo);
+                    }
+                    setLoading(false);
+                    return;
+                }
+            }
+
+            // Standalone or Job-linked new document
+            const effectiveJobNo = docTypeUpper === 'JOB' ? null : (jobNoParam || null);
+            const newNo = await generateDocNumber(profile.company_id, targetDocType, false, null, effectiveJobNo);
+            let defaultNotesVal = '';
+            const packageDetailsTemplate = `
+                <p><strong>Package Details</strong></p>
+                <ul>
+                    <li>Size of the Package : &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mm (L) x &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mm (B) x &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mm (H)</li>
+                    <li>Weight of the Package : &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Kgs</li>
+                    <li>Origin of spares : Singapore</li>
+                    <li>Total No. of Packages: </li>
+                    <li>Package Type (Carton / Wooden Crate / Pallet / Drum): </li>
+                    <li>Package Qty: </li>
+                    <li>Description of Contents: </li>
+                </ul>
+            `;
+            if ((docTypeUpper === 'DELIVERY ORDER' || docTypeUpper === 'PACKING LIST')) {
+                defaultNotesVal = packageDetailsTemplate;
+            }
+
+            // Fetch job context if jobNoParam or linkedJobId is provided
+            let jobContext = null;
+            if (jobNoParam || linkedJobId) {
+                try {
+                    let jobQuery = supabase.from('workflow_documents').select('*');
+                    if (linkedJobId) {
+                        jobQuery = jobQuery.eq('id', linkedJobId);
+                    } else if (jobNoParam) {
+                        jobQuery = jobQuery.eq('assigned_job_no', jobNoParam);
+                    }
+                    const { data: matchedJobs } = await jobQuery.limit(5);
+                    if (matchedJobs && matchedJobs.length > 0) {
+                        jobContext = matchedJobs.find(d => d.document_type === 'Job') || matchedJobs[0];
+                    }
+                } catch (e) {
+                    console.warn('Could not load job context:', e);
+                }
+            }
+
+            const initialData = buildInitialFormData(targetDocType, profile, defaultIssue, defaultExpiry);
+            
+            if (jobContext) {
+                initialData.job_id = jobContext.id || linkedJobId || '';
+                initialData.vessel_id = jobContext.vessel_id || '';
+                initialData.vessel_name = jobContext.vessel_name || '';
+                initialData.work_location_id = jobContext.work_location_id || '';
+                initialData.location_name = jobContext.location_name || '';
+                initialData.customer_ref = jobContext.customer_ref || '';
+                
+                if (targetDocType === 'Purchase Order') {
+                    initialData.subject = jobContext.vessel_name 
+                        ? `PO for Job ${jobNoParam || jobContext.assigned_job_no} (${jobContext.vessel_name})`
+                        : `PO for Job ${jobNoParam || jobContext.assigned_job_no}`;
                 } else {
-                    toast.error(jobNoParam 
-                        ? `Job ${jobNoParam} has no Tax Invoice. A Tax Invoice must be created first before issuing a Credit Note.` 
-                        : 'No Tax Invoices found. A Credit Note must be linked to an existing Tax Invoice.'
-                    );
+                    initialData.partner_id = jobContext.partner_id || '';
+                    initialData.contact_id = jobContext.contact_id || '';
+                    initialData.subject = jobContext.subject || `Job ${jobNoParam || jobContext.assigned_job_no}`;
+                }
+            }
+
+            setFormData({
+                ...initialData,
+                document_no: newNo,
+                notes: defaultNotesVal || initialData.notes || '',
+                assigned_job_no: docTypeUpper === 'JOB' ? newNo : (jobNoParam || (jobContext?.assigned_job_no || '')),
+                terms_conditions: TC_PRESETS[targetDocType] || ''
+            });
+
+            setLineItems([{
+                id: 'temp-' + Date.now(),
+                description: '',
+                quantity: 1,
+                unit_price: 0,
+                tax_rate: 9,
+                amount: 0,
+                uom: 'UNIT(S)'
+            }]);
+
+            if (jobNoParam) {
+                fetchSuiteDocsPanel(jobNoParam);
+            }
+        } catch (err) {
+            console.error('Error initializing new document:', err);
+            toast.error('Failed to initialize new document: ' + err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Auto-fetch linked invoice for Credit Note whenever original invoice ID or no changes
+    useEffect(() => {
+        const isCN = resolveDocType(type) === 'Credit Note' || formData.document_type === 'Credit Note';
+        if (!isCN) return;
+        if (linkedInvoiceDoc && (linkedInvoiceDoc.id === formData.original_document_id || linkedInvoiceDoc.document_no === formData.original_invoice_no)) {
+            return;
+        }
+
+        const fetchLinkedInv = async () => {
+            try {
+                let inv = null;
+                if (formData.original_document_id) {
+                    const { data } = await supabase
+                        .from('workflow_documents')
+                        .select('id, document_no, document_type, status, total_amount, subtotal, tax_amount, currency, issue_date')
+                        .eq('id', formData.original_document_id)
+                        .maybeSingle();
+                    inv = data;
+                }
+                if (!inv && formData.original_invoice_no && profile?.company_id) {
+                    const { data } = await supabase
+                        .from('workflow_documents')
+                        .select('id, document_no, document_type, status, total_amount, subtotal, tax_amount, currency, issue_date')
+                        .eq('document_no', formData.original_invoice_no)
+                        .eq('company_id', profile.company_id)
+                        .maybeSingle();
+                    inv = data;
+                }
+                if (!inv && formData.assigned_job_no && profile?.company_id) {
+                    const { data } = await supabase
+                        .from('workflow_documents')
+                        .select('id, document_no, document_type, status, total_amount, subtotal, tax_amount, currency, issue_date')
+                        .eq('assigned_job_no', formData.assigned_job_no)
+                        .eq('company_id', profile.company_id)
+                        .in('document_type', ['Tax Invoice', 'Proforma Invoice'])
+                        .order('issue_date', { ascending: false })
+                        .limit(1)
+                        .maybeSingle();
+                    inv = data;
+                }
+                if (inv) {
+                    setLinkedInvoiceDoc(inv);
                 }
             } catch (err) {
-                console.error('Error finding invoices for credit note:', err);
+                console.error('Error fetching linked invoice for CN:', err);
             }
-        }
-
-        if (linkedJobId) {
-            const { getJobById } = await import('../../lib/workflowService');
-            const jobRes = await getJobById(profile.company_id, linkedJobId);
-            if (jobRes.data) {
-                const job = jobRes.data;
-                const enq = job.enquiries || {};
-                
-                initialPartnerId = enq.customer_id || '';
-                initialContactId = job.contact_id || '';
-                
-                setFormData(prev => ({
-                    ...prev,
-                    document_no: newNo,
-                    job_id: linkedJobId,
-                    partner_id: initialPartnerId,
-                    contact_id: initialContactId,
-                    vessel_id: job.vessel_id || enq.vessel_id || '',
-                    work_location_id: job.work_location_id || enq.work_location_id || '',
-                    subject: prev.subject || job.subject || enq.subject || `Ref: ${job.job_no}`,
-                    customer_ref: prev.customer_ref || job.customer_ref || enq.customer_ref || '',
-                    assigned_job_no: job.job_no || '',
-                    notes: prev.notes || defaultNotes,
-                    terms_conditions: prev.terms_conditions || (TC_PRESETS[docType === 'QUOTATION' ? 'Quotation' : ''] || '')
-                }));
-
-                // Inherit line items if available
-                const sourceItems = enq.catalog_items || [];
-                if (sourceItems.length > 0) {
-                    const inheritedItems = sourceItems.map((item, idx) => ({
-                        id: 'inherited-' + idx + '-' + Date.now(),
-                        item_id: item.id,
-                        description: item.name,
-                        details: item.specification || '',
-                        quantity: 1,
-                        unit_price: item.selling_price || 0,
-                        amount: item.selling_price || 0,
-                        tax_enabled: true,
-                        tax_rate: 9,
-                        uom: 'UNIT(S)'
-                    }));
-                    setLineItems(inheritedItems);
-                    return; // skip adding empty line
-                }
-            }
-        }
-
-        let defaultNotesVal = formData.notes || '';
-        const docTypeUpper = formData.document_type?.toUpperCase();
-        
-        const packageDetailsTemplate = `
-            <p><strong>Package Details</strong></p>
-            <ul>
-                <li>Size of the Package : &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mm (L) x &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mm (B) x &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mm (H)</li>
-                <li>Weight of the Package : &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Kgs</li>
-                <li>Origin of spares : Singapore</li>
-                <li>Total No. of Packages: </li>
-                <li>Package Type (Carton / Wooden Crate / Pallet / Drum): </li>
-                <li>Package Qty: </li>
-                <li>Description of Contents: </li>
-            </ul>
-        `;
-
-        if ((docTypeUpper === 'DELIVERY ORDER' || docTypeUpper === 'PACKING LIST') && !defaultNotesVal) {
-            defaultNotesVal = packageDetailsTemplate;
-        }
-
-        setFormData(prev => ({
-            ...prev,
-            salesperson_name: prev.salesperson_name || profile?.full_name || '',
-            salesperson_phone: prev.salesperson_phone || profile?.phone || '',
-            salesperson_email: prev.salesperson_email || profile?.professional_email || '',
-            document_no: newNo,
-            job_id: linkedJobId || '',
-            partner_id: initialPartnerId || prev.partner_id,
-            contact_id: initialContactId || prev.contact_id,
-            notes: defaultNotesVal,
-            assigned_job_no: docTypeUpper === 'JOB' ? newNo : '',
-            terms_conditions: prev.terms_conditions || (TC_PRESETS[docTypeUpper === 'QUOTATION' ? 'Quotation' : ''] || '')
-        }));
-
-        // Add one empty line
-        setLineItems([{
-            id: 'temp-' + Date.now(),
-            description: '',
-            quantity: 1,
-            unit_price: 0,
-            tax_rate: 9,
-            amount: 0,
-            uom: 'UNIT(S)'
-        }]);
-    };
+        };
+        fetchLinkedInv();
+    }, [formData.original_document_id, formData.original_invoice_no, formData.assigned_job_no, formData.document_type, type, profile?.company_id]);
 
     // Auto-calculate totals with 2-decimal precision
     useEffect(() => {
@@ -2687,7 +2942,7 @@ export default function WorkflowEditor() {
             amount: catalogItem.selling_price || 0,
             tax_enabled: true,
             tax_rate: 9,
-            uom: 'UNIT(S)'
+            uom: catalogItem.unit || catalogItem.uom || 'UNIT(S)'
         };
         // Add or replace the last empty line if it's empty
         if (lineItems.length > 0 && !lineItems[lineItems.length - 1].description) {
@@ -2697,6 +2952,26 @@ export default function WorkflowEditor() {
         } else {
             setLineItems([...lineItems, newItem]);
         }
+    };
+
+    const handleSelectCatalogItemForLine = (index, catalogItem) => {
+        const updated = [...lineItems];
+        if (!updated[index]) return;
+        const currentQty = parseFloat(updated[index].quantity) || 1;
+        const sellingPrice = parseFloat(catalogItem.selling_price) || 0;
+
+        updated[index] = {
+            ...updated[index],
+            item_id: catalogItem.id,
+            description: catalogItem.name || '',
+            details: catalogItem.specification || updated[index].details || '',
+            unit_price: sellingPrice,
+            uom: catalogItem.unit || catalogItem.uom || updated[index].uom || 'UNIT(S)',
+            amount: Math.round(currentQty * sellingPrice * 100) / 100
+        };
+        setLineItems(updated);
+        setActiveSuggestRow(null);
+        setHighlightedSuggestIndex(0);
     };
 
     const handleSave = async () => {
@@ -2852,7 +3127,7 @@ export default function WorkflowEditor() {
             // Runs in background so the UI is not blocked
             const isSuiteDoc = data.is_job || [
                 'Order Acknowledgment', 'Delivery Order', 'Packing List',
-                'Proforma Invoice', 'Tax Invoice', 'Certificate', 'Service Report'
+                'Proforma Invoice', 'Tax Invoice', 'Certificate', 'Service Report', 'Credit Note'
             ].includes(data.document_type);
 
             if (isSuiteDoc) {
@@ -3000,10 +3275,15 @@ export default function WorkflowEditor() {
 
             if (isNew) {
                 currentIdRef.current = data.id; // Update ref immediately for sequential async calls
+                const returnTo = searchParams.get('return_to');
+                const returnQuery = returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : '';
+                if (returnTo) {
+                    toast.success('Document created! You can continue editing or return via the top-left Back arrow.', { duration: 5000 });
+                }
                 if (type.toLowerCase() === 'enquiry') {
-                    navigate(`/workflows/enquiry/${data.id}`, { replace: true });
+                    navigate(`/workflows/enquiry/${data.id}${returnQuery}`, { replace: true });
                 } else {
-                    navigate(`/workflows/editor/${type}/${data.id}`, { replace: true });
+                    navigate(`/workflows/editor/${type}/${data.id}${returnQuery}`, { replace: true });
                 }
             } else {
                 toast.success('Saved successfully');
@@ -3143,7 +3423,26 @@ export default function WorkflowEditor() {
     };
 
     const handleGenerateAssociatedDoc = async (targetType) => {
-        if (isNew || !formData.assigned_job_no) return;
+        const jobNo = formData.assigned_job_no || (formData.document_type === 'Job' ? formData.document_no : '');
+        if (isNew || !jobNo) return;
+
+        if (targetType === 'Credit Note') {
+            if (formData.document_type === 'Tax Invoice') {
+                navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(jobNo)}&source_id=${id}`);
+                return;
+            }
+            const invoiceDocs = suiteDocs.filter(d => d.document_type === 'Tax Invoice');
+            if (invoiceDocs.length === 1) {
+                navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(jobNo)}&source_id=${invoiceDocs[0].id}`);
+                return;
+            }
+            if (invoiceDocs.length > 1) {
+                setCreditNotePickerModal({ isOpen: true, invoices: invoiceDocs, jobNo: jobNo });
+                return;
+            }
+            navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(jobNo)}`);
+            return;
+        }
         
         setSaving(true);
         try {
@@ -3933,6 +4232,11 @@ export default function WorkflowEditor() {
     };
 
     const handleGoBack = () => {
+        const returnTo = searchParams.get('return_to');
+        if (returnTo) {
+            navigate(returnTo);
+            return;
+        }
         if (window.history.state && window.history.state.idx > 0) {
             navigate(-1);
         } else {
@@ -4045,6 +4349,21 @@ export default function WorkflowEditor() {
                         <button className="btn-vibrant-secondary" onClick={handleAnnotate} disabled={saving} style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem' }} title="Sign & Annotate">
                             <Pencil size={16} /> <span className="hide-sm">Sign</span>
                         </button>
+                        <button 
+                            className="btn-vibrant-secondary" 
+                            onClick={() => setCalendarModal({
+                                isOpen: true,
+                                title: `[${formData.document_no || formData.assigned_job_no || 'Doc'}] ${formData.document_type} - ${formData.partner_id ? (partners.find(p => p.id === formData.partner_id)?.name || '') : ''}`,
+                                date: formData.expiry_date || formData.issue_date || new Date().toISOString().split('T')[0],
+                                location: formData.vessel_name ? `Vessel: ${formData.vessel_name}` : (formData.location_name || ''),
+                                activityType: `${formData.document_type} Milestone`,
+                                jobNo: formData.assigned_job_no || formData.document_no
+                            })}
+                            style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem', color: '#3b82f6' }} 
+                            title="Schedule Google Calendar Reminder"
+                        >
+                            <Calendar size={16} /> <span className="hide-sm">Remind</span>
+                        </button>
                         {/* DO Shipping Label Sticker */}
                         {(formData.document_type === 'Delivery Order' || formData.document_type === 'Packing List' || formData.is_job) && !isNew && (
                             <button 
@@ -4156,6 +4475,7 @@ export default function WorkflowEditor() {
                                     <button onClick={() => handleGenerateAssociatedDoc('Packing List')}>Packing List (PKL)</button>
                                     <button onClick={() => handleGenerateAssociatedDoc('Proforma Invoice')}>Proforma Invoice (PRO)</button>
                                     <button onClick={() => handleGenerateAssociatedDoc('Tax Invoice')}>Tax Invoice (INV)</button>
+                                    <button onClick={() => handleGenerateAssociatedDoc('Credit Note')} style={{ color: '#e11d48', fontWeight: 600 }}>Credit Note (CRN)</button>
                                     <button onClick={() => handleGenerateAssociatedDoc('Certificate')}>Certificate (CERT)</button>
                                     <button onClick={() => handleGenerateAssociatedDoc('Service Report')}>Service Report (SR)</button>
                                 </div>
@@ -4303,7 +4623,7 @@ export default function WorkflowEditor() {
             <div className="editor-content">
                 {/* 1. Project Costing & Profit Summary */}
                 <div id="section-costing" style={{ marginBottom: '24px' }}>
-                    <div className="glass-panel project-costing">
+                    <div className="glass-panel project-costing" id="section-costing-summary">
                         <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 <Calculator size={20} className="text-accent" />
@@ -4313,102 +4633,286 @@ export default function WorkflowEditor() {
 
                         {/* Summary Cards */}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px', marginBottom: '16px' }}>
-                            {/* Card 1: Total Revenue */}
-                            <div style={{ 
-                                background: 'linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%)', 
-                                padding: '28px 24px', 
-                                borderRadius: '24px', 
-                                border: '1.5px solid #dbeafe', 
-                                boxShadow: '0 10px 25px rgba(59, 130, 246, 0.05)',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                transition: 'all 0.3s ease'
-                            }}>
-                                <div>
-                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Revenue</div>
-                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#1e3a8a' }}>
-                                        {formData.currency} {formData.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                    </div>
-                                </div>
-                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
-                                    <TrendingUp size={24} />
-                                </div>
-                            </div>
-
-                            {/* Card 2: Total Expenses */}
-                            <div style={{ 
-                                background: 'linear-gradient(135deg, #ffffff 0%, #fff1f2 100%)', 
-                                padding: '28px 24px', 
-                                borderRadius: '24px', 
-                                border: '1.5px solid #fecdd3', 
-                                boxShadow: '0 10px 25px rgba(244, 63, 94, 0.05)',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                transition: 'all 0.3s ease'
-                            }}>
-                                <div>
-                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Total Expenses</div>
-                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#9f1239' }}>
-                                        {formData.currency} {expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                    </div>
-                                </div>
-                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e' }}>
-                                    <TrendingDown size={24} />
-                                </div>
-                            </div>
-
                             {(() => {
-                                const totalRevenue = parseFloat(formData.total_amount) || 0;
-                                const totalExpenses = expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0);
+                                const isCN = resolveDocType(type)?.toUpperCase() === 'CREDIT NOTE' || formData.document_type === 'Credit Note';
+
+                                // 1. Raw Supplier Expenses from bills
+                                const rawExpenses = expenses.reduce((acc, curr) => acc + (parseFloat(curr.grand_total) || 0), 0);
+
+                                // 2. Credit Note Amount
+                                // If viewing a Credit Note, this document's total_amount IS the credit note:
+                                // If viewing Invoice / Job, count all Credit Notes linked in workflowDocs:
+                                let creditNoteAmount = 0;
+                                if (isCN) {
+                                    creditNoteAmount = parseFloat(formData.total_amount) || 0;
+                                } else {
+                                    const suiteCNs = (workflowDocs || []).filter(d => d.document_type === 'Credit Note');
+                                    creditNoteAmount = suiteCNs.reduce((acc, curr) => acc + (parseFloat(curr.total_amount) || 0), 0);
+                                }
+
+                                // 3. Total Revenue (Invoice Amount)
+                                let totalRevenue = 0;
+                                let refInvoiceNo = null;
+                                let refInvoiceId = null;
+
+                                if (isCN) {
+                                    const inv = linkedInvoiceDoc || (workflowDocs || []).find(d => 
+                                        (d.document_type === 'Tax Invoice' || d.document_type === 'Proforma Invoice') &&
+                                        (d.id === formData.original_document_id || d.document_no === formData.original_invoice_no || !formData.original_document_id)
+                                    ) || (workflowDocs || []).find(d => d.document_type === 'Tax Invoice' || d.document_type === 'Proforma Invoice');
+
+                                    if (inv) {
+                                        totalRevenue = parseFloat(inv.total_amount) || 0;
+                                        refInvoiceNo = inv.document_no;
+                                        refInvoiceId = inv.id;
+                                    } else {
+                                        totalRevenue = parseFloat(formData.original_invoice_amount) || 0;
+                                    }
+                                    if (!refInvoiceNo && formData.original_invoice_no) {
+                                        refInvoiceNo = formData.original_invoice_no;
+                                    }
+                                    if (!refInvoiceId && formData.original_document_id) {
+                                        refInvoiceId = formData.original_document_id;
+                                    }
+                                } else {
+                                    // If viewing Tax Invoice, it is formData.total_amount
+                                    // If viewing Job/Enquiry/Quote, look for Tax Invoice in workflowDocs or fall back to formData.total_amount
+                                    const invDoc = (workflowDocs || []).find(d => d.document_type === 'Tax Invoice');
+                                    if (formData.document_type === 'Tax Invoice' || resolveDocType(type) === 'Tax Invoice') {
+                                        totalRevenue = parseFloat(formData.total_amount) || 0;
+                                    } else if (invDoc) {
+                                        totalRevenue = parseFloat(invDoc.total_amount) || 0;
+                                    } else {
+                                        totalRevenue = parseFloat(formData.total_amount) || 0;
+                                    }
+                                }
+
+                                // 4. Total Expenses = Expenses + Credit Note Amount
+                                const totalExpenses = rawExpenses + creditNoteAmount;
+
+                                // 5. Gross Profit & Profit Margin
                                 const profit = totalRevenue - totalExpenses;
                                 const margin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
+
                                 return (
                                     <>
-                                        {/* Card 3: Gross Profit */}
-                                        <div style={{ 
-                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdf4' : '#fff1f2'} 100%)`, 
-                                            padding: '28px 24px', 
-                                            borderRadius: '24px', 
-                                            border: `1.5px solid ${profit >= 0 ? '#bbf7d0' : '#fecdd3'}`, 
-                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(34, 197, 94, 0.05)' : 'rgba(244, 63, 94, 0.05)'}`,
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            transition: 'all 0.3s ease'
-                                        }}>
-                                            <div>
-                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#10b981' : '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Gross Profit</div>
-                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#14532d' : '#9f1239' }}>
-                                                    {formData.currency} {profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        {/* Card 1: Total Revenue */}
+                                        <div 
+                                            onClick={() => {
+                                                if (isCN && refInvoiceId) {
+                                                    navigate(`/workflows/editor/tax-invoice/${refInvoiceId}`);
+                                                } else {
+                                                    scrollToSection('section-order-lines', 'items');
+                                                }
+                                            }}
+                                            style={{ 
+                                                background: 'linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%)', 
+                                                padding: '24px 22px', 
+                                                borderRadius: '24px', 
+                                                border: '1.5px solid #dbeafe', 
+                                                boxShadow: '0 10px 25px rgba(59, 130, 246, 0.05)',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                justifyContent: 'space-between',
+                                                transition: 'all 0.25s ease',
+                                                cursor: 'pointer',
+                                                position: 'relative'
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                e.currentTarget.style.transform = 'translateY(-4px)';
+                                                e.currentTarget.style.boxShadow = '0 16px 32px rgba(59, 130, 246, 0.15)';
+                                                e.currentTarget.style.borderColor = '#93c5fd';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                e.currentTarget.style.transform = 'translateY(0)';
+                                                e.currentTarget.style.boxShadow = '0 10px 25px rgba(59, 130, 246, 0.05)';
+                                                e.currentTarget.style.borderColor = '#dbeafe';
+                                            }}
+                                            title={isCN ? `Invoice Amount #${refInvoiceNo || ''}` : "Click to jump to Order Lines & Revenue breakdown"}
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <div>
+                                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                                        <span>Total Revenue</span>
+                                                        {isCN && (
+                                                            <span style={{ fontSize: '0.68rem', background: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: '6px', fontWeight: 700, textTransform: 'none' }}>
+                                                                {refInvoiceNo ? `Inv #${refInvoiceNo}` : 'Invoice'}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#1e3a8a' }}>
+                                                        {formData.currency} {totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                    </div>
+                                                </div>
+                                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
+                                                    <TrendingUp size={24} />
                                                 </div>
                                             </div>
-                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdf4' : '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#10b981' : '#f43f5e' }}>
-                                                <Calculator size={24} />
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: '#2563eb', fontWeight: 700, marginTop: '12px', paddingTop: '8px', borderTop: '1px dashed #dbeafe' }}>
+                                                <span>{isCN && refInvoiceId ? `View Invoice #${refInvoiceNo || ''}` : 'Jump to Order Lines'}</span>
+                                                <ArrowDownRight size={13} />
+                                            </div>
+                                        </div>
+
+                                        {/* Card 2: Total Expenses */}
+                                        <div 
+                                            onClick={() => scrollToSection('section-supplier-ledger', 'items')}
+                                            style={{ 
+                                                background: 'linear-gradient(135deg, #ffffff 0%, #fff1f2 100%)', 
+                                                padding: '24px 22px', 
+                                                borderRadius: '24px', 
+                                                border: '1.5px solid #fecdd3', 
+                                                boxShadow: '0 10px 25px rgba(244, 63, 94, 0.05)',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                justifyContent: 'space-between',
+                                                transition: 'all 0.25s ease',
+                                                cursor: 'pointer',
+                                                position: 'relative'
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                e.currentTarget.style.transform = 'translateY(-4px)';
+                                                e.currentTarget.style.boxShadow = '0 16px 32px rgba(244, 63, 94, 0.15)';
+                                                e.currentTarget.style.borderColor = '#fda4af';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                e.currentTarget.style.transform = 'translateY(0)';
+                                                e.currentTarget.style.boxShadow = '0 10px 25px rgba(244, 63, 94, 0.05)';
+                                                e.currentTarget.style.borderColor = '#fecdd3';
+                                            }}
+                                            title="Click to jump to Supplier Ledger & Expenses"
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <div>
+                                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                                        <span>Total Expenses</span>
+                                                        {creditNoteAmount > 0 && (
+                                                            <span style={{ fontSize: '0.68rem', background: '#ffe4e6', color: '#9f1239', padding: '1px 6px', borderRadius: '6px', fontWeight: 700, textTransform: 'none' }}>
+                                                                + CN {formData.currency} {creditNoteAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#9f1239' }}>
+                                                        {formData.currency} {totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                    </div>
+                                                </div>
+                                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e' }}>
+                                                    <TrendingDown size={24} />
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.72rem', color: '#e11d48', fontWeight: 700, marginTop: '12px', paddingTop: '8px', borderTop: '1px dashed #fecdd3' }}>
+                                                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                    <span>{creditNoteAmount > 0 ? `Bills (${formData.currency} ${rawExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}) + CN` : 'Jump to Supplier Ledger'}</span>
+                                                    <ArrowDownRight size={13} />
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setExpenseModal({ isOpen: true, data: null });
+                                                    }}
+                                                    style={{
+                                                        background: '#ffe4e6',
+                                                        border: '1px solid #fecdd3',
+                                                        color: '#9f1239',
+                                                        borderRadius: '6px',
+                                                        padding: '2px 8px',
+                                                        fontSize: '0.68rem',
+                                                        fontWeight: 800,
+                                                        cursor: 'pointer'
+                                                    }}
+                                                    title="Quick Add Expense"
+                                                >
+                                                    + Add Bill
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Card 3: Gross Profit */}
+                                        <div 
+                                            onClick={() => scrollToSection('section-payments', 'items')}
+                                            style={{ 
+                                                background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdf4' : '#fff1f2'} 100%)`, 
+                                                padding: '24px 22px', 
+                                                borderRadius: '24px', 
+                                                border: `1.5px solid ${profit >= 0 ? '#bbf7d0' : '#fecdd3'}`, 
+                                                boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(34, 197, 94, 0.05)' : 'rgba(244, 63, 94, 0.05)'}`,
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                justifyContent: 'space-between',
+                                                transition: 'all 0.25s ease',
+                                                cursor: 'pointer'
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                e.currentTarget.style.transform = 'translateY(-4px)';
+                                                e.currentTarget.style.boxShadow = `0 16px 32px ${profit >= 0 ? 'rgba(34, 197, 94, 0.15)' : 'rgba(244, 63, 94, 0.15)'}`;
+                                                e.currentTarget.style.borderColor = profit >= 0 ? '#86efac' : '#fda4af';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                e.currentTarget.style.transform = 'translateY(0)';
+                                                e.currentTarget.style.boxShadow = `0 10px 25px ${profit >= 0 ? 'rgba(34, 197, 94, 0.05)' : 'rgba(244, 63, 94, 0.05)'}`;
+                                                e.currentTarget.style.borderColor = profit >= 0 ? '#bbf7d0' : '#fecdd3';
+                                            }}
+                                            title="Click to jump to Payments & GST position"
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <div>
+                                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#10b981' : '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Gross Profit</div>
+                                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#14532d' : '#9f1239' }}>
+                                                        {formData.currency} {profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                    </div>
+                                                </div>
+                                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdf4' : '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#10b981' : '#f43f5e' }}>
+                                                    <Calculator size={24} />
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: profit >= 0 ? '#059669' : '#e11d48', fontWeight: 700, marginTop: '12px', paddingTop: '8px', borderTop: `1px dashed ${profit >= 0 ? '#bbf7d0' : '#fecdd3'}` }}>
+                                                <span>Jump to Net Profit & GST</span>
+                                                <ArrowDownRight size={13} />
                                             </div>
                                         </div>
 
                                         {/* Card 4: Profit Margin */}
-                                        <div style={{ 
-                                            background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdfa' : '#fff7ed'} 100%)`, 
-                                            padding: '28px 24px', 
-                                            borderRadius: '24px', 
-                                            border: `1.5px solid ${profit >= 0 ? '#ccfbf1' : '#ffedd5'}`, 
-                                            boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(20, 184, 166, 0.05)' : 'rgba(249, 115, 22, 0.05)'}`,
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            transition: 'all 0.3s ease'
-                                        }}>
-                                            <div>
-                                                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#14b8a6' : '#f97316', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Profit Margin</div>
-                                                <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#0f766e' : '#9a3412' }}>
-                                                    {margin.toFixed(1)}%
+                                        <div 
+                                            onClick={() => scrollToSection('section-payments', 'items')}
+                                            style={{ 
+                                                background: `linear-gradient(135deg, #ffffff 0%, ${profit >= 0 ? '#f0fdfa' : '#fff7ed'} 100%)`, 
+                                                padding: '24px 22px', 
+                                                borderRadius: '24px', 
+                                                border: `1.5px solid ${profit >= 0 ? '#ccfbf1' : '#ffedd5'}`, 
+                                                boxShadow: `0 10px 25px ${profit >= 0 ? 'rgba(20, 184, 166, 0.05)' : 'rgba(249, 115, 22, 0.05)'}`,
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                justifyContent: 'space-between',
+                                                transition: 'all 0.25s ease',
+                                                cursor: 'pointer'
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                e.currentTarget.style.transform = 'translateY(-4px)';
+                                                e.currentTarget.style.boxShadow = `0 16px 32px ${profit >= 0 ? 'rgba(20, 184, 166, 0.15)' : 'rgba(249, 115, 22, 0.15)'}`;
+                                                e.currentTarget.style.borderColor = profit >= 0 ? '#99f6e4' : '#fed7aa';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                e.currentTarget.style.transform = 'translateY(0)';
+                                                e.currentTarget.style.boxShadow = `0 10px 25px ${profit >= 0 ? 'rgba(20, 184, 166, 0.05)' : 'rgba(249, 115, 22, 0.05)'}`;
+                                                e.currentTarget.style.borderColor = profit >= 0 ? '#ccfbf1' : '#ffedd5';
+                                            }}
+                                            title="Click to jump to Financial Analysis"
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <div>
+                                                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: profit >= 0 ? '#14b8a6' : '#f97316', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Profit Margin</div>
+                                                    <div style={{ fontSize: '1.85rem', fontWeight: 900, color: profit >= 0 ? '#0f766e' : '#9a3412' }}>
+                                                        {margin.toFixed(1)}%
+                                                    </div>
+                                                </div>
+                                                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdfa' : '#fff7ed', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#14b8a6' : '#f97316' }}>
+                                                    <Percent size={24} />
                                                 </div>
                                             </div>
-                                            <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: profit >= 0 ? '#f0fdfa' : '#fff7ed', display: 'flex', alignItems: 'center', justifyContent: 'center', color: profit >= 0 ? '#14b8a6' : '#f97316' }}>
-                                                <Percent size={24} />
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: profit >= 0 ? '#0d9488' : '#ea580c', fontWeight: 700, marginTop: '12px', paddingTop: '8px', borderTop: `1px dashed ${profit >= 0 ? '#ccfbf1' : '#ffedd5'}` }}>
+                                                <span>Jump to Analytics Dashboard</span>
+                                                <ArrowDownRight size={13} />
                                             </div>
                                         </div>
                                     </>
@@ -4747,6 +5251,28 @@ export default function WorkflowEditor() {
                                             />
                                         </div>
                                     )}
+
+                                    <div className="form-item" style={{ marginTop: '16px' }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
+                                            Job Description (for search)
+                                        </label>
+                                        <div style={{ background: '#fff', borderRadius: '12px', padding: '8px', border: '1px solid #e2e8f0' }}>
+                                            <RichTextEditor 
+                                                value={formData.delivery_verification?.job_description || ''} 
+                                                onChange={(val) => {
+                                                    setFormData(prev => ({
+                                                        ...prev,
+                                                        delivery_verification: {
+                                                            ...(prev.delivery_verification || {}),
+                                                            job_description: val
+                                                        }
+                                                    }));
+                                                }}
+                                                placeholder="Detailed description of the job for future search"
+                                                height="120px"
+                                            />
+                                        </div>
+                                    </div>
                                 </>
                             )}
                         </div>
@@ -5046,36 +5572,11 @@ export default function WorkflowEditor() {
                                 )}
                             </div>
                         </div>
-
-                        {/* Job Description spans both columns */}
-                        {(formData.document_type === 'Job' || formData.is_job) && (
-                            <div className="form-item" style={{ gridColumn: 'span 2', marginTop: '16px' }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
-                                    Job Description (for search)
-                                </label>
-                                <div style={{ background: '#fff', borderRadius: '12px', padding: '8px', border: '1px solid #e2e8f0' }}>
-                                    <RichTextEditor 
-                                        value={formData.delivery_verification?.job_description || ''} 
-                                        onChange={(val) => {
-                                            setFormData(prev => ({
-                                                ...prev,
-                                                delivery_verification: {
-                                                    ...(prev.delivery_verification || {}),
-                                                    job_description: val
-                                                }
-                                            }));
-                                        }}
-                                        placeholder="Detailed description of the job for future search"
-                                        height="120px"
-                                    />
-                                </div>
-                            </div>
-                        )}
                     </div>
                 </div>
 
                 {/* Main Action Tabs */}
-                <div className="tab-container">
+                <div className="tab-container" id="section-order-lines">
                     <button className={`tab tab-items ${activeTab === 'items' ? 'active' : ''}`} onClick={() => setActiveTab('items')}>
                         <Package size={16} /> Order Lines
                     </button>
@@ -5106,7 +5607,7 @@ export default function WorkflowEditor() {
                             <tbody>
                                 {lineItems.map((item, index) => (
                                     <tr key={item.id} className={item.is_section ? 'row-section' : item.is_note ? 'row-note' : ''}>
-                                        <td>
+                                        <td style={{ position: 'relative' }}>
                                             {item.is_note ? (
                                                 <textarea
                                                     className="table-input"
@@ -5116,7 +5617,7 @@ export default function WorkflowEditor() {
                                                     placeholder="Note: e.g. Lead time 1 week"
                                                     rows={2}
                                                 />
-                                            ) : (
+                                            ) : item.is_section ? (
                                                 <textarea
                                                     className="table-input"
                                                     style={{ 
@@ -5124,29 +5625,216 @@ export default function WorkflowEditor() {
                                                         height: '42px', 
                                                         minHeight: '42px',
                                                         overflow: 'hidden',
-                                                        whiteSpace: 'nowrap',
-                                                        transition: 'height 0.2s ease, white-space 0.2s'
+                                                        fontWeight: 700,
+                                                        color: 'var(--accent)'
                                                     }}
                                                     value={item.description}
-                                                    onChange={(e) => {
-                                                        updateLineItem(index, 'description', e.target.value);
-                                                        if (document.activeElement === e.target) {
+                                                    onChange={(e) => updateLineItem(index, 'description', e.target.value)}
+                                                    placeholder="SECTION: e.g. Spare Parts"
+                                                />
+                                            ) : (
+                                                <div style={{ position: 'relative', width: '100%' }}>
+                                                    <textarea
+                                                        className="table-input catalog-suggest-input"
+                                                        style={{ 
+                                                            resize: 'none', 
+                                                            height: '42px', 
+                                                            minHeight: '42px',
+                                                            overflow: 'hidden',
+                                                            whiteSpace: 'nowrap',
+                                                            transition: 'height 0.2s ease, white-space 0.2s'
+                                                        }}
+                                                        value={item.description}
+                                                        onChange={(e) => {
+                                                            updateLineItem(index, 'description', e.target.value);
+                                                            setActiveSuggestRow(index);
+                                                            setHighlightedSuggestIndex(0);
+                                                            if (document.activeElement === e.target) {
+                                                                e.target.style.height = 'auto';
+                                                                e.target.style.height = `${e.target.scrollHeight}px`;
+                                                            }
+                                                        }}
+                                                        onFocus={(e) => {
+                                                            e.target.style.whiteSpace = 'normal';
                                                             e.target.style.height = 'auto';
                                                             e.target.style.height = `${e.target.scrollHeight}px`;
-                                                        }
-                                                    }}
-                                                    onFocus={(e) => {
-                                                        e.target.style.whiteSpace = 'normal';
-                                                        e.target.style.height = 'auto';
-                                                        e.target.style.height = `${e.target.scrollHeight}px`;
-                                                    }}
-                                                    onBlur={(e) => {
-                                                        e.target.style.whiteSpace = 'nowrap';
-                                                        e.target.style.height = '42px';
-                                                        e.target.scrollTop = 0;
-                                                    }}
-                                                    placeholder={item.is_section ? "SECTION: e.g. Spare Parts" : "Select product or enter description..."}
-                                                />
+                                                            setActiveSuggestRow(index);
+                                                            setHighlightedSuggestIndex(0);
+                                                        }}
+                                                        onBlur={(e) => {
+                                                            e.target.style.whiteSpace = 'nowrap';
+                                                            e.target.style.height = '42px';
+                                                            e.target.scrollTop = 0;
+                                                        }}
+                                                        onKeyDown={(e) => {
+                                                            if (activeSuggestRow === index) {
+                                                                const searchStr = (item.description || '').trim().toLowerCase();
+                                                                const matching = (catalog || []).filter(cat => {
+                                                                    if (!searchStr) return true;
+                                                                    return (
+                                                                        (cat.name && cat.name.toLowerCase().includes(searchStr)) ||
+                                                                        (cat.specification && cat.specification.toLowerCase().includes(searchStr)) ||
+                                                                        (cat.barcode && cat.barcode.toLowerCase().includes(searchStr)) ||
+                                                                        (cat.stored_location && cat.stored_location.toLowerCase().includes(searchStr))
+                                                                    );
+                                                                }).slice(0, 30);
+
+                                                                if (matching.length > 0) {
+                                                                    if (e.key === 'ArrowDown') {
+                                                                        e.preventDefault();
+                                                                        setHighlightedSuggestIndex(prev => (prev + 1) % matching.length);
+                                                                    } else if (e.key === 'ArrowUp') {
+                                                                        e.preventDefault();
+                                                                        setHighlightedSuggestIndex(prev => (prev - 1 + matching.length) % matching.length);
+                                                                    } else if (e.key === 'Enter' && !e.shiftKey) {
+                                                                        e.preventDefault();
+                                                                        if (matching[highlightedSuggestIndex]) {
+                                                                            handleSelectCatalogItemForLine(index, matching[highlightedSuggestIndex]);
+                                                                        }
+                                                                    } else if (e.key === 'Escape') {
+                                                                        e.preventDefault();
+                                                                        setActiveSuggestRow(null);
+                                                                    }
+                                                                }
+                                                            }
+                                                        }}
+                                                        placeholder="Select product or enter description..."
+                                                    />
+
+                                                    {/* Database Catalog Autocomplete Popover */}
+                                                    {activeSuggestRow === index && (
+                                                        (() => {
+                                                            const searchStr = (item.description || '').trim().toLowerCase();
+                                                            const matching = (catalog || []).filter(cat => {
+                                                                if (!searchStr) return true;
+                                                                return (
+                                                                    (cat.name && cat.name.toLowerCase().includes(searchStr)) ||
+                                                                    (cat.specification && cat.specification.toLowerCase().includes(searchStr)) ||
+                                                                    (cat.barcode && cat.barcode.toLowerCase().includes(searchStr)) ||
+                                                                    (cat.stored_location && cat.stored_location.toLowerCase().includes(searchStr))
+                                                                );
+                                                            }).slice(0, 30);
+
+                                                            if (matching.length === 0 && !searchStr) return null;
+
+                                                            return (
+                                                                <div 
+                                                                    className="catalog-suggest-box"
+                                                                    style={{
+                                                                        position: 'absolute',
+                                                                        top: 'calc(100% + 4px)',
+                                                                        left: 0,
+                                                                        minWidth: '380px',
+                                                                        maxWidth: '520px',
+                                                                        maxHeight: '300px',
+                                                                        background: '#ffffff',
+                                                                        borderRadius: '12px',
+                                                                        border: '1px solid #cbd5e1',
+                                                                        boxShadow: '0 12px 32px -4px rgba(15, 23, 42, 0.18), 0 4px 12px -2px rgba(15, 23, 42, 0.08)',
+                                                                        zIndex: 9999,
+                                                                        display: 'flex',
+                                                                        flexDirection: 'column',
+                                                                        overflow: 'hidden'
+                                                                    }}
+                                                                >
+                                                                    {/* Header */}
+                                                                    <div style={{
+                                                                        padding: '8px 12px',
+                                                                        background: '#f8fafc',
+                                                                        borderBottom: '1px solid #e2e8f0',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'space-between',
+                                                                        fontSize: '0.74rem',
+                                                                        fontWeight: 700,
+                                                                        color: '#475569'
+                                                                    }}>
+                                                                        <span style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#1d4ed8' }}>
+                                                                            <Package size={13} color="#2563eb" />
+                                                                            Database Catalog ({matching.length} found{catalog.length ? ` / ${catalog.length} total` : ''})
+                                                                        </span>
+                                                                        <span style={{ fontSize: '0.68rem', color: '#94a3b8', fontWeight: 500 }}>
+                                                                            Enter / Click to Auto-fill
+                                                                        </span>
+                                                                    </div>
+
+                                                                    {/* List */}
+                                                                    <div style={{ overflowY: 'auto', flex: 1, maxHeight: '230px' }}>
+                                                                        {matching.length > 0 ? (
+                                                                            matching.map((cat, mIdx) => {
+                                                                                const isHighlighted = mIdx === highlightedSuggestIndex;
+                                                                                return (
+                                                                                    <div
+                                                                                        key={cat.id || mIdx}
+                                                                                        onMouseDown={(e) => {
+                                                                                            e.preventDefault();
+                                                                                            handleSelectCatalogItemForLine(index, cat);
+                                                                                        }}
+                                                                                        onMouseEnter={() => setHighlightedSuggestIndex(mIdx)}
+                                                                                        style={{
+                                                                                            padding: '8px 12px',
+                                                                                            borderBottom: '1px solid #f1f5f9',
+                                                                                            cursor: 'pointer',
+                                                                                            background: isHighlighted ? '#eff6ff' : '#ffffff',
+                                                                                            transition: 'background 0.1s ease',
+                                                                                            display: 'flex',
+                                                                                            alignItems: 'flex-start',
+                                                                                            justifyContent: 'space-between',
+                                                                                            gap: '10px'
+                                                                                        }}
+                                                                                    >
+                                                                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                                                                            <div style={{ 
+                                                                                                fontWeight: 700, 
+                                                                                                fontSize: '0.84rem', 
+                                                                                                color: isHighlighted ? '#1d4ed8' : '#1e293b',
+                                                                                                display: 'flex',
+                                                                                                alignItems: 'center',
+                                                                                                gap: '6px'
+                                                                                            }}>
+                                                                                                <span>{cat.name}</span>
+                                                                                                {cat.barcode && (
+                                                                                                    <span style={{ fontSize: '0.68rem', background: '#f1f5f9', color: '#64748b', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>
+                                                                                                        #{cat.barcode}
+                                                                                                    </span>
+                                                                                                )}
+                                                                                            </div>
+                                                                                            {cat.specification && (
+                                                                                                <div style={{ 
+                                                                                                    fontSize: '0.73rem', 
+                                                                                                    color: '#64748b', 
+                                                                                                    marginTop: '2px', 
+                                                                                                    whiteSpace: 'nowrap', 
+                                                                                                    overflow: 'hidden', 
+                                                                                                    textOverflow: 'ellipsis',
+                                                                                                    maxWidth: '300px'
+                                                                                                }}>
+                                                                                                    {cat.specification}
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
+                                                                                            <span style={{ fontWeight: 800, fontSize: '0.82rem', color: '#16a34a' }}>
+                                                                                                {formData.currency} {(parseFloat(cat.selling_price) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                                            </span>
+                                                                                            <span style={{ fontSize: '0.68rem', color: '#94a3b8', fontWeight: 600 }}>
+                                                                                                {cat.unit || cat.uom || 'UNIT(S)'}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                );
+                                                                            })
+                                                                        ) : (
+                                                                            <div style={{ padding: '16px', textAlign: 'center', color: '#94a3b8', fontSize: '0.8rem' }}>
+                                                                                No database items match "{item.description}". You can continue typing custom text.
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })()
+                                                    )}
+                                                </div>
                                             )}
                                             {!item.is_section && !item.is_note && (
                                                 <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', width: '100%', marginTop: '4px' }}>
@@ -5263,192 +5951,361 @@ export default function WorkflowEditor() {
                             </tbody>
                         </table>
 
-                        <div className="table-actions">
-                            <div style={{ display: 'flex', gap: '12px' }}>
-                                <button className="add-btn" onClick={() => addLineItem('item')}><Plus size={14} /> Add a product</button>
-                                <button className="add-btn" onClick={() => addLineItem('section')}>Add a section</button>
-                                <button className="add-btn" onClick={() => addLineItem('note')}>Add a note</button>
-                                <button className="add-btn" onClick={() => setShowDocumentParserModal(true)} style={{ color: '#8b5cf6', fontWeight: 700 }}>
-                                    <Sparkles size={14} /> Image to Items
-                                </button>
+                        {/* Action Toolbar & Financial Summary Box (50% + 50% 2 Columns) */}
+                        <div className="table-actions" style={{ 
+                            display: 'grid', 
+                            gridTemplateColumns: formData.document_type !== 'Enquiry' ? 'repeat(2, minmax(0, 1fr))' : '1fr', 
+                            alignItems: 'start', 
+                            gap: '24px', 
+                            marginTop: '20px' 
+                        }}>
+                            {/* Left Side: Modern Action Toolbar (50% Column) */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%' }}>
+                                <div style={{ 
+                                    display: 'flex', 
+                                    flexWrap: 'wrap', 
+                                    alignItems: 'center', 
+                                    gap: '10px', 
+                                    background: '#ffffff', 
+                                    padding: '12px 16px', 
+                                    borderRadius: '14px', 
+                                    border: '1px solid #e2e8f0',
+                                    boxShadow: '0 2px 8px rgba(0,0,0,0.02)'
+                                }}>
+                                    {/* Primary Add Product */}
+                                    <button 
+                                        type="button"
+                                        className="add-btn" 
+                                        onClick={() => addLineItem('item')}
+                                        style={{ 
+                                            display: 'inline-flex', 
+                                            alignItems: 'center', 
+                                            gap: '6px', 
+                                            background: '#2563eb', 
+                                            color: '#ffffff', 
+                                            border: 'none', 
+                                            borderRadius: '8px', 
+                                            padding: '8px 14px', 
+                                            fontSize: '0.84rem', 
+                                            fontWeight: 700, 
+                                            cursor: 'pointer',
+                                            boxShadow: '0 2px 6px rgba(37,99,235,0.25)',
+                                            transition: 'all 0.15s'
+                                        }}
+                                        onMouseEnter={e => e.currentTarget.style.background = '#1d4ed8'}
+                                        onMouseLeave={e => e.currentTarget.style.background = '#2563eb'}
+                                    >
+                                        <Plus size={15} /> Add Product / Item
+                                    </button>
 
-                                <input 
-                                    type="file" 
-                                    id="quick-image-attach" 
-                                    accept="image/*,application/pdf" 
-                                    style={{ display: 'none' }} 
-                                    onChange={handleQuickImageAttach} 
-                                />
-                                <button 
-                                    className="add-btn" 
-                                    onClick={() => document.getElementById('quick-image-attach').click()} 
-                                    style={{ color: '#0ea5e9', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}
-                                    disabled={saving}
-                                >
-                                    {saving ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />} 
-                                    {saving ? 'Uploading...' : 'Quick Attach'}
-                                </button>
+                                    {/* Section */}
+                                    <button 
+                                        type="button"
+                                        className="add-btn" 
+                                        onClick={() => addLineItem('section')}
+                                        style={{ 
+                                            display: 'inline-flex', 
+                                            alignItems: 'center', 
+                                            gap: '5px', 
+                                            background: '#f8fafc', 
+                                            color: '#334155', 
+                                            border: '1px solid #cbd5e1', 
+                                            borderRadius: '8px', 
+                                            padding: '8px 12px', 
+                                            fontSize: '0.82rem', 
+                                            fontWeight: 600, 
+                                            cursor: 'pointer',
+                                            transition: 'all 0.15s'
+                                        }}
+                                        onMouseEnter={e => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.borderColor = '#94a3b8'; }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.borderColor = '#cbd5e1'; }}
+                                    >
+                                        <List size={14} color="#64748b" /> Add Section
+                                    </button>
 
-                                <div style={{ position: 'relative' }}>
-                                    <div style={{ display: 'flex', gap: '8px' }}>
-                                        <button className="add-btn catalog-btn" onClick={() => setShowCatalogDropdown(!showCatalogDropdown)}>
-                                            <Package size={14} /> From Catalog
-                                        </button>
-                                        <button
-                                            className="add-btn"
-                                            onClick={() => navigate('/catalog/new')}
-                                            title="Add new item to catalog"
-                                            style={{ padding: '4px', opacity: 0.7 }}
-                                        >
-                                            <Plus size={14} />
-                                        </button>
-                                    </div>
-                                    {showCatalogDropdown && (
-                                        <div style={{
-                                            position: 'absolute', top: '100%', left: 0, zIndex: 50,
-                                            minWidth: '380px', maxHeight: '380px', marginTop: '4px',
-                                            background: '#fff', border: '1px solid #e2e8f0',
-                                            borderRadius: '12px', boxShadow: '0 12px 40px rgba(0,0,0,0.15)',
-                                            overflow: 'hidden', display: 'flex', flexDirection: 'column'
-                                        }}>
-                                            {/* Header with search and close */}
-                                            <div style={{
-                                                padding: '10px 12px', borderBottom: '1px solid #e2e8f0',
-                                                display: 'flex', alignItems: 'center', gap: '8px',
-                                                background: '#f8fafc'
-                                            }}>
-                                                <input
-                                                    type="text"
-                                                    placeholder="Search catalog items..."
-                                                    value={catalogSearch}
-                                                    onChange={(e) => setCatalogSearch(e.target.value)}
-                                                    autoFocus
-                                                    style={{
-                                                        flex: 1, padding: '8px 12px', border: '1px solid #e2e8f0',
-                                                        borderRadius: '8px', fontSize: '0.85rem', outline: 'none',
-                                                        background: '#fff'
-                                                    }}
-                                                />
-                                                <button
-                                                    onClick={() => { setShowCatalogDropdown(false); setCatalogSearch(''); }}
-                                                    style={{
-                                                        background: '#f1f5f9', border: 'none', borderRadius: '50%',
-                                                        width: '30px', height: '30px', display: 'flex',
-                                                        alignItems: 'center', justifyContent: 'center',
-                                                        cursor: 'pointer', color: '#64748b', flexShrink: 0
-                                                    }}
-                                                    title="Close"
-                                                >
-                                                    <X size={14} />
-                                                </button>
-                                            </div>
-                                            {/* Items list */}
-                                            <div style={{ overflowY: 'auto', flex: 1 }}>
-                                                {catalog
-                                                    .filter(cat =>
-                                                        cat.name?.toLowerCase().includes(catalogSearch.toLowerCase()) ||
-                                                        cat.specification?.toLowerCase().includes(catalogSearch.toLowerCase())
-                                                    )
-                                                    .map(cat => (
-                                                        <button
-                                                            key={cat.id}
-                                                            onClick={() => { handleAddItemFromCatalog(cat); setCatalogSearch(''); setShowCatalogDropdown(false); }}
-                                                            style={{
-                                                                display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
-                                                                gap: '2px', padding: '10px 14px', width: '100%', textAlign: 'left',
-                                                                background: 'none', border: 'none', borderBottom: '1px solid #f1f5f9',
-                                                                cursor: 'pointer', transition: 'background 0.15s'
-                                                            }}
-                                                            onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
-                                                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                                        >
-                                                            <span style={{ fontWeight: 600, color: '#1e293b', fontSize: '0.9rem' }}>{cat.name}</span>
-                                                            {cat.specification && (
-                                                                <span style={{ fontSize: '0.75rem', color: '#94a3b8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '340px' }}>
-                                                                    {cat.specification}
-                                                                </span>
-                                                            )}
-                                                        </button>
-                                                    ))
-                                                }
-                                                {catalog.filter(cat =>
-                                                    cat.name?.toLowerCase().includes(catalogSearch.toLowerCase()) ||
-                                                    cat.specification?.toLowerCase().includes(catalogSearch.toLowerCase())
-                                                ).length === 0 && (
-                                                        <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem' }}>
-                                                            No items found
-                                                        </div>
-                                                    )}
-                                            </div>
-                                            {/* Footer */}
-                                            <button
-                                                onClick={() => { setShowCatalogDropdown(false); navigate('/catalog'); }}
-                                                style={{
-                                                    color: 'var(--accent)', fontWeight: 600, borderTop: '1px solid #e2e8f0',
-                                                    padding: '10px 14px', background: '#fff', border: 'none',
-                                                    cursor: 'pointer', textAlign: 'left', fontSize: '0.85rem'
+                                    {/* Note */}
+                                    <button 
+                                        type="button"
+                                        className="add-btn" 
+                                        onClick={() => addLineItem('note')}
+                                        style={{ 
+                                            display: 'inline-flex', 
+                                            alignItems: 'center', 
+                                            gap: '5px', 
+                                            background: '#f8fafc', 
+                                            color: '#334155', 
+                                            border: '1px solid #cbd5e1', 
+                                            borderRadius: '8px', 
+                                            padding: '8px 12px', 
+                                            fontSize: '0.82rem', 
+                                            fontWeight: 600, 
+                                            cursor: 'pointer',
+                                            transition: 'all 0.15s'
+                                        }}
+                                        onMouseEnter={e => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.borderColor = '#94a3b8'; }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.borderColor = '#cbd5e1'; }}
+                                    >
+                                        <FileText size={14} color="#64748b" /> Add Note
+                                    </button>
+
+                                    {/* From Catalog */}
+                                    <div style={{ position: 'relative', display: 'inline-flex' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                                            <button 
+                                                type="button"
+                                                className="add-btn catalog-btn" 
+                                                onClick={() => setShowCatalogDropdown(!showCatalogDropdown)}
+                                                style={{ 
+                                                    display: 'inline-flex', 
+                                                    alignItems: 'center', 
+                                                    gap: '6px', 
+                                                    background: '#eff6ff', 
+                                                    color: '#1d4ed8', 
+                                                    border: '1px solid #bfdbfe', 
+                                                    borderRadius: '8px 0 0 8px', 
+                                                    padding: '8px 12px', 
+                                                    fontSize: '0.82rem', 
+                                                    fontWeight: 700, 
+                                                    cursor: 'pointer' 
                                                 }}
-                                                onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
-                                                onMouseLeave={e => e.currentTarget.style.background = '#fff'}
                                             >
-                                                View All Catalog (Manage CRUD)
+                                                <Package size={14} color="#2563eb" /> From Catalog
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="add-btn"
+                                                onClick={() => navigate('/catalog/new')}
+                                                title="Add new item to catalog"
+                                                style={{ 
+                                                    background: '#eff6ff', 
+                                                    color: '#1d4ed8', 
+                                                    border: '1px solid #bfdbfe', 
+                                                    borderLeft: 'none', 
+                                                    borderRadius: '0 8px 8px 0', 
+                                                    padding: '8px 8px', 
+                                                    fontSize: '0.82rem', 
+                                                    cursor: 'pointer' 
+                                                }}
+                                            >
+                                                <Plus size={14} />
                                             </button>
                                         </div>
-                                    )}
+                                        {showCatalogDropdown && (
+                                            <div style={{
+                                                position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 50,
+                                                minWidth: '380px', maxHeight: '380px',
+                                                background: '#fff', border: '1px solid #e2e8f0',
+                                                borderRadius: '12px', boxShadow: '0 12px 40px rgba(0,0,0,0.15)',
+                                                overflow: 'hidden', display: 'flex', flexDirection: 'column'
+                                            }}>
+                                                {/* Header with search and close */}
+                                                <div style={{
+                                                    padding: '10px 12px', borderBottom: '1px solid #e2e8f0',
+                                                    display: 'flex', alignItems: 'center', gap: '8px',
+                                                    background: '#f8fafc'
+                                                }}>
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Search catalog items..."
+                                                        value={catalogSearch}
+                                                        onChange={(e) => setCatalogSearch(e.target.value)}
+                                                        autoFocus
+                                                        style={{
+                                                            flex: 1, padding: '8px 12px', border: '1px solid #e2e8f0',
+                                                            borderRadius: '8px', fontSize: '0.85rem', outline: 'none',
+                                                            background: '#fff'
+                                                        }}
+                                                    />
+                                                    <button
+                                                        onClick={() => { setShowCatalogDropdown(false); setCatalogSearch(''); }}
+                                                        style={{
+                                                            background: '#f1f5f9', border: 'none', borderRadius: '50%',
+                                                            width: '30px', height: '30px', display: 'flex',
+                                                            alignItems: 'center', justifyContent: 'center',
+                                                            cursor: 'pointer', color: '#64748b', flexShrink: 0
+                                                        }}
+                                                        title="Close"
+                                                    >
+                                                        <X size={14} />
+                                                    </button>
+                                                </div>
+                                                {/* Items list */}
+                                                <div style={{ overflowY: 'auto', flex: 1 }}>
+                                                    {catalog
+                                                        .filter(cat =>
+                                                            cat.name?.toLowerCase().includes(catalogSearch.toLowerCase()) ||
+                                                            cat.specification?.toLowerCase().includes(catalogSearch.toLowerCase())
+                                                        )
+                                                        .map(cat => (
+                                                            <button
+                                                                key={cat.id}
+                                                                onClick={() => { handleAddItemFromCatalog(cat); setCatalogSearch(''); setShowCatalogDropdown(false); }}
+                                                                style={{
+                                                                    display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+                                                                    gap: '2px', padding: '10px 14px', width: '100%', textAlign: 'left',
+                                                                    background: 'none', border: 'none', borderBottom: '1px solid #f1f5f9',
+                                                                    cursor: 'pointer', transition: 'background 0.15s'
+                                                                }}
+                                                                onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
+                                                                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                                            >
+                                                                <span style={{ fontWeight: 600, color: '#1e293b', fontSize: '0.9rem' }}>{cat.name}</span>
+                                                                {cat.specification && (
+                                                                    <span style={{ fontSize: '0.75rem', color: '#94a3b8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '340px' }}>
+                                                                        {cat.specification}
+                                                                    </span>
+                                                                )}
+                                                            </button>
+                                                        ))
+                                                    }
+                                                    {catalog.filter(cat =>
+                                                        cat.name?.toLowerCase().includes(catalogSearch.toLowerCase()) ||
+                                                        cat.specification?.toLowerCase().includes(catalogSearch.toLowerCase())
+                                                    ).length === 0 && (
+                                                            <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem' }}>
+                                                                No items found
+                                                            </div>
+                                                        )}
+                                                </div>
+                                                {/* Footer */}
+                                                <button
+                                                    onClick={() => { setShowCatalogDropdown(false); navigate('/catalog'); }}
+                                                    style={{
+                                                        color: 'var(--accent)', fontWeight: 600, borderTop: '1px solid #e2e8f0',
+                                                        padding: '10px 14px', background: '#fff', border: 'none',
+                                                        cursor: 'pointer', textAlign: 'left', fontSize: '0.85rem'
+                                                    }}
+                                                    onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
+                                                    onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+                                                >
+                                                    View All Catalog (Manage CRUD)
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* AI Extract */}
+                                    <button 
+                                        type="button"
+                                        className="add-btn" 
+                                        onClick={() => setShowDocumentParserModal(true)} 
+                                        style={{ 
+                                            display: 'inline-flex', 
+                                            alignItems: 'center', 
+                                            gap: '5px', 
+                                            background: '#faf5ff', 
+                                            color: '#7c3aed', 
+                                            border: '1px solid #e9d5ff', 
+                                            borderRadius: '8px', 
+                                            padding: '8px 12px', 
+                                            fontSize: '0.82rem', 
+                                            fontWeight: 700, 
+                                            cursor: 'pointer',
+                                            transition: 'all 0.15s'
+                                        }}
+                                        onMouseEnter={e => { e.currentTarget.style.background = '#f3e8ff'; }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = '#faf5ff'; }}
+                                    >
+                                        <Sparkles size={14} color="#7c3aed" /> Image to Items
+                                    </button>
+
+                                    {/* Quick Attach */}
+                                    <input 
+                                        type="file" 
+                                        id="quick-image-attach" 
+                                        accept="image/*,application/pdf" 
+                                        style={{ display: 'none' }} 
+                                        onChange={handleQuickImageAttach} 
+                                    />
+                                    <button 
+                                        type="button"
+                                        className="add-btn" 
+                                        onClick={() => document.getElementById('quick-image-attach').click()} 
+                                        style={{ 
+                                            display: 'inline-flex', 
+                                            alignItems: 'center', 
+                                            gap: '5px', 
+                                            background: '#f0fdf4', 
+                                            color: '#16a34a', 
+                                            border: '1px solid #bbf7d0', 
+                                            borderRadius: '8px', 
+                                            padding: '8px 12px', 
+                                            fontSize: '0.82rem', 
+                                            fontWeight: 700, 
+                                            cursor: 'pointer',
+                                            transition: 'all 0.15s'
+                                        }}
+                                        disabled={saving}
+                                        onMouseEnter={e => { e.currentTarget.style.background = '#dcfce7'; }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = '#f0fdf4'; }}
+                                    >
+                                        {saving ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />} 
+                                        {saving ? 'Uploading...' : 'Quick Attach'}
+                                    </button>
                                 </div>
                             </div>
 
+                            {/* Right Side: Redesigned Summary Box (50% Column) */}
                             {formData.document_type !== 'Enquiry' && (
-                                <div className="summary-box">
+                                <div className="summary-box" style={{ 
+                                    width: '100%', 
+                                    background: '#ffffff', 
+                                    borderRadius: '16px', 
+                                    border: '1px solid #cbd5e1', 
+                                    boxShadow: '0 4px 20px rgba(0,0,0,0.04)', 
+                                    overflow: 'hidden', 
+                                    padding: 0 
+                                }}>
                                     {/* Advance Deposit & Billing Split Automation Tool */}
                                     <div style={{
-                                        background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
-                                        border: '1px solid #bae6fd',
-                                        borderRadius: '12px',
-                                        padding: '10px 14px',
-                                        marginBottom: '14px'
+                                        background: '#f8fafc',
+                                        borderBottom: '1px solid #e2e8f0',
+                                        padding: '14px 16px'
                                     }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 800, fontSize: '0.8rem', color: '#0369a1' }}>
-                                                <Percent size={15} color="#0284c7" />
-                                                <span>Advance Billing % Automation</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 800, fontSize: '0.78rem', color: '#1e3a8a', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                                                <Percent size={14} color="#2563eb" />
+                                                <span>Advance Billing % Split</span>
                                             </div>
                                             {lineItems.some(i => i.full_unit_price !== undefined && i.full_unit_price !== i.unit_price) && (
                                                 <button
                                                     type="button"
                                                     onClick={restoreFullPrices}
-                                                    style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '2px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}
+                                                    style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', padding: '3px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}
                                                 >
-                                                    ↺ Restore 100%
+                                                    ↺ Reset 100%
                                                 </button>
                                             )}
                                         </div>
 
-                                        <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center' }}>
-                                            {[50, 30, 20, 15, 70, 100].map(pct => (
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '4px' }}>
+                                            {[15, 20, 30, 50, 70, 100].map(pct => (
                                                 <button
                                                     key={pct}
                                                     type="button"
                                                     onClick={() => pct === 100 ? restoreFullPrices() : applyBillingPercentageSplit(pct)}
                                                     style={{
-                                                        background: pct === 100 ? '#475569' : '#0284c7',
-                                                        color: '#ffffff',
-                                                        border: 'none',
-                                                        padding: '4px 8px',
+                                                        background: '#ffffff',
+                                                        color: '#334155',
+                                                        border: '1px solid #cbd5e1',
+                                                        padding: '5px 2px',
                                                         borderRadius: '6px',
                                                         fontSize: '0.72rem',
                                                         fontWeight: 700,
+                                                        textAlign: 'center',
                                                         cursor: 'pointer',
-                                                        boxShadow: '0 1px 3px rgba(2, 132, 199, 0.2)'
+                                                        transition: 'all 0.15s'
                                                     }}
+                                                    onMouseEnter={e => { e.currentTarget.style.background = '#eff6ff'; e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.color = '#1d4ed8'; }}
+                                                    onMouseLeave={e => { e.currentTarget.style.background = '#ffffff'; e.currentTarget.style.borderColor = '#cbd5e1'; e.currentTarget.style.color = '#334155'; }}
                                                 >
-                                                    {pct === 100 ? '100% Full' : `⚡ Scale ${pct}%`}
+                                                    {pct === 100 ? 'Full' : `${pct}%`}
                                                 </button>
                                             ))}
                                         </div>
 
                                         {/* Custom % Input Box */}
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '10px' }}>
                                             <div style={{ position: 'relative', flex: 1 }}>
                                                 <input 
                                                     type="number" 
@@ -5463,16 +6320,17 @@ export default function WorkflowEditor() {
                                                     }}
                                                     style={{
                                                         width: '100%',
-                                                        padding: '4px 22px 4px 8px',
+                                                        padding: '5px 24px 5px 10px',
                                                         borderRadius: '6px',
-                                                        border: '1px solid #93c5fd',
-                                                        fontSize: '0.75rem',
-                                                        fontWeight: 700,
+                                                        border: '1px solid #cbd5e1',
+                                                        fontSize: '0.76rem',
+                                                        fontWeight: 600,
                                                         background: '#fff',
-                                                        outline: 'none'
+                                                        outline: 'none',
+                                                        boxSizing: 'border-box'
                                                     }}
                                                 />
-                                                <span style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', fontWeight: 800, color: '#0284c7' }}>%</span>
+                                                <span style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', fontWeight: 800, color: '#94a3b8' }}>%</span>
                                             </div>
                                             <button
                                                 type="button"
@@ -5481,70 +6339,87 @@ export default function WorkflowEditor() {
                                                 }}
                                                 disabled={!customBillingPercent}
                                                 style={{
-                                                    background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                                                    background: '#2563eb',
                                                     color: '#fff',
                                                     border: 'none',
-                                                    padding: '4px 10px',
+                                                    padding: '5px 12px',
                                                     borderRadius: '6px',
-                                                    fontSize: '0.73rem',
-                                                    fontWeight: 800,
+                                                    fontSize: '0.74rem',
+                                                    fontWeight: 700,
                                                     cursor: customBillingPercent ? 'pointer' : 'not-allowed',
-                                                    opacity: customBillingPercent ? 1 : 0.6,
+                                                    opacity: customBillingPercent ? 1 : 0.5,
                                                     whiteSpace: 'nowrap'
                                                 }}
                                             >
-                                                ⚡ Apply
+                                                Apply
                                             </button>
                                         </div>
                                     </div>
 
-                                    <div className="summary-row">
-                                        <span>Untaxed Amount:</span>
-                                        <span>{formData.currency} {(formData.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                                    </div>
-                                    <div className="summary-row" style={{ color: 'var(--accent)', fontWeight: 600 }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <span>Discount:</span>
-                                            <div style={{ display: 'flex', alignItems: 'center', background: '#f1f5f9', borderRadius: '8px', padding: '2px 6px', border: '1px solid #e2e8f0' }}>
-                                                <input 
-                                                    type="number" 
-                                                    className="table-input" 
-                                                    style={{ width: discountType === 'percent' ? '50px' : '80px', padding: '2px', border: 'none', background: 'transparent', textAlign: 'right', fontWeight: 700 }}
-                                                    value={discountType === 'percent' ? formData.discount_percent : (discountType === 'lumpsum' ? formData.discount_amount : 0)}
-                                                    onChange={(e) => {
-                                                        const val = e.target.value;
-                                                        if (discountType === 'percent') {
-                                                            setFormData(prev => ({ ...prev, discount_percent: val, discount_amount: 0 }));
-                                                        } else {
-                                                            setFormData(prev => ({ ...prev, discount_amount: val, discount_percent: 0 }));
-                                                        }
-                                                    }}
-                                                    placeholder="0"
-                                                />
-                                                <select 
-                                                    value={discountType}
-                                                    onChange={(e) => {
-                                                        const newType = e.target.value;
-                                                        setDiscountType(newType);
-                                                        // Reset values on toggle to avoid confusion
-                                                        setFormData(prev => ({ ...prev, discount_percent: 0, discount_amount: 0 }));
-                                                    }}
-                                                    style={{ border: 'none', background: 'transparent', fontSize: '0.75rem', fontWeight: 800, color: '#475569', cursor: 'pointer', outline: 'none' }}
-                                                >
-                                                    <option value="percent">%</option>
-                                                    <option value="lumpsum">{formData.currency}</option>
-                                                </select>
-                                            </div>
+                                    {/* Financial Breakdown */}
+                                    <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.86rem', color: '#64748b' }}>
+                                            <span>Untaxed Amount:</span>
+                                            <span style={{ fontWeight: 700, color: '#1e293b' }}>{formData.currency} {(formData.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                         </div>
-                                        <span>- {formData.currency} {(formData.discount_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                    </div>
-                                    <div className="summary-row">
-                                        <span>Taxes:</span>
-                                        <span>{formData.currency} {formData.tax_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                                    </div>
-                                    <div className="summary-total">
-                                        <span>Total:</span>
-                                        <span>{formData.currency} {(formData.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.86rem', color: '#64748b' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <span>Discount:</span>
+                                                <div style={{ display: 'flex', alignItems: 'center', background: '#f8fafc', borderRadius: '6px', padding: '2px 4px', border: '1px solid #e2e8f0' }}>
+                                                    <input 
+                                                        type="number" 
+                                                        className="table-input" 
+                                                        style={{ width: discountType === 'percent' ? '42px' : '65px', padding: '1px 3px', border: 'none', background: 'transparent', textAlign: 'right', fontWeight: 700, fontSize: '0.8rem' }}
+                                                        value={discountType === 'percent' ? formData.discount_percent : (discountType === 'lumpsum' ? formData.discount_amount : 0)}
+                                                        onChange={(e) => {
+                                                            const val = e.target.value;
+                                                            if (discountType === 'percent') {
+                                                                setFormData(prev => ({ ...prev, discount_percent: val, discount_amount: 0 }));
+                                                            } else {
+                                                                setFormData(prev => ({ ...prev, discount_amount: val, discount_percent: 0 }));
+                                                            }
+                                                        }}
+                                                        placeholder="0"
+                                                    />
+                                                    <select 
+                                                        value={discountType}
+                                                        onChange={(e) => {
+                                                            const newType = e.target.value;
+                                                            setDiscountType(newType);
+                                                            setFormData(prev => ({ ...prev, discount_percent: 0, discount_amount: 0 }));
+                                                        }}
+                                                        style={{ border: 'none', background: 'transparent', fontSize: '0.72rem', fontWeight: 800, color: '#475569', cursor: 'pointer', outline: 'none' }}
+                                                    >
+                                                        <option value="percent">%</option>
+                                                        <option value="lumpsum">{formData.currency}</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <span style={{ fontWeight: 700, color: (formData.discount_amount > 0) ? '#dc2626' : '#94a3b8' }}>- {formData.currency} {(formData.discount_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        </div>
+
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.86rem', color: '#64748b' }}>
+                                            <span>Taxes:</span>
+                                            <span style={{ fontWeight: 700, color: '#1e293b' }}>{formData.currency} {formData.tax_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        </div>
+
+                                        <div style={{ height: '1px', background: '#e2e8f0', margin: '2px 0' }} />
+
+                                        {/* Total Box */}
+                                        <div style={{ 
+                                            background: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)', 
+                                            borderRadius: '10px', 
+                                            padding: '12px 16px', 
+                                            color: '#ffffff', 
+                                            display: 'flex', 
+                                            justifyContent: 'space-between', 
+                                            alignItems: 'center',
+                                            boxShadow: '0 3px 10px rgba(30, 58, 138, 0.18)'
+                                        }}>
+                                            <span style={{ fontSize: '0.88rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#bfdbfe' }}>Total:</span>
+                                            <span style={{ fontSize: '1.35rem', fontWeight: 900, color: '#ffffff', letterSpacing: '-0.02em' }}>{formData.currency} {(formData.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -5732,12 +6607,24 @@ export default function WorkflowEditor() {
                                                         <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, color: '#94a3b8' }}>—</td>
                                                         <td style={{ padding: '12px 16px', textAlign: 'center' }}><span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '0.72rem', fontWeight: 700, background: '#fef3c7', color: '#b45309' }}>{linkedEnquiry.status || 'Active'}</span></td>
                                                         <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                                                            <button 
-                                                                onClick={() => navigate(`/workflows/enquiry/${linkedEnquiry.id}`)}
-                                                                style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}
-                                                            >
-                                                                <Eye size={13} /> Open
-                                                            </button>
+                                                            <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                                                <button 
+                                                                    type="button"
+                                                                    onClick={() => window.open(`/workflows/enquiry/print/${linkedEnquiry.id}`, '_blank')}
+                                                                    title={`View / Print PDF for Enquiry ${linkedEnquiry.enquiry_no} in new window`}
+                                                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 10px', borderRadius: '7px', border: '1px solid #cbd5e1', background: '#ffffff', color: '#4338ca', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.03)', transition: 'all 0.15s ease' }}
+                                                                    onMouseOver={e => { e.currentTarget.style.background = '#eef2ff'; e.currentTarget.style.borderColor = '#c7d2fe'; }}
+                                                                    onMouseOut={e => { e.currentTarget.style.background = '#ffffff'; e.currentTarget.style.borderColor = '#cbd5e1'; }}
+                                                                >
+                                                                    <Printer size={13} /> PDF
+                                                                </button>
+                                                                <button 
+                                                                    onClick={() => navigate(`/workflows/enquiry/${linkedEnquiry.id}`)}
+                                                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}
+                                                                >
+                                                                    <Eye size={13} /> Open
+                                                                </button>
+                                                            </div>
                                                         </td>
                                                     </tr>
                                                 )}
@@ -5775,6 +6662,36 @@ export default function WorkflowEditor() {
                                                                             <Truck size={13} /> Label
                                                                         </button>
                                                                     )}
+                                                                    <button 
+                                                                        type="button"
+                                                                        onClick={() => window.open(`/workflows/print/${doc.id}`, '_blank')}
+                                                                        title={`View / Print PDF for ${doc.document_no} in new window`}
+                                                                        style={{ 
+                                                                            display: 'inline-flex', 
+                                                                            alignItems: 'center', 
+                                                                            gap: '4px', 
+                                                                            padding: '5px 10px', 
+                                                                            borderRadius: '7px', 
+                                                                            border: '1px solid #cbd5e1', 
+                                                                            background: '#ffffff', 
+                                                                            color: '#4338ca', 
+                                                                            fontSize: '0.78rem', 
+                                                                            fontWeight: 700, 
+                                                                            cursor: 'pointer',
+                                                                            boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                                                                            transition: 'all 0.15s ease'
+                                                                        }}
+                                                                        onMouseOver={e => { 
+                                                                            e.currentTarget.style.background = '#eef2ff'; 
+                                                                            e.currentTarget.style.borderColor = '#c7d2fe'; 
+                                                                        }}
+                                                                        onMouseOut={e => { 
+                                                                            e.currentTarget.style.background = '#ffffff'; 
+                                                                            e.currentTarget.style.borderColor = '#cbd5e1'; 
+                                                                        }}
+                                                                    >
+                                                                        <Printer size={13} /> PDF
+                                                                    </button>
                                                                     {!isCurrent ? (<button onClick={() => navigate(`/workflows/editor/${urlSlug}/${doc.id}`)} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }} onMouseOver={e => { e.currentTarget.style.background = clr.bg; e.currentTarget.style.color = clr.color; e.currentTarget.style.borderColor = clr.border; }} onMouseOut={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.color = '#475569'; e.currentTarget.style.borderColor = '#e2e8f0'; }}><Eye size={13} /> Open</button>) : (<span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', padding: '5px 8px' }}>Viewing</span>)}
                                                                     <button onClick={() => handleDeleteSuiteDoc(doc)} title={`Delete ${doc.document_type} ${doc.document_no}`} style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 8px', borderRadius: '7px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', fontSize: '0.78rem', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.background = '#fee2e2'} onMouseOut={e => e.currentTarget.style.background = '#fef2f2'}><Trash2 size={13} /></button>
                                                                 </div>
@@ -5891,7 +6808,7 @@ export default function WorkflowEditor() {
 
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '32px' }}>
                                     {/* Customer Payments (Incoming) */}
-                                    <div>
+                                    <div id="section-customer-ledger">
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                             <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}><CreditCard size={20} className="text-accent" /> Customer Ledger</h3>
                                         </div>
@@ -5981,10 +6898,33 @@ export default function WorkflowEditor() {
                                     </div>
 
                                     {/* Supplier Payments (Outgoing) */}
-                                    <div>
+                                    <div id="section-supplier-ledger">
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                             <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}><Users size={20} className="text-accent" /> Supplier Ledger</h3>
-                                            <button className="btn btn-sm btn-primary" onClick={addExpenseRow}>+ Add Record</button>
+                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                <button 
+                                                    type="button" 
+                                                    onClick={() => setExpenseModal({ isOpen: true, data: null })}
+                                                    style={{ 
+                                                        background: '#fff1f2', 
+                                                        color: '#e11d48', 
+                                                        border: '1px solid #fecdd3', 
+                                                        display: 'inline-flex', 
+                                                        alignItems: 'center', 
+                                                        gap: '5px', 
+                                                        padding: '6px 12px', 
+                                                        borderRadius: '8px', 
+                                                        fontWeight: 700, 
+                                                        fontSize: '0.8rem', 
+                                                        cursor: 'pointer',
+                                                        boxShadow: '0 1px 2px rgba(244,63,94,0.08)'
+                                                    }}
+                                                    title="Open Smart Invoice Uploader & Bill Entry"
+                                                >
+                                                    <Plus size={14} /> Add Supplier Bill
+                                                </button>
+                                                <button className="btn btn-sm btn-primary" onClick={addExpenseRow}>+ Add Row</button>
+                                            </div>
                                         </div>
                                         <div className="table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
                                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
@@ -7740,12 +8680,11 @@ export default function WorkflowEditor() {
             }
             .editor-table {
                 width: 100%;
-            border-collapse: collapse;
-            background: #fff;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid var(--border-color);
-                }
+                border-collapse: collapse;
+                background: #fff;
+                border-radius: 8px;
+                border: 1px solid var(--border-color);
+            }
             .editor-table th {
                 background: #f8fafc;
             padding: 12px;
@@ -7791,32 +8730,35 @@ export default function WorkflowEditor() {
             .row-note .table-input {font - style: italic; color: #64748b; }
 
             .table-actions {
-                display: flex;
-            justify-content: space-between;
-            margin-top: 24px;
-                }
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 24px;
+                margin-top: 24px;
+                align-items: start;
+            }
             .add-btn {
                 background: transparent;
-            border: none;
-            color: var(--accent);
-            font-weight: 600;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 0.9rem;
-            padding: 8px 12px;
-            border-radius: 6px;
-                }
-            .add-btn:hover {background: rgba(99, 102, 241, 0.05); }
+                border: none;
+                color: var(--accent);
+                font-weight: 600;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 0.9rem;
+                padding: 8px 12px;
+                border-radius: 6px;
+            }
+            .add-btn:hover { background: rgba(99, 102, 241, 0.05); }
 
             .summary-box {
-                width: 350px;
-            background: #fff;
-            border-radius: 12px;
-            padding: 20px;
-            border: 1px solid var(--border-color);
-                }
+                width: 100%;
+                box-sizing: border-box;
+                background: #fff;
+                border-radius: 12px;
+                padding: 20px;
+                border: 1px solid var(--border-color);
+            }
             .summary-row {
                 display: flex;
             justify-content: space-between;
@@ -8100,6 +9042,17 @@ export default function WorkflowEditor() {
                     work_locations: workLocations.find(w => w.id === formData.work_location_id) 
                 }}
                 settings={settings}
+            />
+
+            <GoogleCalendarReminderModal
+                isOpen={calendarModal.isOpen}
+                onClose={() => setCalendarModal(prev => ({ ...prev, isOpen: false }))}
+                defaultTitle={calendarModal.title}
+                defaultDate={calendarModal.date}
+                defaultDescription={calendarModal.description}
+                defaultLocation={calendarModal.location}
+                jobNo={calendarModal.jobNo}
+                activityType={calendarModal.activityType}
             />
 
             {/* Credit Note Invoice Picker Modal */}

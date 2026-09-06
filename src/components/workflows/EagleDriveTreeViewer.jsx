@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
     Folder, FolderOpen, FileText, Image as ImageIcon, File, Eye, Download, 
     ExternalLink, Upload, RefreshCcw, Search, ChevronRight, ChevronDown, 
-    Sparkles, HardDrive, CheckCircle2, AlertCircle, Loader2, Plus, X, FolderPlus, Trash2 
+    Sparkles, HardDrive, CheckCircle2, AlertCircle, Loader2, Plus, X, FolderPlus, Trash2,
+    ChevronLeft, Maximize2, Minimize2
 } from 'lucide-react';
 import { listFolderContent, uploadFileToDrive, deleteFile } from '../../lib/driveService';
 import { validateToken } from '../../lib/googleAuthService';
@@ -26,6 +27,14 @@ export default function EagleDriveTreeViewer({
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [deletingFile, setDeletingFile] = useState(false);
+    const [isFullWidth, setIsFullWidth] = useState(true);
+
+    const folderTreeRef = useRef([]);
+    const prevStageRef = useRef(selectedStage);
+
+    useEffect(() => {
+        folderTreeRef.current = folderTree;
+    }, [folderTree]);
 
     const accessToken = localStorage.getItem('google_access_token');
 
@@ -34,13 +43,15 @@ export default function EagleDriveTreeViewer({
     }, [jobFolderId, accessToken]);
 
     // Stage-based default target folder routing
-    // ENQ & PAID -> ROOT
-    // DEL, QTN, PO -> SupportDocs
-    // INV -> Worksuite
-    // SRC -> SupplierBills&Expenses
+    // Triggers ONLY when selectedStage actually changes (does NOT reset user file selection on every render)
     useEffect(() => {
-        if (!selectedStage || folderTree.length === 0) return;
-        const rootNode = folderTree[0];
+        if (!selectedStage) return;
+        if (prevStageRef.current === selectedStage) return;
+        prevStageRef.current = selectedStage;
+
+        const currentTree = folderTreeRef.current;
+        if (!currentTree || currentTree.length === 0) return;
+        const rootNode = currentTree[0];
         if (!rootNode) return;
 
         let targetNode = rootNode;
@@ -68,7 +79,7 @@ export default function EagleDriveTreeViewer({
                 children: (rn.children || []).map(cn => cn.id === targetNode.id ? { ...cn, isExpanded: true } : cn)
             })));
         }
-    }, [selectedStage, folderTree]);
+    }, [selectedStage]);
 
     const checkAuthAndLoad = async () => {
         setLoading(true);
@@ -283,6 +294,42 @@ export default function EagleDriveTreeViewer({
         return <File size={18} style={{ color: '#3b82f6' }} />;
     };
 
+    // Files in active folder for sequential next/previous browsing
+    const currentFolderFiles = (activeFolder?.files || (folderTree[0]?.files) || []).filter(f => 
+        !searchTerm || f.name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    const currentFileIndex = currentFolderFiles.findIndex(f => f.id === selectedFile?.id);
+    const hasPrev = currentFileIndex > 0;
+    const hasNext = currentFileIndex >= 0 && currentFileIndex < currentFolderFiles.length - 1;
+
+    const handlePrevFile = () => {
+        if (hasPrev) setSelectedFile(currentFolderFiles[currentFileIndex - 1]);
+    };
+
+    const handleNextFile = () => {
+        if (hasNext) setSelectedFile(currentFolderFiles[currentFileIndex + 1]);
+    };
+
+    // Keyboard navigation (Arrow keys)
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                if (currentFileIndex >= 0 && currentFileIndex < currentFolderFiles.length - 1) {
+                    e.preventDefault();
+                    setSelectedFile(currentFolderFiles[currentFileIndex + 1]);
+                }
+            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                if (currentFileIndex > 0) {
+                    e.preventDefault();
+                    setSelectedFile(currentFolderFiles[currentFileIndex - 1]);
+                }
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [currentFileIndex, currentFolderFiles]);
+
     const renderFolderNode = (node, depth = 0) => {
         const isSelected = activeFolder?.id === node.id;
         const matchingFiles = (node.files || []).filter(f => 
@@ -317,10 +364,10 @@ export default function EagleDriveTreeViewer({
                             {node.isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                         </button>
                         {node.isExpanded ? <FolderOpen size={18} style={{ color: '#f59e0b', flexShrink: 0 }} /> : <Folder size={18} style={{ color: '#f59e0b', flexShrink: 0 }} />}
-                        <span style={{ fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.name}</span>
+                        <span title={node.name} style={{ fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.name}</span>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, marginLeft: '8px' }}>
                         {/* Quick upload directly to this correspondence folder */}
                         <label
                             onClick={(e) => {
@@ -411,7 +458,11 @@ export default function EagleDriveTreeViewer({
                             return (
                                 <div 
                                     key={file.id}
-                                    onClick={() => setSelectedFile(file)}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveFolder(node);
+                                        setSelectedFile(file);
+                                    }}
                                     style={{
                                         display: 'flex',
                                         alignItems: 'center',
@@ -428,9 +479,9 @@ export default function EagleDriveTreeViewer({
                                     }}
                                 >
                                     {getFileIcon(file.mimeType)}
-                                    <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
+                                    <span title={file.name} style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
                                     {file.size && (
-                                        <span style={{ fontSize: '0.7rem', color: isFileSelected ? '#c7d2fe' : '#94a3b8' }}>
+                                        <span style={{ fontSize: '0.7rem', color: isFileSelected ? '#c7d2fe' : '#94a3b8', flexShrink: 0, marginLeft: '8px' }}>
                                             {(file.size / 1024).toFixed(0)} KB
                                         </span>
                                     )}
@@ -557,10 +608,17 @@ export default function EagleDriveTreeViewer({
                 </div>
             )}
 
-            {/* Main Split Layout: Left Folder Tree (35%) | Right Viewer Pane (65%) */}
-            <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '340px 1fr', minHeight: '520px' }}>
+            {/* Main Split Layout: Left Folder Tree (min 460px / 45%) | Right Viewer Pane (less width, full width file) */}
+            <style>{`
+                @media (max-width: 960px) {
+                    .eagle-drive-split-layout {
+                        grid-template-columns: 1fr !important;
+                    }
+                }
+            `}</style>
+            <div className="eagle-drive-split-layout" style={{ flex: 1, display: 'grid', gridTemplateColumns: 'minmax(460px, 45%) 1fr', minHeight: '560px' }}>
                 {/* Left Pane: Folder Tree */}
-                <div style={{ padding: '16px', overflowY: 'auto', maxHeight: '650px', background: '#f8fafc', borderRight: '1px solid #e2e8f0' }}>
+                <div style={{ padding: '16px', overflowY: 'auto', maxHeight: '680px', background: '#f8fafc', borderRight: '1px solid #e2e8f0' }}>
                     <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span>Directory Tree</span>
                         <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 400 }}>Click folder to select target</span>
@@ -604,14 +662,14 @@ export default function EagleDriveTreeViewer({
                 </div>
 
                 {/* Right Pane: Live File Previewer */}
-                <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', background: '#ffffff' }}>
+                <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', background: '#ffffff', minWidth: 0 }}>
                     {selectedFile ? (
-                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
                             {/* File Info Bar */}
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '12px' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', overflow: 'hidden' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', overflow: 'hidden', minWidth: 0, flex: 1 }}>
                                     {getFileIcon(selectedFile.mimeType)}
-                                    <div style={{ overflow: 'hidden' }}>
+                                    <div style={{ overflow: 'hidden', minWidth: 0 }}>
                                         <h4 style={{ fontSize: '0.85rem', fontWeight: 800, color: '#0f172a', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={selectedFile.name}>
                                             {selectedFile.name}
                                         </h4>
@@ -625,6 +683,86 @@ export default function EagleDriveTreeViewer({
                                 </div>
 
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                                    {/* Full Width / Fit Screen Toggle for Images */}
+                                    {selectedFile.mimeType?.includes('image/') && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsFullWidth(!isFullWidth)}
+                                            style={{
+                                                background: isFullWidth ? '#e0e7ff' : '#ffffff',
+                                                color: isFullWidth ? '#4338ca' : '#475569',
+                                                border: isFullWidth ? '1px solid #a5b4fc' : '1px solid #cbd5e1',
+                                                padding: '5px 10px',
+                                                borderRadius: '8px',
+                                                fontSize: '0.75rem',
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                                                transition: 'all 0.15s ease'
+                                            }}
+                                            title={isFullWidth ? 'Switch to Fit Screen' : 'Switch to Full Width'}
+                                        >
+                                            {isFullWidth ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                                            <span>{isFullWidth ? 'Fit Screen' : 'Full Width'}</span>
+                                        </button>
+                                    )}
+
+                                    {/* Prev / Next file step selector */}
+                                    {currentFolderFiles.length > 1 && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#ffffff', border: '1px solid #cbd5e1', padding: '3px 8px', borderRadius: '8px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+                                            <button
+                                                type="button"
+                                                onClick={handlePrevFile}
+                                                disabled={!hasPrev}
+                                                style={{
+                                                    background: hasPrev ? '#eff6ff' : '#f8fafc',
+                                                    border: '1px solid #e2e8f0',
+                                                    borderRadius: '6px',
+                                                    padding: '4px 8px',
+                                                    cursor: hasPrev ? 'pointer' : 'not-allowed',
+                                                    opacity: hasPrev ? 1 : 0.4,
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '2px',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: 700,
+                                                    color: hasPrev ? '#1e40af' : '#94a3b8'
+                                                }}
+                                                title="Previous file (or press Left Arrow)"
+                                            >
+                                                <ChevronLeft size={14} /> Prev
+                                            </button>
+                                            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#475569', padding: '0 6px', whiteSpace: 'nowrap' }}>
+                                                {currentFileIndex >= 0 ? `${currentFileIndex + 1} of ${currentFolderFiles.length}` : `${currentFolderFiles.length} files`}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={handleNextFile}
+                                                disabled={!hasNext}
+                                                style={{
+                                                    background: hasNext ? '#eff6ff' : '#f8fafc',
+                                                    border: '1px solid #e2e8f0',
+                                                    borderRadius: '6px',
+                                                    padding: '4px 8px',
+                                                    cursor: hasNext ? 'pointer' : 'not-allowed',
+                                                    opacity: hasNext ? 1 : 0.4,
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '2px',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: 700,
+                                                    color: hasNext ? '#1e40af' : '#94a3b8'
+                                                }}
+                                                title="Next file (or press Right Arrow)"
+                                            >
+                                                Next <ChevronRight size={14} />
+                                            </button>
+                                        </div>
+                                    )}
+
                                     {selectedFile.webViewLink && (
                                         <a
                                             href={selectedFile.webViewLink}
@@ -663,20 +801,38 @@ export default function EagleDriveTreeViewer({
                             </div>
 
                             {/* Live File Viewer Box */}
-                            <div style={{ flex: 1, background: '#0f172a', borderRadius: '12px', overflow: 'hidden', border: '1px solid #1e293b', minHeight: '450px', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                            <div style={{ flex: 1, background: '#0f172a', borderRadius: '12px', overflow: 'hidden', border: '1px solid #1e293b', minHeight: '560px', maxHeight: '700px', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                                 {selectedFile.mimeType?.includes('image/') ? (
-                                    <img
-                                        src={`https://lh3.googleusercontent.com/d/${selectedFile.id}=w1200`}
-                                        alt={selectedFile.name}
-                                        style={{ maxHeight: '480px', maxWidth: '100%', objectFit: 'contain', padding: '8px' }}
-                                    />
+                                    <div style={{
+                                        width: '100%',
+                                        height: '100%',
+                                        display: 'flex',
+                                        alignItems: isFullWidth ? 'flex-start' : 'center',
+                                        justifyContent: 'center',
+                                        overflowY: 'auto',
+                                        maxHeight: '700px',
+                                        padding: isFullWidth ? 0 : '12px'
+                                    }}>
+                                        <img
+                                            src={`https://lh3.googleusercontent.com/d/${selectedFile.id}=w1200`}
+                                            alt={selectedFile.name}
+                                            style={{
+                                                width: isFullWidth ? '100%' : 'auto',
+                                                maxWidth: '100%',
+                                                maxHeight: isFullWidth ? 'none' : '580px',
+                                                objectFit: 'contain',
+                                                borderRadius: isFullWidth ? '0' : '8px',
+                                                display: 'block'
+                                            }}
+                                        />
+                                    </div>
                                 ) : null}
 
                                 {selectedFile.mimeType?.includes('pdf') || selectedFile.mimeType?.includes('document') || selectedFile.mimeType?.includes('sheet') ? (
                                     <iframe
                                         src={`https://drive.google.com/file/d/${selectedFile.id}/preview`}
                                         title={selectedFile.name}
-                                        style={{ width: '100%', height: '480px', border: 'none' }}
+                                        style={{ width: '100%', height: '580px', border: 'none' }}
                                         allow="autoplay"
                                     />
                                 ) : !selectedFile.mimeType?.includes('image/') ? (
