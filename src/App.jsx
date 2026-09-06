@@ -30,6 +30,7 @@ import UniversalFinder from './pages/workflows/UniversalFinder';
 import EnquiryDetails from './pages/workflows/EnquiryDetails';
 import JobDetails from './pages/workflows/JobDetails';
 import UnifiedSupplierHub from './pages/workflows/UnifiedSupplierHub';
+import UnifiedSupplierHubPro from './pages/workflows/UnifiedSupplierHubPro';
 import WorkflowV2Board from './pages/workflows/WorkflowV2Board';
 import JobsWhiteboard from './pages/workflows/JobsWhiteboard';
 import JobsDashboard from './pages/workflows/JobsDashboard';
@@ -368,6 +369,7 @@ function App() {
 
               {/* Workflows & Universal Finder Module */}
               <Route path="/unified-supplier-hub" element={<ProtectedRoute><UnifiedSupplierHub /></ProtectedRoute>} />
+              <Route path="/unified-supplier-hub-pro" element={<ProtectedRoute><UnifiedSupplierHubPro /></ProtectedRoute>} />
               <Route path="/workflows/jobs-dashboard" element={<ProtectedRoute><JobsDashboard /></ProtectedRoute>} />
               <Route path="/workflows/jobs_dashboard" element={<ProtectedRoute><JobsDashboard /></ProtectedRoute>} />
               <Route path="/workflows/whiteboard" element={<ProtectedRoute><JobsWhiteboard /></ProtectedRoute>} />
