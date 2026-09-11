@@ -30,7 +30,7 @@ import {
     DollarSign, TrendingUp, Clock, Activity, MapPin,
     MessageSquare, FileCheck, Receipt, Star, Upload,
     MoreVertical, Edit2, Save, Check, ClipboardList,
-    QrCode, Smartphone, Cloud, FolderPlus,
+    QrCode, Smartphone, Cloud, FolderPlus, Layers,
 } from 'lucide-react';
 import {
     getEnquiriesWithFullData,
@@ -47,7 +47,8 @@ import {
     ensureEnquiryFolderAndSubfolders,
     duplicateEnquiry,
 } from '../../lib/supplierHubProService';
-import { getDocumentSettings, getPartners } from '../../lib/store';
+import { getDocumentSettings, getPartners, savePartner } from '../../lib/store';
+import { COUNTRIES } from '../../lib/constants';
 import { isTokenValid, getStoredToken, connectGoogleAPI } from '../../lib/googleAuthService';
 import { listFolderContent, uploadFileToDrive, getOrCreateFolder } from '../../lib/driveService';
 import { generateEnquiryNo } from '../../lib/enquiryService';
@@ -151,6 +152,8 @@ function EnquiryCardPro({
     onPO,
     onOpenRootDrive,
     onCalendar,
+    isTargetSelected = false,
+    onSelectTarget = null,
 }) {
     const navigate = useNavigate();
     const [openMenu, setOpenMenu] = useState(false);
@@ -178,31 +181,62 @@ function EnquiryCardPro({
     return (
         <div
             style={{
-                background: '#ffffff',
-                border: '1.5px solid #e2e8f0',
-                borderLeft: isOverdue ? '6px solid #ef4444' : '6px solid #6366f1',
+                background: isTargetSelected ? '#f8faff' : '#ffffff',
+                border: isTargetSelected ? '2px solid #6366f1' : '1.5px solid #e2e8f0',
+                borderLeft: isTargetSelected ? '6px solid #4f46e5' : (isOverdue ? '6px solid #ef4444' : '6px solid #6366f1'),
                 borderRadius: '18px',
                 padding: '20px',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'space-between',
                 transition: 'all 0.22s ease',
-                boxShadow: '0 2px 8px rgba(99,102,241,0.04)',
+                boxShadow: isTargetSelected ? '0 4px 20px rgba(99,102,241,0.18)' : '0 2px 8px rgba(99,102,241,0.04)',
                 cursor: 'default',
                 position: 'relative'
             }}
             onMouseOver={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 12px 24px rgba(99,102,241,0.10)'; }}
-            onMouseOut={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(99,102,241,0.04)'; }}
+            onMouseOut={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = isTargetSelected ? '0 4px 20px rgba(99,102,241,0.18)' : '0 2px 8px rgba(99,102,241,0.04)'; }}
         >
             {/* Top Row: ENQ Badge + Status + Actions */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
-                <div onClick={() => onOpen(enq)} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', cursor: 'pointer' }} title="Click to view/edit details">
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 11px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 800, background: '#eef2ff', color: '#4f46e5', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                        <FileText size={12} /> ENQ
-                    </span>
-                    <span style={{ fontSize: '0.88rem', fontWeight: 800, color: '#4f46e5', letterSpacing: '0.01em', textDecoration: 'underline' }}>
-                        {enq.enquiry_no || '—'}
-                    </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    {onSelectTarget && (
+                        <label
+                            onClick={e => e.stopPropagation()}
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px',
+                                padding: '3px 8px',
+                                borderRadius: '7px',
+                                background: isTargetSelected ? '#e0e7ff' : '#f8fafc',
+                                border: `1.5px solid ${isTargetSelected ? '#6366f1' : '#cbd5e1'}`,
+                                cursor: 'pointer',
+                                fontSize: '0.68rem',
+                                fontWeight: 800,
+                                color: isTargetSelected ? '#4338ca' : '#64748b',
+                                transition: 'all 0.15s',
+                                userSelect: 'none',
+                            }}
+                            title={isTargetSelected ? `Currently selected as Target Upload Folder for ${enq.enquiry_no}` : `Click tickbox to select ${enq.enquiry_no} as Target Upload Folder`}
+                        >
+                            <input
+                                type="checkbox"
+                                checked={isTargetSelected}
+                                onChange={() => onSelectTarget(enq)}
+                                style={{ width: '14px', height: '14px', cursor: 'pointer', accentColor: '#4f46e5', margin: 0 }}
+                            />
+                            <span>{isTargetSelected ? 'TARGET ACTIVE' : 'SET TARGET'}</span>
+                        </label>
+                    )}
+                    <div onClick={() => onOpen(enq)} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }} title="Click to view/edit details">
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 11px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 800, background: '#eef2ff', color: '#4f46e5', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            <FileText size={12} /> ENQ
+                        </span>
+                        <span style={{ fontSize: '0.88rem', fontWeight: 800, color: '#4f46e5', letterSpacing: '0.01em', textDecoration: 'underline' }}>
+                            {enq.enquiry_no || '—'}
+                        </span>
+                    </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     {isOverdue && (
@@ -422,11 +456,11 @@ function EnquiryCardPro({
                     </button>
                     <button 
                         className="enq-ql-btn enq-ql-workflow" 
-                        onClick={() => navigate(`/dashboard/job-workflow?enquiry_id=${enq.id}&enquiry_no=${enq.enquiry_no}`)} 
-                        title="Open Job Workflow Board"
-                        style={{ gridColumn: 'span 3', background: '#eef2ff', color: '#4f46e5', borderColor: '#c7d2fe' }}
+                        onClick={() => navigate(`/workflows/eagle-view/${enq.id}`)} 
+                        title="Open Enquiry 360° Eagle View"
+                        style={{ gridColumn: 'span 3', background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)', color: '#ffffff', borderColor: '#4338ca', fontWeight: 800 }}
                     >
-                        <Activity size={12} /> Job Workflow Board
+                        <Layers size={13} /> 🦅 Eagle View 360°
                     </button>
                 </div>
             </div>
@@ -614,11 +648,22 @@ export default function UnifiedSupplierHubPro() {
     const [checkingModal, setCheckingModal] = useState({ isOpen: false, enquiry: null });
     const [allPartners, setAllPartners] = useState([]);
     const [showNewFolderModal, setShowNewFolderModal] = useState(false);
+    const [customerSearchTerm, setCustomerSearchTerm] = useState('');
+    const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
     const [newFolderForm, setNewFolderForm] = useState({
         enquiryNo: '',
         customerId: '',
         customerName: '',
         isNewCustomer: false,
+        customerEmail: '',
+        customerPhone: '',
+        customerCountry: 'Singapore',
+        customerAddress: '',
+        customerWeblink: '',
+        customerNotes: '',
+        contactPersonName: '',
+        contactPersonEmail: '',
+        contactPersonPhone: '',
         description: '',
         customerRef: '',
         autoCreateDrive: true,
@@ -644,19 +689,40 @@ export default function UnifiedSupplierHubPro() {
         if (!profile?.company_id) return;
         setLoading(true);
         try {
-            const [enqData, jobData, suppData, settingsData] = await Promise.all([
+            const [enqRes, jobRes, suppRes, settingsRes] = await Promise.allSettled([
                 getEnquiriesWithFullData(profile.company_id),
                 getJobsForHubPro(profile.company_id),
-                getPartners(profile),
+                getPartners(profile).then(async data => (data && data.length > 0 ? data : await getPartners())),
                 getDocumentSettings(profile.company_id),
             ]);
-            setEnquiries(enqData);
-            setJobs(jobData);
-            setAllPartners(suppData || []);
-            setSuppliers((suppData || []).filter(p => (p.types || []).includes('Supplier')));
-            setSettings(settingsData);
+
+            if (enqRes.status === 'fulfilled') {
+                setEnquiries(enqRes.value || []);
+            } else {
+                console.error('[HubPro] Enquiries error:', enqRes.reason);
+            }
+
+            if (jobRes.status === 'fulfilled') {
+                setJobs(jobRes.value || []);
+            } else {
+                console.error('[HubPro] Jobs error:', jobRes.reason);
+            }
+
+            if (suppRes.status === 'fulfilled') {
+                const suppData = suppRes.value || [];
+                setAllPartners(suppData);
+                setSuppliers(suppData.filter(p => (p.types || []).includes('Supplier')));
+            } else {
+                console.error('[HubPro] Partners error:', suppRes.reason);
+            }
+
+            if (settingsRes.status === 'fulfilled') {
+                setSettings(settingsRes.value);
+            } else {
+                console.error('[HubPro] Settings error:', settingsRes.reason);
+            }
         } catch (err) {
-            console.error('[HubPro] loadAll error:', err);
+            console.error('[HubPro] loadAll unexpected error:', err);
             toast.error('Failed to load data');
         } finally {
             setLoading(false);
@@ -684,7 +750,11 @@ export default function UnifiedSupplierHubPro() {
             const q = enqSearch.toLowerCase();
             filtered = filtered.filter(e =>
                 (e.enquiry_no || '').toLowerCase().includes(q) ||
-                (e.customer?.name || '').toLowerCase().includes(q)
+                (e.customer?.name || '').toLowerCase().includes(q) ||
+                (e.customer_ref || '').toLowerCase().includes(q) ||
+                (stripHtml(e.description) || '').toLowerCase().includes(q) ||
+                (e.supplier_quotes || []).some(sq => (sq.supplier?.name || '').toLowerCase().includes(q)) ||
+                (e.workflow_documents || []).some(wd => (wd.document_no || '').toLowerCase().includes(q))
             );
         }
         return filtered;
@@ -748,15 +818,17 @@ export default function UnifiedSupplierHubPro() {
             const yr = new Date(e.enquiry_date || e.created_at || new Date()).getFullYear().toString();
             const matchYear = cardYearFilter === 'All' || yr === cardYearFilter;
             const matchStatus = cardStatusFilter === 'All' || e.status === cardStatusFilter;
-            const term = cardSearch.trim().toLowerCase();
+            const term = (cardSearch || dashSearch || '').trim().toLowerCase();
             const matchSearch = !term ||
                 (e.enquiry_no || '').toLowerCase().includes(term) ||
                 (e.customer?.name || '').toLowerCase().includes(term) ||
                 (e.customer_ref || '').toLowerCase().includes(term) ||
-                (stripHtml(e.description) || '').toLowerCase().includes(term);
+                (stripHtml(e.description) || '').toLowerCase().includes(term) ||
+                (e.supplier_quotes || []).some(sq => (sq.supplier?.name || '').toLowerCase().includes(term)) ||
+                (e.workflow_documents || []).some(wd => (wd.document_no || '').toLowerCase().includes(term));
             return matchYear && matchStatus && matchSearch;
         });
-    }, [enquiries, cardYearFilter, cardStatusFilter, cardSearch]);
+    }, [enquiries, cardYearFilter, cardStatusFilter, cardSearch, dashSearch]);
 
     // ─── Handler: Update enquiry Drive folder in local state ─────────────────
     const handleFolderProvisioned = (enquiryId, folderId) => {
@@ -814,10 +886,28 @@ export default function UnifiedSupplierHubPro() {
             customerId: '',
             customerName: '',
             isNewCustomer: false,
+            customerEmail: '',
+            customerPhone: '',
+            customerCountry: 'Singapore',
+            customerAddress: '',
+            customerWeblink: '',
+            customerNotes: '',
+            contactPersonName: '',
+            contactPersonEmail: '',
+            contactPersonPhone: '',
             description: '',
             customerRef: '',
             autoCreateDrive: true,
         });
+        setCustomerSearchTerm('');
+        setCustomerDropdownOpen(false);
+        if (!allPartners || allPartners.length === 0) {
+            getPartners().then(pList => {
+                if (pList && pList.length > 0) {
+                    setAllPartners(pList);
+                }
+            }).catch(e => console.warn('Could not load partners for modal:', e));
+        }
         setShowNewFolderModal(true);
     };
 
@@ -842,24 +932,110 @@ export default function UnifiedSupplierHubPro() {
 
         try {
             let partnerId = newFolderForm.customerId || null;
-            if (newFolderForm.isNewCustomer && newFolderForm.customerName.trim()) {
+            let primaryContactId = null;
+
+            if (newFolderForm.isNewCustomer && effectiveCustName && effectiveCustName !== 'Walk-in') {
                 try {
-                    const { data: createdPartner } = await supabase
-                        .from('partners')
-                        .insert([{
+                    // Check if a partner with this name already exists in memory or DB
+                    const existingPartner = allPartners.find(
+                        p => p.name?.trim().toLowerCase() === effectiveCustName.toLowerCase()
+                    );
+
+                    if (existingPartner) {
+                        partnerId = existingPartner.id;
+                        // Ensure partner has 'Customer' type added if missing + fill in missing info if user provided it
+                        const curTypes = Array.isArray(existingPartner.types) ? existingPartner.types : [];
+                        const updatePayload = { id: existingPartner.id };
+                        let hasUpdates = false;
+
+                        if (!curTypes.some(t => t?.toLowerCase() === 'customer')) {
+                            updatePayload.types = [...curTypes, 'Customer'];
+                            hasUpdates = true;
+                        }
+                        if (newFolderForm.customerEmail?.trim() && !existingPartner.email1) {
+                            updatePayload.email1 = newFolderForm.customerEmail.trim();
+                            hasUpdates = true;
+                        }
+                        if (newFolderForm.customerPhone?.trim() && !existingPartner.phone1) {
+                            updatePayload.phone1 = newFolderForm.customerPhone.trim();
+                            hasUpdates = true;
+                        }
+                        if (newFolderForm.customerCountry && !existingPartner.country) {
+                            updatePayload.country = newFolderForm.customerCountry;
+                            hasUpdates = true;
+                        }
+                        if (newFolderForm.customerAddress?.trim() && !existingPartner.address) {
+                            updatePayload.address = newFolderForm.customerAddress.trim();
+                            hasUpdates = true;
+                        }
+                        if (newFolderForm.customerWeblink?.trim() && !existingPartner.weblink) {
+                            updatePayload.weblink = newFolderForm.customerWeblink.trim();
+                            hasUpdates = true;
+                        }
+
+                        if (hasUpdates) {
+                            await savePartner(updatePayload);
+                            setAllPartners(prev => prev.map(p => p.id === existingPartner.id ? { ...p, ...updatePayload } : p));
+                        }
+                    } else {
+                        // Persist clean new record into 'partners' table with ALL elaborated details
+                        const createdPartner = await savePartner({
                             company_id: profile.company_id,
-                            name: newFolderForm.customerName.trim(),
+                            name: effectiveCustName,
+                            email1: newFolderForm.customerEmail.trim() || null,
+                            phone1: newFolderForm.customerPhone.trim() || null,
+                            country: newFolderForm.customerCountry || null,
+                            address: newFolderForm.customerAddress.trim() || null,
+                            weblink: newFolderForm.customerWeblink.trim() || null,
+                            info: newFolderForm.customerNotes.trim() || null,
                             types: ['Customer'],
-                            created_at: new Date().toISOString()
-                        }])
-                        .select()
-                        .single();
-                    if (createdPartner) {
-                        partnerId = createdPartner.id;
-                        setAllPartners(prev => [createdPartner, ...prev]);
+                            status: 'active'
+                        });
+
+                        if (createdPartner?.id) {
+                            partnerId = createdPartner.id;
+                            setAllPartners(prev => [createdPartner, ...prev]);
+
+                            // Optional: If primary contact person was entered, save to contacts table
+                            if (newFolderForm.contactPersonName.trim()) {
+                                try {
+                                    const { data: createdContact } = await supabase
+                                        .from('contacts')
+                                        .insert([{
+                                            company_id: profile.company_id,
+                                            partnerId: createdPartner.id,
+                                            name: newFolderForm.contactPersonName.trim(),
+                                            email: newFolderForm.contactPersonEmail.trim() || null,
+                                            handphone: newFolderForm.contactPersonPhone.trim() || null,
+                                        }])
+                                        .select()
+                                        .single();
+                                    if (createdContact?.id) {
+                                        primaryContactId = createdContact.id;
+                                    }
+                                } catch (cErr) {
+                                    console.warn('[NewEnquiry] Contact creation note:', cErr);
+                                }
+                            }
+
+                            toast.success(`Saved new customer "${effectiveCustName}" with full details into Partners directory!`);
+                        }
                     }
                 } catch (pErr) {
-                    console.warn('Customer partner creation note:', pErr);
+                    console.error('[NewEnquiry] Customer partner creation note:', pErr);
+                    toast.error(`Partner directory sync note: ${pErr.message || pErr}`);
+                }
+            } else if (!newFolderForm.isNewCustomer && partnerId) {
+                // If existing partner selected, ensure 'Customer' type is marked if not present
+                const existingPartner = allPartners.find(p => p.id === partnerId);
+                if (existingPartner) {
+                    const curTypes = Array.isArray(existingPartner.types) ? existingPartner.types : [];
+                    if (!curTypes.some(t => t?.toLowerCase() === 'customer')) {
+                        const updatedTypes = [...curTypes, 'Customer'];
+                        savePartner({ id: existingPartner.id, types: updatedTypes }).then(() => {
+                            setAllPartners(prev => prev.map(p => p.id === existingPartner.id ? { ...p, types: updatedTypes } : p));
+                        }).catch(e => console.warn('Partner type update note:', e));
+                    }
                 }
             }
 
@@ -868,6 +1044,7 @@ export default function UnifiedSupplierHubPro() {
                 company_id: profile.company_id,
                 enquiry_no: newFolderForm.enquiryNo.trim(),
                 customer_id: partnerId,
+                contact_id: primaryContactId,
                 customer_name: effectiveCustName,
                 description: newFolderForm.description.trim() || 'New Customer Enquiry',
                 customer_ref: newFolderForm.customerRef.trim() || '',
@@ -880,9 +1057,9 @@ export default function UnifiedSupplierHubPro() {
                 .insert([newRecord])
                 .select(`
                     *,
-                    customer:partners(id, name, email, country),
+                    customer:partners(id, name, email:email1, country),
                     contact:contacts(id, name, email, handphone),
-                    supplier_quotes(id, status, quote_amount, supplier:partners(id, name, email)),
+                    supplier_quotes(id, status, quote_amount, supplier:partners(id, name, email:email1)),
                     workflow_documents(id, document_type, document_no, status, total_amount)
                 `)
                 .single();
@@ -1229,22 +1406,36 @@ export default function UnifiedSupplierHubPro() {
                             </h1>
                         </div>
                         <p style={{ margin: 0, fontSize: '0.78rem', color: '#94a3b8' }}>
-                            Enquiry → Float RFQ → Compare → Quote2Customer → PO2Supplier → Job Control
+                            Enquiry → Float RFQ → Compare → Quote2Customer → PO2Supplier → Job Control → <span style={{ color: '#38bdf8', fontWeight: 700 }}>🦅 Eagle View</span>
                         </p>
                     </div>
-                    <button
-                        onClick={loadAll}
-                        style={{
-                            background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)',
-                            color: '#94a3b8', borderRadius: '10px', padding: '8px 14px',
-                            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
-                            fontSize: '0.78rem', fontWeight: 700, transition: 'all 0.15s',
-                        }}
-                        onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.15)'}
-                        onMouseOut={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
-                    >
-                        <RefreshCcw size={14} /> Refresh
-                    </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                            onClick={() => navigate('/workflows/eagle-control')}
+                            style={{
+                                background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)',
+                                color: '#ffffff', border: 'none', borderRadius: '10px', padding: '8px 14px',
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
+                                fontSize: '0.78rem', fontWeight: 800, transition: 'all 0.15s',
+                                boxShadow: '0 2px 8px rgba(79,70,229,0.35)'
+                            }}
+                        >
+                            🦅 Eagle Control Center
+                        </button>
+                        <button
+                            onClick={loadAll}
+                            style={{
+                                background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)',
+                                color: '#94a3b8', borderRadius: '10px', padding: '8px 14px',
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
+                                fontSize: '0.78rem', fontWeight: 700, transition: 'all 0.15s',
+                            }}
+                            onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.15)'}
+                            onMouseOut={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                        >
+                            <RefreshCcw size={14} /> Refresh
+                        </button>
+                    </div>
                 </div>
 
                 {/* Tab Bar */}
@@ -1551,9 +1742,25 @@ export default function UnifiedSupplierHubPro() {
                                 {/* Search */}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '7px 12px', flex: 1, minWidth: '200px' }}>
                                     <Search size={14} color="#94a3b8" />
-                                    <input value={dashSearch} onChange={e => setDashSearch(e.target.value)}
-                                        placeholder="Search by ENQ No, customer..."
-                                        style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.82rem', color: '#1e293b', flex: 1 }} />
+                                    <input
+                                        value={dashSearch}
+                                        onChange={e => {
+                                            const val = e.target.value;
+                                            setDashSearch(val);
+                                            setCardSearch(val);
+                                        }}
+                                        placeholder="Search by ENQ No, customer, description..."
+                                        style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.82rem', color: '#1e293b', flex: 1 }}
+                                    />
+                                    {dashSearch && (
+                                        <button
+                                            onClick={() => { setDashSearch(''); setCardSearch(''); }}
+                                            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#94a3b8', display: 'flex', padding: 0 }}
+                                            title="Clear search"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    )}
                                 </div>
                                 <button onClick={() => navigate('/workflows/enquiry/new')} style={{
                                     display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px',
@@ -1569,6 +1776,9 @@ export default function UnifiedSupplierHubPro() {
                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                                     <thead>
                                         <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                                            <th style={{ width: '56px', padding: '10px 12px', textAlign: 'center', fontSize: '0.7rem', fontWeight: 800, color: '#4f46e5', textTransform: 'uppercase', letterSpacing: '0.05em' }} title="Single-select tickbox to set enquiry as the Target Upload Folder">
+                                                Target
+                                            </th>
                                             {['ENQ No', 'Customer', 'Description', 'Status', 'Due Date', 'Drive', '📅', 'Actions'].map(h => (
                                                 <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>{h}</th>
                                             ))}
@@ -1576,26 +1786,80 @@ export default function UnifiedSupplierHubPro() {
                                     </thead>
                                     <tbody>
                                         {dashEnquiries.length === 0 && (
-                                            <tr><td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', fontSize: '0.85rem' }}>No enquiries found</td></tr>
+                                            <tr><td colSpan={9} style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', fontSize: '0.85rem' }}>No enquiries found</td></tr>
                                         )}
                                         {dashEnquiries.map(enq => {
                                             const sc = getStatusStyle(enq.status);
                                             const isOverdue = enq.due_date && new Date(enq.due_date) < new Date() && !['Closed', 'Cancelled', 'Job Created'].includes(enq.status);
+                                            const isTargetSelected = activeUploadEnquiry?.id === enq.id;
+
+                                            const handleSelectTarget = (e) => {
+                                                if (e) e.stopPropagation();
+                                                setUploadTargetEnquiryId(enq.id);
+                                                setShowSmartUpload(true);
+                                                toast.success(`Target saving folder set to ${enq.enquiry_no}`, { id: 'target-folder-switch', duration: 2500 });
+                                            };
+
                                             return (
                                                 <tr
                                                     key={enq.id}
-                                                    onClick={() => goToEnquiry(enq)}
+                                                    onClick={handleSelectTarget}
                                                     style={{
-                                                        borderBottom: '1px solid #f1f5f9', cursor: 'pointer',
-                                                        background: isOverdue ? '#fff5f5' : 'transparent',
+                                                        borderBottom: '1px solid #f1f5f9',
+                                                        cursor: 'pointer',
+                                                        background: isTargetSelected ? '#eef2ff' : (isOverdue ? '#fff5f5' : 'transparent'),
+                                                        boxShadow: isTargetSelected ? 'inset 4px 0 0 #4f46e5' : 'none',
                                                         transition: 'background 0.12s',
                                                     }}
-                                                    onMouseOver={e => e.currentTarget.style.background = '#f8faff'}
-                                                    onMouseOut={e => e.currentTarget.style.background = isOverdue ? '#fff5f5' : 'transparent'}
+                                                    onMouseOver={e => e.currentTarget.style.background = isTargetSelected ? '#e0e7ff' : '#f8faff'}
+                                                    onMouseOut={e => e.currentTarget.style.background = isTargetSelected ? '#eef2ff' : (isOverdue ? '#fff5f5' : 'transparent')}
                                                 >
+                                                    {/* Target Tickbox Column */}
+                                                    <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }} onClick={e => e.stopPropagation()}>
+                                                        <label
+                                                            style={{
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                cursor: 'pointer',
+                                                                padding: '4px',
+                                                                borderRadius: '6px',
+                                                                background: isTargetSelected ? '#e0e7ff' : 'transparent',
+                                                                transition: 'all 0.15s',
+                                                            }}
+                                                            title={isTargetSelected ? `Active Target Folder: ${enq.enquiry_no}` : `Click tickbox to set ${enq.enquiry_no} as Target Upload Folder`}
+                                                        >
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={isTargetSelected}
+                                                                onChange={handleSelectTarget}
+                                                                style={{
+                                                                    width: '18px',
+                                                                    height: '18px',
+                                                                    cursor: 'pointer',
+                                                                    accentColor: '#4f46e5',
+                                                                    margin: 0,
+                                                                }}
+                                                            />
+                                                        </label>
+                                                    </td>
+
                                                     {/* ENQ No */}
                                                     <td style={{ padding: '10px 16px', whiteSpace: 'nowrap' }}>
-                                                        <span style={{ fontWeight: 800, color: '#4f46e5', fontSize: '0.78rem' }}>{enq.enquiry_no || '—'}</span>
+                                                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                                            <span
+                                                                onClick={(e) => { e.stopPropagation(); goToEnquiry(enq); }}
+                                                                style={{ fontWeight: 800, color: '#4f46e5', fontSize: '0.78rem', textDecoration: 'underline', cursor: 'pointer' }}
+                                                                title="Click to view/edit details"
+                                                            >
+                                                                {enq.enquiry_no || '—'}
+                                                            </span>
+                                                            {isTargetSelected && (
+                                                                <span style={{ fontSize: '0.62rem', fontWeight: 800, padding: '2px 6px', borderRadius: '4px', background: '#4f46e5', color: '#ffffff', letterSpacing: '0.04em' }}>
+                                                                    TARGET
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                     </td>
                                                     {/* Customer */}
                                                     <td style={{ padding: '10px 16px', maxWidth: '160px' }}>
@@ -1751,11 +2015,24 @@ export default function UnifiedSupplierHubPro() {
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '6px 12px', minWidth: '200px' }}>
                                         <Search size={14} color="#94a3b8" />
                                         <input
-                                            value={cardSearch}
-                                            onChange={e => setCardSearch(e.target.value)}
+                                            value={cardSearch || dashSearch}
+                                            onChange={e => {
+                                                const val = e.target.value;
+                                                setCardSearch(val);
+                                                setDashSearch(val);
+                                            }}
                                             placeholder="Search enquiries..."
                                             style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.78rem', color: '#1e293b', width: '100%' }}
                                         />
+                                        {(cardSearch || dashSearch) && (
+                                            <button
+                                                onClick={() => { setCardSearch(''); setDashSearch(''); }}
+                                                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#94a3b8', display: 'flex', padding: 0 }}
+                                                title="Clear search"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        )}
                                     </div>
 
                                     <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 700 }}>
@@ -1766,6 +2043,44 @@ export default function UnifiedSupplierHubPro() {
 
                             {/* Cards Grid */}
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
+                                {/* Empty State if search yields no cards */}
+                                {filteredCardsEnquiries.length === 0 && (dashSearch || cardSearch) && (
+                                    <div style={{
+                                        padding: '24px',
+                                        borderRadius: '18px',
+                                        border: '1.5px dashed #cbd5e1',
+                                        background: '#f8fafc',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        minHeight: '380px',
+                                        textAlign: 'center'
+                                    }}>
+                                        <Search size={32} color="#94a3b8" style={{ marginBottom: '12px' }} />
+                                        <h4 style={{ margin: '0 0 6px 0', fontSize: '1rem', fontWeight: 700, color: '#475569' }}>
+                                            No matching cards
+                                        </h4>
+                                        <p style={{ margin: '0 0 14px 0', fontSize: '0.82rem', color: '#94a3b8', maxWidth: '240px' }}>
+                                            No customer enquiries match "{cardSearch || dashSearch}".
+                                        </p>
+                                        <button
+                                            onClick={() => { setDashSearch(''); setCardSearch(''); }}
+                                            style={{
+                                                padding: '6px 16px',
+                                                borderRadius: '8px',
+                                                background: '#e0e7ff',
+                                                color: '#4338ca',
+                                                border: 'none',
+                                                fontSize: '0.78rem',
+                                                fontWeight: 700,
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            Clear Search
+                                        </button>
+                                    </div>
+                                )}
                                 {/* "+ New Customer Enquiry" dashed card */}
                                 <div
                                     onClick={() => navigate('/workflows/enquiry/new')}
@@ -1798,6 +2113,12 @@ export default function UnifiedSupplierHubPro() {
                                     <EnquiryCardPro
                                         key={enq.id}
                                         enq={enq}
+                                        isTargetSelected={activeUploadEnquiry?.id === enq.id}
+                                        onSelectTarget={(targetEnq) => {
+                                            setUploadTargetEnquiryId(targetEnq.id);
+                                            setShowSmartUpload(true);
+                                            toast.success(`Target saving folder set to ${targetEnq.enquiry_no}`, { id: 'target-folder-switch', duration: 2500 });
+                                        }}
                                         onOpen={(enq, tab) => goToEnquiry(enq, tab)}
                                         onDrive={openDriveFolder}
                                         onCheckingFacility={handleOpenCheckingFacility}
@@ -1873,9 +2194,40 @@ export default function UnifiedSupplierHubPro() {
                                     }}>
                                         {/* Top row */}
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                            <div onClick={() => goToEnquiry(enq)} style={{ cursor: 'pointer' }}>
-                                                <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#4f46e5', textTransform: 'uppercase' }}>ENQ</span>
-                                                <span style={{ fontWeight: 800, color: '#4f46e5', marginLeft: '6px', fontSize: '0.88rem', textDecoration: 'underline' }}>{enq.enquiry_no}</span>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <label
+                                                    onClick={e => e.stopPropagation()}
+                                                    style={{
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        gap: '4px',
+                                                        padding: '2px 6px',
+                                                        borderRadius: '6px',
+                                                        background: activeUploadEnquiry?.id === enq.id ? '#e0e7ff' : '#f8fafc',
+                                                        border: `1.5px solid ${activeUploadEnquiry?.id === enq.id ? '#6366f1' : '#cbd5e1'}`,
+                                                        cursor: 'pointer',
+                                                        fontSize: '0.68rem',
+                                                        fontWeight: 800,
+                                                        color: activeUploadEnquiry?.id === enq.id ? '#4338ca' : '#64748b',
+                                                        userSelect: 'none',
+                                                    }}
+                                                    title={activeUploadEnquiry?.id === enq.id ? `Active Target Folder: ${enq.enquiry_no}` : `Click to set ${enq.enquiry_no} as Target Upload Folder`}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={activeUploadEnquiry?.id === enq.id}
+                                                        onChange={() => {
+                                                            setUploadTargetEnquiryId(enq.id);
+                                                            toast.success(`Target saving folder set to ${enq.enquiry_no}`, { id: 'target-folder-switch', duration: 2500 });
+                                                        }}
+                                                        style={{ width: '13px', height: '13px', cursor: 'pointer', accentColor: '#4f46e5', margin: 0 }}
+                                                    />
+                                                    <span>{activeUploadEnquiry?.id === enq.id ? 'TARGET' : 'SET TARGET'}</span>
+                                                </label>
+                                                <div onClick={() => goToEnquiry(enq)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                                    <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#4f46e5', textTransform: 'uppercase' }}>ENQ</span>
+                                                    <span style={{ fontWeight: 800, color: '#4f46e5', fontSize: '0.88rem', textDecoration: 'underline' }}>{enq.enquiry_no}</span>
+                                                </div>
                                             </div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                 {isOverdue && <span style={{ fontSize: '0.65rem', fontWeight: 800, background: '#fee2e2', color: '#b91c1c', padding: '2px 8px', borderRadius: '6px' }}>Overdue</span>}
@@ -2562,7 +2914,9 @@ export default function UnifiedSupplierHubPro() {
                     display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
                 }}>
                     <div style={{
-                        background: '#ffffff', borderRadius: '20px', width: '100%', maxWidth: '580px',
+                        background: '#ffffff', borderRadius: '20px', width: '100%',
+                        maxWidth: newFolderForm.isNewCustomer ? '680px' : '580px',
+                        maxHeight: '92vh', display: 'flex', flexDirection: 'column',
                         overflow: 'hidden', boxShadow: '0 25px 60px -15px rgba(0,0,0,0.4)',
                         border: '1px solid #e2e8f0', animation: 'scaleIn 0.2s ease-out'
                     }}>
@@ -2593,7 +2947,7 @@ export default function UnifiedSupplierHubPro() {
                         </div>
 
                         {/* Modal Form */}
-                        <form onSubmit={handleCreateNewFolder} style={{ padding: '22px' }}>
+                        <form onSubmit={handleCreateNewFolder} style={{ padding: '22px', overflowY: 'auto', flex: 1 }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
 
                                 {/* Google Drive Hierarchy Preview Banner */}
@@ -2658,53 +3012,479 @@ export default function UnifiedSupplierHubPro() {
                                         </label>
                                         <button
                                             type="button"
-                                            onClick={() => setNewFolderForm(prev => ({ ...prev, isNewCustomer: !prev.isNewCustomer, customerId: '', customerName: '' }))}
+                                            onClick={() => setNewFolderForm(prev => ({
+                                                ...prev,
+                                                isNewCustomer: !prev.isNewCustomer,
+                                                customerId: '',
+                                                customerName: '',
+                                                customerEmail: '',
+                                                customerPhone: '',
+                                                customerCountry: 'Singapore',
+                                                customerAddress: '',
+                                                customerWeblink: '',
+                                                customerNotes: '',
+                                                contactPersonName: '',
+                                                contactPersonEmail: '',
+                                                contactPersonPhone: '',
+                                            }))}
                                             style={{
                                                 background: 'transparent', border: 'none', color: '#4f46e5',
                                                 fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline'
                                             }}
                                         >
-                                            {newFolderForm.isNewCustomer ? '← Choose Existing Customer' : '+ Type New Customer'}
+                                            {newFolderForm.isNewCustomer ? '← Choose Existing Customer' : '+ Type New Customer (Full Details)'}
                                         </button>
                                     </div>
 
                                     {newFolderForm.isNewCustomer ? (
-                                        <input
-                                            type="text"
-                                            required
-                                            value={newFolderForm.customerName}
-                                            onChange={e => setNewFolderForm(prev => ({ ...prev, customerName: e.target.value }))}
-                                            placeholder="Enter customer / client company name"
-                                            style={{
-                                                width: '100%', padding: '9px 12px', borderRadius: '8px',
-                                                border: '1.5px solid #cbd5e1', fontSize: '0.84rem',
-                                                color: '#0f172a', outline: 'none', boxSizing: 'border-box'
-                                            }}
-                                        />
+                                        <div style={{
+                                            background: '#f8fafc', border: '1.5px solid #c7d2fe', borderRadius: '12px',
+                                            padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                <span style={{ fontSize: '0.74rem', fontWeight: 800, color: '#3730a3', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                                    <Building2 size={14} /> New Customer Master Profile
+                                                </span>
+                                                <span style={{ fontSize: '0.68rem', color: '#4338ca', background: '#e0e7ff', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                                                    Auto-saves to Partners directory
+                                                </span>
+                                            </div>
+
+                                            {/* Company Name */}
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                                    Company / Customer Name <span style={{ color: '#ef4444' }}>*</span>
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    required
+                                                    list="new-enquiry-partners-list"
+                                                    value={newFolderForm.customerName}
+                                                    onChange={e => setNewFolderForm(prev => ({ ...prev, customerName: e.target.value }))}
+                                                    placeholder="Enter customer / client company name..."
+                                                    style={{
+                                                        width: '100%', padding: '9px 12px', borderRadius: '8px',
+                                                        border: '1.5px solid #818cf8', fontSize: '0.84rem',
+                                                        color: '#0f172a', outline: 'none', boxSizing: 'border-box',
+                                                        background: '#ffffff'
+                                                    }}
+                                                />
+                                                <datalist id="new-enquiry-partners-list">
+                                                    {allPartners.map(p => (
+                                                        <option key={p.id} value={p.name}>
+                                                            {p.country ? `${p.name} (${p.country})` : p.name}
+                                                        </option>
+                                                    ))}
+                                                </datalist>
+                                            </div>
+
+                                            {/* Email & Phone */}
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                                        Email Address
+                                                    </label>
+                                                    <input
+                                                        type="email"
+                                                        value={newFolderForm.customerEmail}
+                                                        onChange={e => setNewFolderForm(prev => ({ ...prev, customerEmail: e.target.value }))}
+                                                        placeholder="e.g. procurement@marinecorp.com"
+                                                        style={{
+                                                            width: '100%', padding: '8px 10px', borderRadius: '8px',
+                                                            border: '1px solid #cbd5e1', fontSize: '0.80rem',
+                                                            color: '#0f172a', outline: 'none', boxSizing: 'border-box', background: '#ffffff'
+                                                        }}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                                        Phone / Mobile
+                                                    </label>
+                                                    <input
+                                                        type="text"
+                                                        value={newFolderForm.customerPhone}
+                                                        onChange={e => setNewFolderForm(prev => ({ ...prev, customerPhone: e.target.value }))}
+                                                        placeholder="e.g. +65 6123 4567"
+                                                        style={{
+                                                            width: '100%', padding: '8px 10px', borderRadius: '8px',
+                                                            border: '1px solid #cbd5e1', fontSize: '0.80rem',
+                                                            color: '#0f172a', outline: 'none', boxSizing: 'border-box', background: '#ffffff'
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Country & Website */}
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                                        Country
+                                                    </label>
+                                                    <select
+                                                        value={newFolderForm.customerCountry}
+                                                        onChange={e => setNewFolderForm(prev => ({ ...prev, customerCountry: e.target.value }))}
+                                                        style={{
+                                                            width: '100%', padding: '8px 10px', borderRadius: '8px',
+                                                            border: '1px solid #cbd5e1', fontSize: '0.80rem',
+                                                            color: '#0f172a', outline: 'none', boxSizing: 'border-box', background: '#ffffff'
+                                                        }}
+                                                    >
+                                                        <option value="">-- Select Country --</option>
+                                                        {COUNTRIES.map(c => (
+                                                            <option key={c} value={c}>{c}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                                        Website / Web Link
+                                                    </label>
+                                                    <input
+                                                        type="text"
+                                                        value={newFolderForm.customerWeblink}
+                                                        onChange={e => setNewFolderForm(prev => ({ ...prev, customerWeblink: e.target.value }))}
+                                                        placeholder="e.g. https://marinecorp.com"
+                                                        style={{
+                                                            width: '100%', padding: '8px 10px', borderRadius: '8px',
+                                                            border: '1px solid #cbd5e1', fontSize: '0.80rem',
+                                                            color: '#0f172a', outline: 'none', boxSizing: 'border-box', background: '#ffffff'
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Billing / Physical Address */}
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                                    Billing / Physical Street Address
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    value={newFolderForm.customerAddress}
+                                                    onChange={e => setNewFolderForm(prev => ({ ...prev, customerAddress: e.target.value }))}
+                                                    placeholder="e.g. 10 Anson Road, #15-02 International Plaza, Singapore 079903"
+                                                    style={{
+                                                        width: '100%', padding: '8px 10px', borderRadius: '8px',
+                                                        border: '1px solid #cbd5e1', fontSize: '0.80rem',
+                                                        color: '#0f172a', outline: 'none', boxSizing: 'border-box', background: '#ffffff'
+                                                    }}
+                                                />
+                                            </div>
+
+                                            {/* Primary Contact Person (Optional) */}
+                                            <div style={{
+                                                background: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0',
+                                                padding: '10px 12px'
+                                            }}>
+                                                <span style={{ display: 'block', fontSize: '0.70rem', fontWeight: 800, color: '#64748b', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                                    Primary Contact Person (Optional)
+                                                </span>
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '8px' }}>
+                                                    <div>
+                                                        <input
+                                                            type="text"
+                                                            value={newFolderForm.contactPersonName}
+                                                            onChange={e => setNewFolderForm(prev => ({ ...prev, contactPersonName: e.target.value }))}
+                                                            placeholder="Contact Person Name"
+                                                            style={{
+                                                                width: '100%', padding: '7px 9px', borderRadius: '6px',
+                                                                border: '1px solid #cbd5e1', fontSize: '0.78rem',
+                                                                color: '#0f172a', outline: 'none', boxSizing: 'border-box'
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <input
+                                                            type="email"
+                                                            value={newFolderForm.contactPersonEmail}
+                                                            onChange={e => setNewFolderForm(prev => ({ ...prev, contactPersonEmail: e.target.value }))}
+                                                            placeholder="Direct Email"
+                                                            style={{
+                                                                width: '100%', padding: '7px 9px', borderRadius: '6px',
+                                                                border: '1px solid #cbd5e1', fontSize: '0.78rem',
+                                                                color: '#0f172a', outline: 'none', boxSizing: 'border-box'
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <input
+                                                            type="text"
+                                                            value={newFolderForm.contactPersonPhone}
+                                                            onChange={e => setNewFolderForm(prev => ({ ...prev, contactPersonPhone: e.target.value }))}
+                                                            placeholder="Direct Mobile"
+                                                            style={{
+                                                                width: '100%', padding: '7px 9px', borderRadius: '6px',
+                                                                border: '1px solid #cbd5e1', fontSize: '0.78rem',
+                                                                color: '#0f172a', outline: 'none', boxSizing: 'border-box'
+                                                            }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Notes / Terms */}
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                                    Customer Notes / Terms (Optional)
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    value={newFolderForm.customerNotes}
+                                                    onChange={e => setNewFolderForm(prev => ({ ...prev, customerNotes: e.target.value }))}
+                                                    placeholder="e.g. 30 days payment terms; vessel overhaul specialist"
+                                                    style={{
+                                                        width: '100%', padding: '8px 10px', borderRadius: '8px',
+                                                        border: '1px solid #cbd5e1', fontSize: '0.80rem',
+                                                        color: '#0f172a', outline: 'none', boxSizing: 'border-box', background: '#ffffff'
+                                                    }}
+                                                />
+                                            </div>
+
+                                            <div style={{
+                                                display: 'flex', alignItems: 'center', gap: '6px',
+                                                fontSize: '0.70rem', color: '#15803d', background: '#f0fdf4',
+                                                padding: '6px 10px', borderRadius: '6px', border: '1px solid #bbf7d0'
+                                            }}>
+                                                <Sparkles size={13} style={{ flexShrink: 0, color: '#16a34a' }} />
+                                                <span>
+                                                    {newFolderForm.customerName.trim()
+                                                        ? <>Saving <strong>"{newFolderForm.customerName.trim()}"</strong> with all details directly into your <strong>Partners table</strong> with type <code>Customer</code>.</>
+                                                        : 'All elaborated details will be saved directly into your Partners table with type Customer.'
+                                                    }
+                                                </span>
+                                            </div>
+                                        </div>
                                     ) : (
-                                        <select
-                                            required
-                                            value={newFolderForm.customerId}
-                                            onChange={e => {
-                                                const cId = e.target.value;
-                                                const found = allPartners.find(p => p.id === cId);
-                                                setNewFolderForm(prev => ({ ...prev, customerId: cId, customerName: found?.name || '' }));
-                                            }}
-                                            style={{
-                                                width: '100%', padding: '9px 12px', borderRadius: '8px',
-                                                border: '1.5px solid #cbd5e1', fontSize: '0.84rem',
-                                                color: '#0f172a', outline: 'none', background: '#ffffff', boxSizing: 'border-box'
-                                            }}
-                                        >
-                                            <option value="">-- Select Existing Customer --</option>
-                                            {allPartners
-                                                .filter(p => !p.types || p.types.includes('Customer') || !p.types.includes('Supplier'))
-                                                .map(p => (
-                                                    <option key={p.id} value={p.id}>
-                                                        {p.name} {p.country ? `(${p.country})` : ''}
-                                                    </option>
-                                                ))}
-                                        </select>
+                                        <div style={{ position: 'relative' }}>
+                                            {/* Search Input Container */}
+                                            <div style={{
+                                                display: 'flex', alignItems: 'center', border: '1.5px solid #cbd5e1',
+                                                borderRadius: '8px', background: '#ffffff', padding: '0 10px',
+                                                borderColor: customerDropdownOpen ? '#6366f1' : '#cbd5e1',
+                                                boxShadow: customerDropdownOpen ? '0 0 0 3px rgba(99, 102, 241, 0.15)' : 'none'
+                                            }}>
+                                                <Search size={15} style={{ color: '#94a3b8', marginRight: '8px', flexShrink: 0 }} />
+                                                <input
+                                                    type="text"
+                                                    value={customerSearchTerm !== '' ? customerSearchTerm : (newFolderForm.customerName || '')}
+                                                    onChange={e => {
+                                                        const val = e.target.value;
+                                                        setCustomerSearchTerm(val);
+                                                        setCustomerDropdownOpen(true);
+                                                        if (!val) {
+                                                            setNewFolderForm(prev => ({ ...prev, customerId: '', customerName: '' }));
+                                                        }
+                                                    }}
+                                                    onFocus={() => setCustomerDropdownOpen(true)}
+                                                    placeholder={`Search ${allPartners.length > 0 ? allPartners.length + '+' : ''} partners by company name, country, address, or email...`}
+                                                    style={{
+                                                        flex: 1, padding: '9px 0', border: 'none', outline: 'none',
+                                                        fontSize: '0.84rem', color: '#0f172a', background: 'transparent'
+                                                    }}
+                                                />
+                                                {newFolderForm.customerId && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setNewFolderForm(prev => ({ ...prev, customerId: '', customerName: '' }));
+                                                            setCustomerSearchTerm('');
+                                                        }}
+                                                        style={{
+                                                            background: '#f1f5f9', border: 'none', borderRadius: '50%',
+                                                            width: '20px', height: '20px', display: 'flex', alignItems: 'center',
+                                                            justifyContent: 'center', cursor: 'pointer', color: '#64748b', marginRight: '6px'
+                                                        }}
+                                                        title="Clear selection"
+                                                    >
+                                                        <X size={12} />
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCustomerDropdownOpen(prev => !prev)}
+                                                    style={{
+                                                        background: 'transparent', border: 'none', cursor: 'pointer',
+                                                        color: '#64748b', display: 'flex', alignItems: 'center', padding: '4px'
+                                                    }}
+                                                >
+                                                    <ChevronDown size={15} style={{ transform: customerDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                                                </button>
+                                            </div>
+
+                                            {/* Floating Dropdown Results */}
+                                            {customerDropdownOpen && (
+                                                <>
+                                                    <div
+                                                        style={{ position: 'fixed', inset: 0, zIndex: 10000 }}
+                                                        onClick={() => setCustomerDropdownOpen(false)}
+                                                    />
+                                                    <div style={{
+                                                        position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
+                                                        maxHeight: '270px', overflowY: 'auto', background: '#ffffff',
+                                                        borderRadius: '10px', border: '1px solid #e2e8f0',
+                                                        boxShadow: '0 12px 30px -5px rgba(0,0,0,0.2)', zIndex: 10001
+                                                    }}>
+                                                        {/* Quick option: Add as new customer if term is typed */}
+                                                        {customerSearchTerm.trim() && (
+                                                            <div
+                                                                onClick={() => {
+                                                                    setNewFolderForm(prev => ({
+                                                                        ...prev,
+                                                                        isNewCustomer: true,
+                                                                        customerId: '',
+                                                                        customerName: customerSearchTerm.trim(),
+                                                                    }));
+                                                                    setCustomerDropdownOpen(false);
+                                                                }}
+                                                                style={{
+                                                                    padding: '10px 14px', borderBottom: '1px solid #e2e8f0',
+                                                                    background: '#eff6ff', cursor: 'pointer', display: 'flex',
+                                                                    alignItems: 'center', gap: '8px', fontSize: '0.80rem', color: '#1d4ed8', fontWeight: 700
+                                                                }}
+                                                            >
+                                                                <Plus size={15} /> Add "{customerSearchTerm.trim()}" as New Customer (Fill full details)
+                                                            </div>
+                                                        )}
+
+                                                        {(() => {
+                                                            const term = customerSearchTerm.toLowerCase().trim();
+                                                            const filtered = allPartners.filter(p => {
+                                                                if (!term) return true;
+                                                                return (
+                                                                    (p.name && p.name.toLowerCase().includes(term)) ||
+                                                                    (p.country && p.country.toLowerCase().includes(term)) ||
+                                                                    (p.address && p.address.toLowerCase().includes(term)) ||
+                                                                    (p.email1 && p.email1.toLowerCase().includes(term)) ||
+                                                                    (p.phone1 && p.phone1.toLowerCase().includes(term))
+                                                                );
+                                                            }).slice(0, 100); // Top 100 matches for ultra-fast rendering
+
+                                                            if (filtered.length === 0) {
+                                                                return (
+                                                                    <div style={{ padding: '16px', textAlign: 'center', color: '#64748b', fontSize: '0.78rem' }}>
+                                                                        No partners match "{customerSearchTerm}".
+                                                                        <div style={{ marginTop: '8px' }}>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    setNewFolderForm(prev => ({
+                                                                                        ...prev,
+                                                                                        isNewCustomer: true,
+                                                                                        customerId: '',
+                                                                                        customerName: customerSearchTerm.trim(),
+                                                                                    }));
+                                                                                    setCustomerDropdownOpen(false);
+                                                                                }}
+                                                                                style={{
+                                                                                    background: '#4f46e5', color: '#ffffff', border: 'none',
+                                                                                    borderRadius: '6px', padding: '6px 14px', fontSize: '0.76rem',
+                                                                                    fontWeight: 700, cursor: 'pointer'
+                                                                                }}
+                                                                            >
+                                                                                + Register "{customerSearchTerm}" as New Customer
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            }
+
+                                                            return (
+                                                                <div>
+                                                                    <div style={{
+                                                                        padding: '6px 12px', background: '#f8fafc', borderBottom: '1px solid #f1f5f9',
+                                                                        fontSize: '0.68rem', fontWeight: 700, color: '#64748b', display: 'flex', justifyContent: 'space-between'
+                                                                    }}>
+                                                                        <span>SEARCH RESULTS ({filtered.length}{allPartners.length > 100 ? ' of ' + allPartners.length : ''})</span>
+                                                                        <span>Click to select</span>
+                                                                    </div>
+                                                                    {filtered.map(p => {
+                                                                        const isSelected = newFolderForm.customerId === p.id;
+                                                                        const isCust = Array.isArray(p.types) && p.types.some(t => t?.toLowerCase() === 'customer');
+                                                                        return (
+                                                                            <div
+                                                                                key={p.id}
+                                                                                onClick={() => {
+                                                                                    setNewFolderForm(prev => ({
+                                                                                        ...prev,
+                                                                                        customerId: p.id,
+                                                                                        customerName: p.name,
+                                                                                        isNewCustomer: false
+                                                                                    }));
+                                                                                    setCustomerSearchTerm('');
+                                                                                    setCustomerDropdownOpen(false);
+                                                                                }}
+                                                                                style={{
+                                                                                    padding: '9px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9',
+                                                                                    background: isSelected ? '#e0e7ff' : '#ffffff',
+                                                                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                                                                                }}
+                                                                                onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = '#f8fafc'; }}
+                                                                                onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '#ffffff'; }}
+                                                                            >
+                                                                                <div style={{ flex: 1, minWidth: 0, paddingRight: '8px' }}>
+                                                                                    <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                                                        {p.name}
+                                                                                    </div>
+                                                                                    <div style={{ fontSize: '0.70rem', color: '#64748b', display: 'flex', gap: '8px', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                                                        {p.country && <span>📍 {p.country}</span>}
+                                                                                        {p.address && <span title={p.address}>🏢 {p.address}</span>}
+                                                                                        {p.email1 && <span>✉️ {p.email1}</span>}
+                                                                                        {p.phone1 && <span>📞 {p.phone1}</span>}
+                                                                                    </div>
+                                                                                </div>
+                                                                                <span style={{
+                                                                                    fontSize: '0.66rem', fontWeight: 700, padding: '2px 6px', borderRadius: '6px',
+                                                                                    background: isCust ? '#dcfce7' : '#f1f5f9',
+                                                                                    color: isCust ? '#15803d' : '#475569', flexShrink: 0
+                                                                                }}>
+                                                                                    {isCust ? 'Customer' : 'Supplier/Partner'}
+                                                                                </span>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
+                                                </>
+                                            )}
+
+                                            {/* Read-only preview chip of existing partner details from database */}
+                                            {(() => {
+                                                const selectedPartner = allPartners.find(p => p.id === newFolderForm.customerId);
+                                                if (!selectedPartner) return null;
+                                                return (
+                                                    <div style={{
+                                                        marginTop: '8px', padding: '9px 12px', borderRadius: '8px',
+                                                        background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: '0.74rem', color: '#475569',
+                                                        display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center'
+                                                    }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                            <span style={{ fontWeight: 700, color: '#334155' }}>📍 Country:</span>
+                                                            <span>{selectedPartner.country || 'N/A'}</span>
+                                                        </div>
+                                                        {selectedPartner.email1 && (
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                <span style={{ fontWeight: 700, color: '#334155' }}>✉️ Email:</span>
+                                                                <span>{selectedPartner.email1}</span>
+                                                            </div>
+                                                        )}
+                                                        {selectedPartner.phone1 && (
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                <span style={{ fontWeight: 700, color: '#334155' }}>📞 Phone:</span>
+                                                                <span>{selectedPartner.phone1}</span>
+                                                            </div>
+                                                        )}
+                                                        {selectedPartner.address && (
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}>
+                                                                <span style={{ fontWeight: 700, color: '#334155' }}>🏢 Address:</span>
+                                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedPartner.address}</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
                                     )}
                                 </div>
 

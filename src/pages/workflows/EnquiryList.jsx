@@ -779,6 +779,14 @@ export default function EnquiryList() {
                                             <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                                                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                                                     <button
+                                                        onClick={() => navigate(`/workflows/eagle-view/${item.id}`)}
+                                                        className="btn btn-sm"
+                                                        style={{ gap: '4px', background: 'rgba(99,102,241,0.1)', color: '#4f46e5', border: '1px solid rgba(99,102,241,0.2)', fontWeight: 800, padding: '4px 8px', fontSize: '0.72rem' }}
+                                                        title="Open Enquiry 360° Eagle View"
+                                                    >
+                                                        🦅 Eagle View
+                                                    </button>
+                                                    <button
                                                         onClick={() => {
                                                             if (activeTab === 'enquiries') navigate(`/workflows/enquiry/${item.id}`);
                                                             else if (activeTab === 'jobs') navigate(`/workflows/job/${item.id}`);

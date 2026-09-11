@@ -318,7 +318,7 @@ export default function Dashboard() {
                         <HardDrive size={18} /> Storage Hub
                     </button>
                     <button
-                        onClick={() => navigate('/dashboard/job-workflow')}
+                        onClick={() => navigate('/workflows/eagle-control')}
                         style={{
                             background: '#eef2ff',
                             border: '1.5px solid #c7d2fe',
@@ -334,7 +334,7 @@ export default function Dashboard() {
                             boxShadow: '0 1px 2px rgba(99, 102, 241, 0.05)'
                         }}
                     >
-                        <ArrowRightLeft size={18} /> Job Workflow Board
+                        <ArrowRightLeft size={18} /> 🦅 Eagle Control Center
                     </button>
                     <a
                         href="https://creatorapp.zoho.com/zoho_kumar191/quotations-and-invoices#Page:DashBoard_Invoices"
@@ -369,6 +369,47 @@ export default function Dashboard() {
                             onChange={e => setSearchTerm(e.target.value)}
                         />
                     </div>
+                </div>
+            </div>
+
+            {/* ─── Eagle Operations Quick Banner ─── */}
+            <div style={{
+                background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 60%, #312e81 100%)',
+                borderRadius: '16px',
+                padding: '20px 24px',
+                marginBottom: '28px',
+                color: '#ffffff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '16px',
+                boxShadow: '0 8px 24px rgba(15,23,42,0.2)'
+            }}>
+                <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '1.4rem' }}>🦅</span>
+                        <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 900, color: '#f8fafc' }}>
+                            Eagle Operations Control Center
+                        </h3>
+                    </div>
+                    <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: '#cbd5e1' }}>
+                        Enquiry 360° Cockpit: Link Quote2Customers, PO2 Suppliers, Jobs, and Payment Proof on a single screen.
+                    </p>
+                </div>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <button
+                        onClick={() => navigate('/workflows/eagle-control')}
+                        style={{ background: 'rgba(255,255,255,0.12)', color: '#ffffff', border: '1px solid rgba(255,255,255,0.2)', padding: '9px 16px', borderRadius: '10px', fontSize: '0.82rem', fontWeight: 800, cursor: 'pointer' }}
+                    >
+                        Master Period Ledger
+                    </button>
+                    <button
+                        onClick={() => navigate('/workflows/eagle-view')}
+                        style={{ background: '#38bdf8', color: '#0f172a', border: 'none', padding: '9px 18px', borderRadius: '10px', fontSize: '0.82rem', fontWeight: 900, cursor: 'pointer', boxShadow: '0 4px 12px rgba(56,189,248,0.35)' }}
+                    >
+                        Launch Eagle View Cockpit ➔
+                    </button>
                 </div>
             </div>
 

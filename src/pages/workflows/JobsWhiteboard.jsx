@@ -79,7 +79,8 @@ const STAGES = [
 ];
 
 export default function JobsWhiteboard() {
-    const { currentCompany } = useAuth();
+    const { activeCompanyId, activeCompany, profile } = useAuth();
+    const effectiveCompanyId = activeCompanyId || profile?.company_id || activeCompany?.id;
     const navigate = useNavigate();
 
     const [jobs, setJobs] = useState([]);
@@ -93,7 +94,7 @@ export default function JobsWhiteboard() {
     const loadJobs = async () => {
         setLoading(true);
         try {
-            const data = await fetchWhiteboardJobs(currentCompany?.id);
+            const data = await fetchWhiteboardJobs(effectiveCompanyId);
             setJobs(data || []);
         } catch (err) {
             console.error('Failed to load whiteboard jobs:', err);
@@ -112,16 +113,22 @@ export default function JobsWhiteboard() {
             .on(
                 'postgres_changes',
                 { event: '*', schema: 'public', table: 'workflow_documents' },
-                (payload) => {
-                    if (payload.eventType === 'UPDATE') {
-                        setJobs((prev) =>
-                            prev.map((job) => (job.id === payload.new.id ? { ...job, ...payload.new } : job))
-                        );
-                    } else if (payload.eventType === 'INSERT') {
-                        setJobs((prev) => [payload.new, ...prev]);
-                    } else if (payload.eventType === 'DELETE') {
-                        setJobs((prev) => prev.filter((j) => j.id !== payload.old.id));
-                    }
+                () => {
+                    loadJobs();
+                }
+            )
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'customer_enquiries' },
+                () => {
+                    loadJobs();
+                }
+            )
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'jobs' },
+                () => {
+                    loadJobs();
                 }
             )
             .subscribe();
@@ -129,40 +136,51 @@ export default function JobsWhiteboard() {
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [currentCompany?.id]);
+    }, [effectiveCompanyId]);
 
     // Map doc_status / document_type into one of the 8 whiteboard stage IDs
     const mapJobToStage = (job) => {
-        const status = (job.doc_status || '').toLowerCase();
-        const type = (job.document_type || '').toLowerCase();
+        const status = (job.status || job.doc_status || '').toLowerCase();
+        const lifecycle = (job.lifecycle || '').toLowerCase();
+        const payStatus = (job.paymentStatus || '').toLowerCase();
+        const type = (job.type || job.document_type || '').toLowerCase();
+        const category = (job.category || '').toLowerCase();
 
-        if (status.includes('paid') || status.includes('completed') || status.includes('closed') || status.includes('archived')) {
+        // 8. Paid & Closed
+        if (payStatus === 'received' || lifecycle === 'closed' || status.includes('paid') || status.includes('completed') || status.includes('closed') || status.includes('archived')) {
             return 'Paid & Closed';
         }
-        if (type.includes('invoice') || status.includes('invoiced') || status.includes('billed')) {
+        // 7. Billed / Invoiced
+        if (type.includes('invoice') || status.includes('invoice') || status.includes('billed')) {
             return 'Billed / Invoiced';
         }
-        if (type.includes('delivery') || type.includes('service') || status.includes('execution') || status.includes('active')) {
+        // 6. In Execution & DO
+        if (type.includes('delivery') || type.includes('service') || status.includes('execution') || status.includes('in progress') || (type === 'job' && (status.includes('active') || status.includes('ongoing')))) {
             return 'In Execution';
         }
-        if (type.includes('purchase order') || type.includes('supplier') || status.includes('supplier')) {
+        // 5. Supplier Orders Placed
+        if (type.includes('purchase order') || category === 'po' || status.includes('supplier')) {
             return 'Supplier Orders Placed';
         }
-        if (type === 'job' || status.includes('job') || status.includes('ongoing') || status.includes('confirmed')) {
+        // 4. Job Initiated (PO Recd)
+        if (type === 'job' || category === 'job' || status.includes('confirmed') || status.includes('initiated') || lifecycle === 'won / converted') {
             return 'Job Initiated';
         }
-        if (type.includes('quotation') && (status.includes('sent') || status.includes('awaiting'))) {
+        // 3. Quote Sent
+        if ((type.includes('quotation') || category === 'quotation') && (status.includes('sent') || status.includes('awaiting'))) {
             return 'Quote Sent';
         }
-        if (type.includes('quotation') && (status.includes('draft') || status.includes('costing'))) {
+        // 2. Costing & Quote Draft
+        if ((type.includes('quotation') || category === 'quotation') && (status.includes('draft') || status.includes('costing'))) {
             return 'Costing & Quote Draft';
         }
+        // 1. New Enquiry
         return 'New Enquiry';
     };
 
     // Calculate SLA Warning Badges
     const getSlaBadge = (job, stageId) => {
-        const createdDate = new Date(job.created_at);
+        const createdDate = new Date(job.created_at || job.date || Date.now());
         const hoursAgo = (new Date() - createdDate) / (1000 * 60 * 60);
 
         if (stageId === 'Costing & Quote Draft' && hoursAgo > 48) {
@@ -180,7 +198,7 @@ export default function JobsWhiteboard() {
     // Filter jobs based on search & archive rules
     const filteredJobs = jobs.filter((job) => {
         const stageId = mapJobToStage(job);
-        const createdDate = new Date(job.created_at || Date.now());
+        const createdDate = new Date(job.created_at || job.date || Date.now());
         const daysOld = (new Date() - createdDate) / (1000 * 60 * 60 * 24);
 
         // Auto-archive filter: if Paid & Closed over 30 days and showArchived is false, hide card
@@ -190,12 +208,13 @@ export default function JobsWhiteboard() {
 
         if (!searchQuery.trim()) return true;
         const q = searchQuery.toLowerCase();
-        const docNo = (job.document_no || '').toLowerCase();
+        const docNo = (job.refNo || job.document_no || '').toLowerCase();
         const jobNo = (job.job_no || '').toLowerCase();
-        const partnerName = (job.partners?.name || '').toLowerCase();
-        const title = (job.title || '').toLowerCase();
+        const partnerName = (job.client || job.partners?.name || '').toLowerCase();
+        const vesselName = (job.vessel || job.vessels?.vessel_name || '').toLowerCase();
+        const title = (job.title || job.description || '').toLowerCase();
 
-        return docNo.includes(q) || jobNo.includes(q) || partnerName.includes(q) || title.includes(q);
+        return docNo.includes(q) || jobNo.includes(q) || partnerName.includes(q) || vesselName.includes(q) || title.includes(q);
     });
 
     const handleStageChange = async (jobId, newStage) => {
@@ -274,7 +293,26 @@ export default function JobsWhiteboard() {
                         </p>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <Link
+                            to="/workflows/eagle-control"
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                                color: '#ffffff',
+                                padding: '10px 18px',
+                                borderRadius: '10px',
+                                fontWeight: '800',
+                                fontSize: '13px',
+                                textDecoration: 'none',
+                                boxShadow: '0 4px 14px rgba(2, 132, 199, 0.4)'
+                            }}
+                            title="Open Master Operations Control Center"
+                        >
+                            <Layers size={16} /> 🦅 Master Operations Center
+                        </Link>
                         <Link
                             to="/scan-gateway"
                             style={{
@@ -451,12 +489,34 @@ export default function JobsWhiteboard() {
                                         ) : (
                                             stageJobs.map((job) => {
                                                 const slaBadge = getSlaBadge(job, stage.id);
-                                                const displayNo = job.job_no || job.document_no || 'ENQ-Draft';
-                                                const partnerName = job.partners?.name || 'Walk-in Customer';
+                                                const displayNo = job.refNo || job.job_no || job.document_no || 'ENQ-Draft';
+                                                const partnerName = job.client || job.partners?.name || 'Walk-in Customer';
+                                                const vesselName = job.vessel || job.vessels?.vessel_name;
+                                                const displayType = job.type || job.document_type || 'Job';
+                                                const targetEagleId = job.enquiryId || job.jobId || job.id || displayNo;
+                                                const targetWizardId = job.id || job.enquiryId;
+                                                const amountStr = job.amount || (job.total_amount ? `SGD ${parseFloat(job.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : null);
+
+                                                // Color code badge for record type
+                                                let badgeBg = '#f1f5f9';
+                                                let badgeColor = '#475569';
+                                                if (displayType.toLowerCase().includes('job')) {
+                                                    badgeBg = '#e0f2fe';
+                                                    badgeColor = '#0284c7';
+                                                } else if (displayType.toLowerCase().includes('enquiry')) {
+                                                    badgeBg = '#eff6ff';
+                                                    badgeColor = '#2563eb';
+                                                } else if (displayType.toLowerCase().includes('quotation')) {
+                                                    badgeBg = '#fef3c7';
+                                                    badgeColor = '#d97706';
+                                                } else if (displayType.toLowerCase().includes('po') || displayType.toLowerCase().includes('purchase')) {
+                                                    badgeBg = '#ffedd5';
+                                                    badgeColor = '#ea580c';
+                                                }
 
                                                 return (
                                                     <div
-                                                        key={job.id}
+                                                        key={job.id || displayNo}
                                                         draggable
                                                         onDragStart={(e) => handleDragStart(e, job.id)}
                                                         style={{
@@ -488,58 +548,106 @@ export default function JobsWhiteboard() {
                                                             </div>
                                                         )}
 
-                                                        {/* Card Header: Job No */}
+                                                        {/* Card Header: Ref No & Type Badge */}
                                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                                                             <span style={{
                                                                 fontSize: '13px',
                                                                 fontWeight: '800',
-                                                                color: '#0f172a'
+                                                                color: '#0f172a',
+                                                                fontFamily: 'monospace'
                                                             }}>
                                                                 {displayNo}
                                                             </span>
                                                             <span style={{
                                                                 fontSize: '10px',
-                                                                padding: '2px 6px',
-                                                                borderRadius: '4px',
-                                                                background: '#f1f5f9',
-                                                                color: '#64748b',
-                                                                fontWeight: '600'
+                                                                padding: '2px 8px',
+                                                                borderRadius: '6px',
+                                                                background: badgeBg,
+                                                                color: badgeColor,
+                                                                fontWeight: '700'
                                                             }}>
-                                                                {job.document_type || 'Job'}
+                                                                {displayType}
                                                             </span>
                                                         </div>
 
-                                                        {/* Partner / Title */}
-                                                        <p style={{ margin: '0 0 6px 0', fontSize: '12px', fontWeight: '600', color: '#334155' }}>
+                                                        {/* Partner / Client */}
+                                                        <p style={{ margin: '0 0 4px 0', fontSize: '12px', fontWeight: '700', color: '#1e293b' }}>
                                                             🏢 {partnerName}
                                                         </p>
-                                                        {job.title && (
-                                                            <p style={{ margin: '0 0 8px 0', fontSize: '11px', color: '#64748b', lineHeight: '1.3' }}>
-                                                                {job.title}
+
+                                                        {/* Vessel if present */}
+                                                        {vesselName && vesselName !== '—' && (
+                                                            <p style={{ margin: '0 0 6px 0', fontSize: '11px', fontWeight: '600', color: '#0369a1' }}>
+                                                                🚢 {vesselName}
                                                             </p>
                                                         )}
 
-                                                        {/* Quick Stage Move Bar */}
+                                                        {/* Description / Title */}
+                                                        {(job.title || job.description) && (
+                                                            <p style={{ 
+                                                                margin: '0 0 8px 0', 
+                                                                fontSize: '11px', 
+                                                                color: '#64748b', 
+                                                                lineHeight: '1.35',
+                                                                display: '-webkit-box',
+                                                                WebkitLineClamp: 2,
+                                                                WebkitBoxOrient: 'vertical',
+                                                                overflow: 'hidden'
+                                                            }}>
+                                                                {job.title || job.description}
+                                                            </p>
+                                                        )}
+
+                                                        {/* Amount if available */}
+                                                        {amountStr && (
+                                                            <div style={{ margin: '0 0 8px 0', fontSize: '11px', fontWeight: '800', color: '#059669' }}>
+                                                                💰 {amountStr}
+                                                            </div>
+                                                        )}
+
+                                                        {/* Card Footer: Date + Eagle View & Wizard Action Buttons */}
                                                         <div style={{
                                                             marginTop: '10px',
                                                             paddingTop: '8px',
                                                             borderTop: '1px solid #f1f5f9',
                                                             display: 'flex',
-                                                            justify: 'space-between',
-                                                            alignItems: 'center'
+                                                            justifyContent: 'space-between',
+                                                            alignItems: 'center',
+                                                            gap: '8px'
                                                         }}>
                                                             <span style={{ fontSize: '10px', color: '#94a3b8' }}>
-                                                                {new Date(job.created_at).toLocaleDateString()}
+                                                                {new Date(job.created_at || job.date || Date.now()).toLocaleDateString()}
                                                             </span>
 
-                                                            <div style={{ display: 'flex', gap: '4px' }}>
+                                                            <div style={{ display: 'flex', gap: '6px' }}>
                                                                 <button
-                                                                    onClick={() => navigate(`/workflows/wizard?docId=${job.id}`)}
+                                                                    onClick={() => navigate(`/workflows/eagle-control?id=${encodeURIComponent(targetEagleId)}`)}
+                                                                    title="Open 360° Eagle Cockpit in Master Operations Center"
+                                                                    style={{
+                                                                        background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                                                                        color: '#ffffff',
+                                                                        border: 'none',
+                                                                        padding: '4px 8px',
+                                                                        borderRadius: '6px',
+                                                                        fontSize: '11px',
+                                                                        fontWeight: '800',
+                                                                        cursor: 'pointer',
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '4px',
+                                                                        boxShadow: '0 1px 3px rgba(2, 132, 199, 0.25)'
+                                                                    }}
+                                                                >
+                                                                    <Eye size={12} /> 🦅 Eagle View
+                                                                </button>
+
+                                                                <button
+                                                                    onClick={() => navigate(`/workflows/wizard?docId=${targetWizardId}`)}
                                                                     title="Open in Wizard"
                                                                     style={{
                                                                         background: '#eff6ff',
                                                                         color: '#2563eb',
-                                                                        border: 'none',
+                                                                        border: '1px solid #bfdbfe',
                                                                         padding: '4px 8px',
                                                                         borderRadius: '6px',
                                                                         fontSize: '11px',
@@ -547,7 +655,7 @@ export default function JobsWhiteboard() {
                                                                         cursor: 'pointer'
                                                                     }}
                                                                 >
-                                                                    Open Wizard ➔
+                                                                    Wizard ➔
                                                                 </button>
                                                             </div>
                                                         </div>

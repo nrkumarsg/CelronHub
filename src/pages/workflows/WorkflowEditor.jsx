@@ -4621,6 +4621,63 @@ export default function WorkflowEditor() {
             )}
 
             <div className="editor-content">
+                {/* Google Drive Integration card */}
+                <div className="glass-panel animate-fade-in" style={{ padding: '20px', borderRadius: '16px', border: '1px solid var(--border-color)', marginBottom: '24px', background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.04) 0%, rgba(16, 185, 129, 0.04) 100%)', backdropFilter: 'blur(8px)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            <div style={{ background: '#fef3c7', padding: '12px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <FolderOpen size={28} color="#f59e0b" fill="#f59e0b" fillOpacity={0.1} />
+                            </div>
+                            <div>
+                                <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Google Drive Workspace Folder</h3>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '2px', margin: 0 }}>Access the centralized repository containing all job files and related documentation.</p>
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <button 
+                                onClick={() => navigate('/workflows?type=Job')}
+                                className="btn btn-secondary" 
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, padding: '10px 16px', borderRadius: '8px' }}
+                            >
+                                <List size={16} /> View Job List Table
+                            </button>
+                            <button 
+                                onClick={handleOpenJobDrive} 
+                                className="btn btn-secondary" 
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#3b82f6', color: '#1d4ed8', background: '#eff6ff', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
+                            >
+                                <Folder size={16} fill="#3b82f6" fillOpacity={0.15} /> Open Job Folder
+                            </button>
+                            <button 
+                                onClick={handleManualUploadPDFToDrive} 
+                                className="btn btn-secondary" 
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#10b981', color: '#047857', background: '#ecfdf5', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
+                                disabled={saving}
+                            >
+                                <UploadCloud size={16} /> Save PDF to Drive
+                            </button>
+                            <button 
+                                onClick={handleOpenRootDrive} 
+                                className="btn btn-secondary" 
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#f59e0b', color: '#b45309', background: '#fffbeb', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
+                            >
+                                <ExternalLink size={16} /> Open Drive Root
+                            </button>
+                            {formData.partner_id && (
+                                <button 
+                                    onClick={handleOpenPartnerVault} 
+                                    className="btn btn-secondary" 
+                                    style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#818cf8', color: '#4338ca', background: '#eef2ff', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
+                                    title={`Open ${formData.partners?.name || 'Partner'}'s Master Folder`}
+                                >
+                                    <Users size={16} /> Open Partner Vault
+                                </button>
+                            )}
+                        </div>
+
+                    </div>
+                </div>
+
                 {/* 1. Project Costing & Profit Summary */}
                 <div id="section-costing" style={{ marginBottom: '24px' }}>
                     <div className="glass-panel project-costing" id="section-costing-summary">
@@ -4975,63 +5032,6 @@ export default function WorkflowEditor() {
                             }
                         }}
                     />
-                </div>
-
-                {/* Google Drive Integration card */}
-                <div className="glass-panel animate-fade-in" style={{ padding: '20px', borderRadius: '16px', border: '1px solid var(--border-color)', marginBottom: '24px', background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.04) 0%, rgba(16, 185, 129, 0.04) 100%)', backdropFilter: 'blur(8px)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                            <div style={{ background: '#fef3c7', padding: '12px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <FolderOpen size={28} color="#f59e0b" fill="#f59e0b" fillOpacity={0.1} />
-                            </div>
-                            <div>
-                                <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Google Drive Workspace Folder</h3>
-                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '2px', margin: 0 }}>Access the centralized repository containing all job files and related documentation.</p>
-                            </div>
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <button 
-                                onClick={() => navigate('/workflows?type=Job')}
-                                className="btn btn-secondary" 
-                                style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, padding: '10px 16px', borderRadius: '8px' }}
-                            >
-                                <List size={16} /> View Job List Table
-                            </button>
-                            <button 
-                                onClick={handleOpenJobDrive} 
-                                className="btn btn-secondary" 
-                                style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#3b82f6', color: '#1d4ed8', background: '#eff6ff', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
-                            >
-                                <Folder size={16} fill="#3b82f6" fillOpacity={0.15} /> Open Job Folder
-                            </button>
-                            <button 
-                                onClick={handleManualUploadPDFToDrive} 
-                                className="btn btn-secondary" 
-                                style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#10b981', color: '#047857', background: '#ecfdf5', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
-                                disabled={saving}
-                            >
-                                <UploadCloud size={16} /> Save PDF to Drive
-                            </button>
-                            <button 
-                                onClick={handleOpenRootDrive} 
-                                className="btn btn-secondary" 
-                                style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#f59e0b', color: '#b45309', background: '#fffbeb', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
-                            >
-                                <ExternalLink size={16} /> Open Drive Root
-                            </button>
-                            {formData.partner_id && (
-                                <button 
-                                    onClick={handleOpenPartnerVault} 
-                                    className="btn btn-secondary" 
-                                    style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#818cf8', color: '#4338ca', background: '#eef2ff', fontWeight: 700, padding: '10px 16px', transition: 'all 0.2s', borderRadius: '8px' }}
-                                    title={`Open ${formData.partners?.name || 'Partner'}'s Master Folder`}
-                                >
-                                    <Users size={16} /> Open Partner Vault
-                                </button>
-                            )}
-                        </div>
-
-                    </div>
                 </div>
 
                 {/* Header Info Panel */}

@@ -3,7 +3,7 @@ import {
     X, Send, Users, Mail, CheckCircle2, Search, ArrowRight, Loader2,
     Folder, Paperclip, QrCode, MessageSquare, Trash2, Plus, Eye,
     Phone, FileText, ChevronDown, ChevronUp, RefreshCw, Link2, 
-    Smartphone, Info, Edit2, FileCheck, ImageIcon, Upload
+    Smartphone, Info, Edit2, FileCheck, ImageIcon, Upload, Tag, CheckSquare, Globe
 } from 'lucide-react';
 import { getPartners } from '../../lib/store';
 import { listFolderContent, getOrCreateFolder } from '../../lib/driveService';
@@ -17,6 +17,8 @@ export default function FastFloatModal({ isOpen, onClose, onConfirm, enquiry }) 
     const [suppliers, setSuppliers] = useState([]);
     const [selectedSuppliers, setSelectedSuppliers] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedCategory, setSelectedCategory] = useState('All');
+    const [showOnlySelected, setShowOnlySelected] = useState(false);
     const [loading, setLoading] = useState(false);
     
     // Multi-draft state
@@ -65,6 +67,9 @@ export default function FastFloatModal({ isOpen, onClose, onConfirm, enquiry }) 
             fetchSuppliers();
             setStep(1);
             setSelectedSuppliers([]);
+            setSearchQuery('');
+            setSelectedCategory('All');
+            setShowOnlySelected(false);
             setCurrentEmailIndex(0);
             setSentCount(0);
             setSupplierEnquiryFiles([]);
@@ -91,6 +96,90 @@ export default function FastFloatModal({ isOpen, onClose, onConfirm, enquiry }) 
         } finally {
             setLoading(false);
         }
+    };
+
+    // Extract dynamic categories from suppliers with counts
+    const availableCategories = React.useMemo(() => {
+        const catMap = new Map();
+        suppliers.forEach(s => {
+            if (Array.isArray(s.types)) {
+                s.types.forEach(t => {
+                    if (t && t.trim() && t !== 'Supplier') {
+                        const trimmed = t.trim();
+                        catMap.set(trimmed, (catMap.get(trimmed) || 0) + 1);
+                    }
+                });
+            }
+        });
+        return Array.from(catMap.entries()).sort((a, b) => b[1] - a[1]);
+    }, [suppliers]);
+
+    // Smart multi-field filtering across company, group, products, services, contacts, etc.
+    const filteredSuppliers = React.useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+        
+        return suppliers.filter(s => {
+            // Category / Group filter
+            if (selectedCategory !== 'All') {
+                const types = Array.isArray(s.types) ? s.types : [];
+                if (!types.includes(selectedCategory)) return false;
+            }
+
+            // Only Selected filter
+            if (showOnlySelected) {
+                if (!selectedSuppliers.some(sel => sel.id === s.id)) return false;
+            }
+
+            if (!query) return true;
+
+            // Company Name
+            if ((s.name || '').toLowerCase().includes(query)) return true;
+
+            // Group / Category types
+            if (Array.isArray(s.types) && s.types.some(t => (t || '').toLowerCase().includes(query))) return true;
+
+            // Products, Services, Info, Activity Summary, Others
+            if ((s.info || '').toLowerCase().includes(query)) return true;
+            if ((s.activity_summary || '').toLowerCase().includes(query)) return true;
+            if ((s.others || '').toLowerCase().includes(query)) return true;
+
+            // Country, City, Address
+            if ((s.country || '').toLowerCase().includes(query)) return true;
+            if ((s.city || '').toLowerCase().includes(query)) return true;
+            if ((s.address || '').toLowerCase().includes(query)) return true;
+
+            // Emails & Phones
+            if ((s.email1 || s.email || '').toLowerCase().includes(query)) return true;
+            if ((s.email2 || '').toLowerCase().includes(query)) return true;
+            if ((s.phone1 || s.phone || '').toLowerCase().includes(query)) return true;
+            if ((s.weblink || '').toLowerCase().includes(query)) return true;
+
+            // Contacts
+            if (Array.isArray(s.contacts) && s.contacts.some(c => 
+                (c.name || '').toLowerCase().includes(query) ||
+                (c.post || '').toLowerCase().includes(query) ||
+                (c.department || '').toLowerCase().includes(query) ||
+                (c.email || '').toLowerCase().includes(query)
+            )) return true;
+
+            return false;
+        });
+    }, [suppliers, searchQuery, selectedCategory, showOnlySelected, selectedSuppliers]);
+
+    const handleSelectAllFiltered = () => {
+        const newSelected = [...selectedSuppliers];
+        filteredSuppliers.forEach(s => {
+            if (!newSelected.some(sel => sel.id === s.id)) {
+                newSelected.push(s);
+            }
+        });
+        setSelectedSuppliers(newSelected);
+        toast.success(`Selected ${filteredSuppliers.length} supplier(s)`);
+    };
+
+    const handleDeselectFiltered = () => {
+        const filteredIds = new Set(filteredSuppliers.map(s => s.id));
+        setSelectedSuppliers(selectedSuppliers.filter(s => !filteredIds.has(s.id)));
     };
 
     const fetchDriveFiles = async () => {
@@ -518,53 +607,348 @@ Email: sales@celron.net | Tel: +6597685891/81962270 Web : https://www.celron.net
                             <div><div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Due Date</div><div style={{ fontWeight: 600, color: '#1e293b', fontSize: '0.9rem' }}>{enquiry?.due_date ? new Date(enquiry.due_date).toLocaleDateString('en-GB') : 'ASAP'}</div></div>
                         </div>
 
-                        {/* Search & Add Header */}
-                        <div style={{ fontWeight: 700, color: '#374151', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <Users size={16} color="#6366f1" /> Select Suppliers / Service Providers
+                        {/* Top Search & Filter Command Bar */}
+                        <div style={{ marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <div style={{ fontWeight: 700, color: '#1e293b', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <Users size={18} color="#4f46e5" /> Select Suppliers / Providers
+                                    </div>
+                                    <span style={{ fontSize: '0.75rem', background: '#f1f5f9', color: '#475569', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                                        {filteredSuppliers.length} of {suppliers.length}
+                                    </span>
+                                    {selectedSuppliers.length > 0 && (
+                                        <span style={{ fontSize: '0.75rem', background: '#e0e7ff', color: '#4338ca', padding: '2px 10px', borderRadius: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <CheckSquare size={12} /> {selectedSuppliers.length} selected
+                                        </span>
+                                    )}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                    {filteredSuppliers.length > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={handleSelectAllFiltered}
+                                            style={{ background: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '5px 10px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                            title="Select all suppliers currently visible"
+                                        >
+                                            <CheckSquare size={13} color="#4f46e5" /> Select All ({filteredSuppliers.length})
+                                        </button>
+                                    )}
+                                    {selectedSuppliers.length > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedSuppliers([])}
+                                            style={{ background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: '8px', padding: '5px 10px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
+                                        >
+                                            Clear Selection
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={handleAddSupplier}
+                                        style={{ background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 1px 2px rgba(79, 70, 229, 0.2)' }}
+                                    >
+                                        <Plus size={14} /> Add Supplier
+                                    </button>
+                                </div>
                             </div>
-                            <button
-                                onClick={handleAddSupplier}
-                                style={{ background: '#6366f1', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                            >
-                                <Plus size={13} /> Add Supplier
-                            </button>
-                        </div>
 
-                        <div style={{ position: 'relative', marginBottom: '14px' }}>
-                            <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-                            <input type="text" placeholder="Search suppliers..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                                style={{ width: '100%', padding: '10px 12px 10px 36px', borderRadius: '10px', border: '1.5px solid #e2e8f0', fontSize: '0.9rem', boxSizing: 'border-box' }} />
-                        </div>
+                            {/* Prominent Multi-field Search Box */}
+                            <div style={{ position: 'relative' }}>
+                                <Search size={18} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#6366f1', pointerEvents: 'none' }} />
+                                <input
+                                    type="text"
+                                    placeholder="Search by Company, Group / Category, Products, Services, Contacts, Country..."
+                                    value={searchQuery}
+                                    onChange={e => setSearchQuery(e.target.value)}
+                                    style={{
+                                        width: '100%',
+                                        padding: '11px 40px 11px 42px',
+                                        borderRadius: '10px',
+                                        border: '2px solid #cbd5e1',
+                                        fontSize: '0.9rem',
+                                        fontWeight: 500,
+                                        boxSizing: 'border-box',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, box-shadow 0.15s',
+                                        background: '#ffffff',
+                                        boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                                    }}
+                                    onFocus={e => { e.target.style.borderColor = '#6366f1'; e.target.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)'; }}
+                                    onBlur={e => { e.target.style.borderColor = '#cbd5e1'; e.target.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'; }}
+                                />
+                                {searchQuery && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setSearchQuery('')}
+                                        style={{
+                                            position: 'absolute',
+                                            right: '12px',
+                                            top: '50%',
+                                            transform: 'translateY(-50%)',
+                                            background: '#f1f5f9',
+                                            border: 'none',
+                                            borderRadius: '50%',
+                                            width: '22px',
+                                            height: '22px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            cursor: 'pointer',
+                                            color: '#64748b'
+                                        }}
+                                        title="Clear search"
+                                    >
+                                        <X size={13} />
+                                    </button>
+                                )}
+                            </div>
 
-                        {loading ? <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8' }}><Loader2 size={24} className="animate-spin" /></div> : (
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                                {suppliers.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase())).map(s => {
-                                    const isSelected = selectedSuppliers.some(sel => sel.id === s.id);
+                            {/* Quick Group / Category Pills & Filter Toggles */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedCategory('All')}
+                                    style={{
+                                        padding: '4px 10px',
+                                        borderRadius: '16px',
+                                        fontSize: '0.74rem',
+                                        fontWeight: selectedCategory === 'All' ? 700 : 500,
+                                        background: selectedCategory === 'All' ? '#4f46e5' : '#f8fafc',
+                                        color: selectedCategory === 'All' ? '#ffffff' : '#475569',
+                                        border: selectedCategory === 'All' ? '1px solid #4f46e5' : '1px solid #e2e8f0',
+                                        cursor: 'pointer',
+                                        whiteSpace: 'nowrap'
+                                    }}
+                                >
+                                    All Groups ({suppliers.length})
+                                </button>
+                                
+                                {availableCategories.slice(0, 6).map(([cat, count]) => {
+                                    const isCatActive = selectedCategory === cat;
                                     return (
-                                        <div key={s.id} onClick={() => setSelectedSuppliers(isSelected ? selectedSuppliers.filter(sel => sel.id !== s.id) : [...selectedSuppliers, s])}
-                                            style={{ padding: '14px 16px', borderRadius: '14px', border: '2px solid', borderColor: isSelected ? '#6366f1' : '#f1f5f9', background: isSelected ? '#eef2ff' : '#fafafa', cursor: 'pointer', transition: 'all 0.18s', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <div style={{ flex: 1, minWidth: 0, marginRight: '10px' }}>
-                                                <div style={{ fontWeight: 700, color: isSelected ? '#3730a3' : '#1e293b', fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</div>
-                                                <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.email1 || s.email || 'No email'}</div>
-                                                {(s.phone1 || s.phone) && <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '1px', display: 'flex', alignItems: 'center', gap: '4px' }}><Phone size={10} />{s.phone1 || s.phone}</div>}
+                                        <button
+                                            key={cat}
+                                            type="button"
+                                            onClick={() => setSelectedCategory(isCatActive ? 'All' : cat)}
+                                            style={{
+                                                padding: '4px 10px',
+                                                borderRadius: '16px',
+                                                fontSize: '0.74rem',
+                                                fontWeight: isCatActive ? 700 : 500,
+                                                background: isCatActive ? '#4f46e5' : '#f8fafc',
+                                                color: isCatActive ? '#ffffff' : '#475569',
+                                                border: isCatActive ? '1px solid #4f46e5' : '1px solid #e2e8f0',
+                                                cursor: 'pointer',
+                                                whiteSpace: 'nowrap'
+                                            }}
+                                        >
+                                            {cat} ({count})
+                                        </button>
+                                    );
+                                })}
+
+                                {availableCategories.length > 6 && (
+                                    <select
+                                        value={availableCategories.slice(0, 6).some(([cat]) => cat === selectedCategory) || selectedCategory === 'All' ? '' : selectedCategory}
+                                        onChange={e => setSelectedCategory(e.target.value || 'All')}
+                                        style={{
+                                            padding: '4px 8px',
+                                            borderRadius: '16px',
+                                            fontSize: '0.74rem',
+                                            background: '#f8fafc',
+                                            color: '#475569',
+                                            border: '1px solid #e2e8f0',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        <option value="">More Groups ({availableCategories.length - 6})...</option>
+                                        {availableCategories.slice(6).map(([cat, count]) => (
+                                            <option key={cat} value={cat}>{cat} ({count})</option>
+                                        ))}
+                                    </select>
+                                )}
+
+                                {selectedSuppliers.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowOnlySelected(!showOnlySelected)}
+                                        style={{
+                                            marginLeft: 'auto',
+                                            padding: '4px 10px',
+                                            borderRadius: '16px',
+                                            fontSize: '0.74rem',
+                                            fontWeight: 700,
+                                            background: showOnlySelected ? '#dcfce7' : '#f1f5f9',
+                                            color: showOnlySelected ? '#15803d' : '#475569',
+                                            border: showOnlySelected ? '1px solid #86efac' : '1px solid #cbd5e1',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            whiteSpace: 'nowrap'
+                                        }}
+                                    >
+                                        <CheckCircle2 size={12} color={showOnlySelected ? '#15803d' : '#64748b'} />
+                                        Show Selected Only ({selectedSuppliers.length})
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {loading ? (
+                            <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
+                                <Loader2 size={28} className="animate-spin" style={{ margin: '0 auto 8px' }} />
+                                <div style={{ fontSize: '0.85rem' }}>Loading suppliers and service providers...</div>
+                            </div>
+                        ) : filteredSuppliers.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '48px 20px', background: '#f8fafc', borderRadius: '12px', border: '1px dashed #cbd5e1', color: '#64748b' }}>
+                                <Users size={32} color="#94a3b8" style={{ margin: '0 auto 10px' }} />
+                                <div style={{ fontWeight: 600, fontSize: '0.95rem', color: '#334155' }}>No suppliers match your search or filter</div>
+                                <div style={{ fontSize: '0.8rem', marginTop: '4px', color: '#94a3b8' }}>
+                                    Try searching by different keywords (company, products, services, group) or reset filters.
+                                </div>
+                                {(searchQuery || selectedCategory !== 'All' || showOnlySelected) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => { setSearchQuery(''); setSelectedCategory('All'); setShowOnlySelected(false); }}
+                                        style={{ marginTop: '14px', background: '#6366f1', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 14px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}
+                                    >
+                                        Reset Search & Filters
+                                    </button>
+                                )}
+                            </div>
+                        ) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '12px' }}>
+                                {filteredSuppliers.map(s => {
+                                    const isSelected = selectedSuppliers.some(sel => sel.id === s.id);
+                                    const types = Array.isArray(s.types) ? s.types.filter(Boolean) : [];
+                                    const productsOrServices = s.activity_summary || s.info || s.others;
+                                    const email = s.email1 || s.email;
+                                    const phone = s.phone1 || s.phone;
+                                    const location = [s.city, s.country].filter(Boolean).join(', ');
+
+                                    return (
+                                        <div
+                                            key={s.id}
+                                            onClick={() => setSelectedSuppliers(isSelected ? selectedSuppliers.filter(sel => sel.id !== s.id) : [...selectedSuppliers, s])}
+                                            style={{
+                                                padding: '12px 14px',
+                                                borderRadius: '12px',
+                                                border: '2px solid',
+                                                borderColor: isSelected ? '#6366f1' : '#e2e8f0',
+                                                background: isSelected ? '#f5f7ff' : '#ffffff',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.15s ease',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                justifyContent: 'space-between',
+                                                gap: '8px',
+                                                boxShadow: isSelected ? '0 2px 8px rgba(99, 102, 241, 0.12)' : '0 1px 2px rgba(0,0,0,0.03)'
+                                            }}
+                                        >
+                                            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
+                                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flex: 1, minWidth: 0 }}>
+                                                    <div style={{ marginTop: '2px', flexShrink: 0 }}>
+                                                        {isSelected ? (
+                                                            <CheckCircle2 size={18} color="#4f46e5" fill="#e0e7ff" />
+                                                        ) : (
+                                                            <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: '2px solid #cbd5e1' }} />
+                                                        )}
+                                                    </div>
+                                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                                        <div style={{ fontWeight: 700, color: isSelected ? '#3730a3' : '#1e293b', fontSize: '0.9rem', lineHeight: '1.25', wordBreak: 'break-word' }}>
+                                                            {s.name}
+                                                        </div>
+                                                        {location && (
+                                                            <div style={{ fontSize: '0.7rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '3px', marginTop: '2px' }}>
+                                                                <Globe size={10} /> {location}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => { e.stopPropagation(); handleEditSupplier(s); }}
+                                                        style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '5px', cursor: 'pointer', color: '#4f46e5', display: 'flex' }}
+                                                        title="Edit Supplier"
+                                                    >
+                                                        <Edit2 size={12} />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => { e.stopPropagation(); handleDeleteSupplier(s); }}
+                                                        style={{ background: '#fff1f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '5px', cursor: 'pointer', color: '#dc2626', display: 'flex' }}
+                                                        title="Delete Supplier"
+                                                    >
+                                                        <Trash2 size={12} />
+                                                    </button>
+                                                </div>
                                             </div>
-                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                                {isSelected && <CheckCircle2 size={18} color="#6366f1" style={{ marginRight: '6px' }} />}
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleEditSupplier(s); }}
-                                                    style={{ background: '#f1f5f9', border: 'none', borderRadius: '6px', padding: '6px', cursor: 'pointer', color: '#4f46e5', display: 'flex' }}
-                                                    title="Edit Supplier"
+
+                                            {/* Category / Group Badges */}
+                                            {types.length > 0 && (
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                                    {types.slice(0, 3).map((t, idx) => (
+                                                        <span
+                                                            key={idx}
+                                                            style={{
+                                                                fontSize: '0.67rem',
+                                                                fontWeight: 600,
+                                                                background: '#e0e7ff',
+                                                                color: '#3730a3',
+                                                                padding: '1px 6px',
+                                                                borderRadius: '4px'
+                                                            }}
+                                                        >
+                                                            {t}
+                                                        </span>
+                                                    ))}
+                                                    {types.length > 3 && (
+                                                        <span style={{ fontSize: '0.67rem', color: '#64748b', padding: '1px 4px' }}>
+                                                            +{types.length - 3} more
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            {/* Products & Services Snippet */}
+                                            {productsOrServices && (
+                                                <div
+                                                    style={{
+                                                        fontSize: '0.72rem',
+                                                        color: '#475569',
+                                                        background: isSelected ? '#ffffff' : '#f8fafc',
+                                                        padding: '4px 8px',
+                                                        borderRadius: '6px',
+                                                        border: '1px solid #f1f5f9',
+                                                        lineHeight: '1.3',
+                                                        display: '-webkit-box',
+                                                        WebkitLineClamp: 2,
+                                                        WebkitBoxOrient: 'vertical',
+                                                        overflow: 'hidden',
+                                                        textOverflow: 'ellipsis'
+                                                    }}
+                                                    title={productsOrServices}
                                                 >
-                                                    <Edit2 size={13} />
-                                                </button>
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleDeleteSupplier(s); }}
-                                                    style={{ background: '#fff1f2', border: 'none', borderRadius: '6px', padding: '6px', cursor: 'pointer', color: '#dc2626', display: 'flex' }}
-                                                    title="Delete Supplier"
-                                                >
-                                                    <Trash2 size={13} />
-                                                </button>
+                                                    <span style={{ fontWeight: 600, color: '#0f172a' }}>Scope: </span>
+                                                    {productsOrServices}
+                                                </div>
+                                            )}
+
+                                            {/* Communication Info */}
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.73rem', color: '#64748b', borderTop: '1px solid #f1f5f9', paddingTop: '6px', marginTop: '2px', gap: '8px' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    <Mail size={11} color="#6366f1" />
+                                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{email || 'No email registered'}</span>
+                                                </div>
+                                                {phone && (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px', flexShrink: 0, color: '#94a3b8' }}>
+                                                        <Phone size={10} /> {phone}
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     );

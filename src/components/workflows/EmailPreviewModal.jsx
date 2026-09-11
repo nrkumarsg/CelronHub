@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Send, Mail, Search, Paperclip, Trash2, Plus, Eye, Edit2, Upload, AlertCircle, CheckCircle2, FolderOpen, RefreshCw, FileText, ImageIcon, Loader2, FileCheck, Smartphone, Info, UploadCloud, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, Send, Mail, Search, Paperclip, Trash2, Plus, Eye, Edit2, Upload, AlertCircle, CheckCircle2, FolderOpen, RefreshCw, FileText, ImageIcon, Loader2, FileCheck, Smartphone, Info, UploadCloud, Sparkles, ShieldCheck } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { getStoredToken, connectGoogleAPI } from '../../lib/googleAuthService';
@@ -20,6 +20,21 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
     const [subject, setSubject] = useState(data.subject || '');
     const [body, setBody] = useState(data.body || '');
     const [attachments, setAttachments] = useState(data.attachments || []);
+    const [sendIndividually, setSendIndividually] = useState(true);
+
+    const recipientEmails = useMemo(() => {
+        return (to || '').split(/[;,]/).map(e => e.trim()).filter(Boolean);
+    }, [to]);
+
+    useEffect(() => {
+        if (data.to !== undefined) setTo(data.to || '');
+        if (data.cc !== undefined) setCc(data.cc || 'accounts@celron.net; acct.celron.sg@gmail.com');
+        if (data.bcc !== undefined) setBcc(data.bcc || 'celron.simlim0305@gmail.com');
+        if (data.subject !== undefined) setSubject(data.subject || '');
+        if (data.body !== undefined) setBody(data.body || '');
+        if (data.attachments !== undefined) setAttachments(data.attachments || []);
+        setSendIndividually(true);
+    }, [data, isOpen]);
     
     // Contact list state
     const [companySearch, setCompanySearch] = useState('');
@@ -364,6 +379,60 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
             // Fallback from email from settings/auth
             const fromEmail = 'sales@celron.net';
 
+            // If sendIndividually is enabled and multiple recipients exist, send one by one privately
+            if (sendIndividually && recipientEmails.length > 1) {
+                let sentCount = 0;
+                for (let i = 0; i < recipientEmails.length; i++) {
+                    const singleTo = recipientEmails[i];
+                    let singleBody = body;
+
+                    // Personalize greeting if matching supplier name exists
+                    if (Array.isArray(data.selectedSuppliers)) {
+                        const matched = data.selectedSuppliers.find(s => 
+                            (s.email1 && s.email1.toLowerCase() === singleTo.toLowerCase()) ||
+                            (s.email && s.email.toLowerCase() === singleTo.toLowerCase()) ||
+                            (s.email2 && s.email2.toLowerCase() === singleTo.toLowerCase())
+                        );
+                        if (matched?.name) {
+                            singleBody = singleBody.replace(/^Dear (Supplier|Partners?)/i, `Dear ${matched.name}`);
+                        }
+                    }
+
+                    const payload = {
+                        company_id: profile?.company_id,
+                        from_email: fromEmail,
+                        to: singleTo,
+                        cc: cc,
+                        bcc: bcc,
+                        subject: subject,
+                        body: singleBody,
+                        attachments: customAttachments,
+                        in_reply_to: data.inReplyTo || data.messageId || '',
+                        references: data.references || data.inReplyTo || data.messageId || ''
+                    };
+
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errText = await response.text();
+                        console.error(`Failed sending to ${singleTo}:`, errText);
+                        throw new Error(`Failed sending to ${singleTo}: ${errText || response.status}`);
+                    }
+                    sentCount++;
+                }
+
+                toast.success(`Sent ${sentCount} separate RFQ emails! Each supplier received a private individual email.`);
+                if (onSent) {
+                    await onSent();
+                }
+                onClose();
+                return;
+            }
+
             const payload = {
                 company_id: profile?.company_id,
                 from_email: fromEmail,
@@ -464,7 +533,14 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                     {/* To/Cc/Bcc inputs */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>To (Suppliers)</label>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>To (Suppliers)</label>
+                                {recipientEmails.length > 1 && (
+                                    <span style={{ fontSize: '11px', color: sendIndividually ? '#16a34a' : '#d97706', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                        <ShieldCheck size={14} /> {sendIndividually ? 'Private 1-by-1 delivery enabled' : 'Group email mode'}
+                                    </span>
+                                )}
+                            </div>
                             <input
                                 type="text"
                                 style={{ width: '100%', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '8px', outline: 'none', fontSize: '14px', boxSizing: 'border-box' }}
@@ -472,6 +548,49 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                                 onChange={(e) => setTo(e.target.value)}
                                 placeholder="supplier1@example.com; supplier2@example.com"
                             />
+
+                            {/* 1-by-1 Delivery Privacy Banner & Toggle */}
+                            {recipientEmails.length > 1 && (
+                                <div style={{
+                                    marginTop: '6px',
+                                    padding: '10px 14px',
+                                    borderRadius: '10px',
+                                    background: sendIndividually ? '#f0fdf4' : '#fffbeb',
+                                    border: sendIndividually ? '1px solid #bbf7d0' : '1px solid #fde68a',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '6px'
+                                }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '0.82rem', color: sendIndividually ? '#15803d' : '#b45309' }}>
+                                            <input 
+                                                type="checkbox" 
+                                                checked={sendIndividually} 
+                                                onChange={(e) => setSendIndividually(e.target.checked)}
+                                                style={{ width: '16px', height: '16px', accentColor: '#16a34a', cursor: 'pointer' }}
+                                            />
+                                            <span>Send separate emails one-by-one (Suppliers will NOT see each other)</span>
+                                        </label>
+                                        <span style={{ fontSize: '0.72rem', fontWeight: 700, background: sendIndividually ? '#dcfce7' : '#fef3c7', color: sendIndividually ? '#166534' : '#92400e', padding: '2px 8px', borderRadius: '12px' }}>
+                                            {recipientEmails.length} suppliers selected
+                                        </span>
+                                    </div>
+                                    <div style={{ fontSize: '0.75rem', color: sendIndividually ? '#166534' : '#92400e', lineHeight: '1.4' }}>
+                                        {sendIndividually 
+                                            ? '🔒 Private Delivery: Each supplier will receive their own separate RFQ email with only their own address in "To:". No supplier will see or know about any other suppliers.'
+                                            : '⚠️ Group Email Warning: All suppliers will be visible to each other on the same email.'}
+                                    </div>
+                                    {sendIndividually && (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '2px' }}>
+                                            {recipientEmails.map((email, idx) => (
+                                                <span key={idx} style={{ fontSize: '0.72rem', background: '#ffffff', border: '1px solid #86efac', color: '#14532d', padding: '2px 8px', borderRadius: '6px', fontWeight: 600 }}>
+                                                    ✓ {email}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -861,7 +980,7 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                         disabled={saving}
                         style={{ padding: '10px 20px', fontSize: '14px', fontWeight: 600, color: '#fff', background: '#6366f1', border: 'none', borderRadius: '8px', cursor: saving ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '8px', opacity: saving ? 0.7 : 1 }}
                     >
-                        <Send size={16} /> {saving ? 'Sending...' : 'Send Email Now'}
+                        <Send size={16} /> {saving ? 'Sending...' : (recipientEmails.length > 1 && sendIndividually ? `Send ${recipientEmails.length} Individual Emails Now` : 'Send Email Now')}
                     </button>
                 </div>
             </div>

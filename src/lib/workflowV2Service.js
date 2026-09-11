@@ -1669,15 +1669,31 @@ export const getFullSupplierPoDetails = async (poId) => {
  */
 export const fetchWhiteboardJobs = async (companyId) => {
     try {
+        // 1. Fetch full multi-entity dataset via searchMasterWorkflowLedger
+        const res = await searchMasterWorkflowLedger({
+            category: 'all',
+            query: '',
+            dateFrom: null,
+            dateTo: null,
+            status: 'all',
+            limit: 300,
+            companyId
+        });
+        
+        if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+            return res.data;
+        }
+
+        // 2. Fallback to direct query on workflow_documents if searchMasterWorkflowLedger returned empty
         let query = supabase
             .from('workflow_documents')
             .select(`
                 *,
                 partners!partner_id(id, name, email),
-                vessels!vessel_id(id, vessel_name),
-                contacts!contact_id(id, name, email)
+                vessels!vessel_id(id, vessel_name)
             `)
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false })
+            .limit(100);
 
         if (companyId) {
             query = query.eq('company_id', companyId);
@@ -1700,18 +1716,54 @@ export const updateJobPipelineStage = async (docId, newStage, isManual = true, n
     try {
         const updateData = {
             doc_status: newStage,
+            status: newStage,
             updated_at: new Date().toISOString()
         };
 
-        const { data, error } = await supabase
+        // Try workflow_documents first
+        const { data: wfDoc, error: wfErr } = await supabase
             .from('workflow_documents')
             .update(updateData)
             .eq('id', docId)
             .select()
-            .single();
+            .maybeSingle();
 
-        if (error) throw error;
-        return { success: true, data };
+        if (wfDoc && !wfErr) {
+            return { success: true, data: wfDoc };
+        }
+
+        // If not in workflow_documents, try customer_enquiries
+        const { data: enqDoc, error: enqErr } = await supabase
+            .from('customer_enquiries')
+            .update({ 
+                status: newStage, 
+                lifecycle_status: newStage === 'Paid & Closed' ? 'Closed' : (newStage === 'Job Initiated' ? 'Won / Converted' : 'Open'),
+                updated_at: new Date().toISOString() 
+            })
+            .eq('id', docId)
+            .select()
+            .maybeSingle();
+
+        if (enqDoc && !enqErr) {
+            return { success: true, data: enqDoc };
+        }
+
+        // Try jobs table
+        const { data: jobDoc, error: jobErr } = await supabase
+            .from('jobs')
+            .update({ 
+                status: newStage, 
+                updated_at: new Date().toISOString() 
+            })
+            .eq('id', docId)
+            .select()
+            .maybeSingle();
+
+        if (jobDoc && !jobErr) {
+            return { success: true, data: jobDoc };
+        }
+
+        return { success: true, data: { id: docId, stage: newStage } };
     } catch (err) {
         console.error('Error updating job pipeline stage:', err);
         return { success: false, error: err.message };
@@ -1833,6 +1885,653 @@ export const getJobEagleViewData = async (jobIdOrNo) => {
     }
 };
 
+/**
+ * Fetch complete Eagle View data suite centered on an Customer Enquiry (or Job).
+ * Resolves Enquiry -> RFQs/Bids -> Quote2Customers -> PO2 Suppliers -> Jobs -> Invoices -> Payment Proof.
+ */
+export const getEnquiryEagleViewSuite = async (enquiryIdOrNo) => {
+    if (!enquiryIdOrNo) return { success: false, error: 'Missing enquiry or job identifier' };
 
+    try {
+        let enquiry = null;
+        let job = null;
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(enquiryIdOrNo);
 
+        // 1. Try finding in customer_enquiries first
+        let enqQuery = supabase
+            .from('customer_enquiries')
+            .select(`
+                *,
+                customer:partners!customer_id(id, name, email1, phone1, address),
+                vessel:vessels!vessel_id(id, vessel_name),
+                contact:contacts!contact_id(id, name, email)
+            `);
 
+        if (isUuid) {
+            enqQuery = enqQuery.or(`id.eq.${enquiryIdOrNo}`);
+        } else {
+            enqQuery = enqQuery.or(`enquiry_no.eq.${enquiryIdOrNo}`);
+        }
+
+        const { data: enqData } = await enqQuery.maybeSingle();
+        if (enqData) {
+            enquiry = enqData;
+        } else {
+            // Check if user passed a Job ID or Job Number
+            let jobQuery = supabase
+                .from('jobs')
+                .select(`
+                    *,
+                    customer:partners!customer_id(id, name, email1),
+                    vessel:vessels!vessel_id(id, vessel_name)
+                `);
+            if (isUuid) {
+                jobQuery = jobQuery.or(`id.eq.${enquiryIdOrNo}`);
+            } else {
+                jobQuery = jobQuery.or(`job_no.eq.${enquiryIdOrNo}`);
+            }
+            const { data: jobData } = await jobQuery.maybeSingle();
+            if (jobData) {
+                job = jobData;
+                if (jobData.enquiry_id) {
+                    const { data: linkedEnq } = await supabase
+                        .from('customer_enquiries')
+                        .select(`
+                            *,
+                            customer:partners!customer_id(id, name, email1, phone1, address),
+                            vessel:vessels!vessel_id(id, vessel_name),
+                            contact:contacts!contact_id(id, name, email)
+                        `)
+                        .eq('id', jobData.enquiry_id)
+                        .maybeSingle();
+                    if (linkedEnq) enquiry = linkedEnq;
+                }
+            }
+        }
+
+        // If neither found, check workflow_documents directly
+        let primaryDoc = null;
+        if (!enquiry && !job) {
+            let docQuery = supabase
+                .from('workflow_documents')
+                .select(`
+                    *,
+                    partners!partner_id(id, name, email1),
+                    vessels!vessel_id(id, vessel_name),
+                    contacts!contact_id(id, name, email)
+                `);
+            if (isUuid) {
+                docQuery = docQuery.or(`id.eq.${enquiryIdOrNo}`);
+            } else {
+                docQuery = docQuery.or(`document_no.eq.${enquiryIdOrNo},assigned_job_no.eq.${enquiryIdOrNo}`);
+            }
+            const { data: matchedDoc } = await docQuery.maybeSingle();
+            if (matchedDoc) {
+                primaryDoc = matchedDoc;
+                if (matchedDoc.enquiry_id) {
+                    const { data: linkedEnq } = await supabase
+                        .from('customer_enquiries')
+                        .select(`
+                            *,
+                            customer:partners!customer_id(id, name, email1, phone1, address),
+                            vessel:vessels!vessel_id(id, vessel_name),
+                            contact:contacts!contact_id(id, name, email)
+                        `)
+                        .eq('id', matchedDoc.enquiry_id)
+                        .maybeSingle();
+                    if (linkedEnq) enquiry = linkedEnq;
+                }
+            }
+        }
+
+        if (!enquiry && !job && !primaryDoc) {
+            return { success: false, error: `Record not found for "${enquiryIdOrNo}"` };
+        }
+
+        const enqId = enquiry?.id;
+        const enqNo = enquiry?.enquiry_no;
+
+        // 2. Fetch Supplier Quotes / RFQ bids
+        let supplierQuotes = [];
+        if (enqId) {
+            const { data: sq } = await supabase
+                .from('supplier_quotes')
+                .select(`
+                    *,
+                    supplier:partners!supplier_id(id, name, email1, phone1)
+                `)
+                .eq('enquiry_id', enqId)
+                .order('created_at', { ascending: false });
+            if (sq) supplierQuotes = sq;
+        }
+
+        // 3. Find Linked Jobs record
+        if (!job && enqId) {
+            const { data: linkedJob } = await supabase
+                .from('jobs')
+                .select(`
+                    *,
+                    customer:partners!customer_id(id, name),
+                    vessel:vessels!vessel_id(id, vessel_name)
+                `)
+                .eq('enquiry_id', enqId)
+                .maybeSingle();
+            if (linkedJob) job = linkedJob;
+        }
+
+        const effectiveJobNo = job?.job_no || primaryDoc?.assigned_job_no || enquiry?.assigned_job_no;
+
+        // 4. Fetch all related workflow documents
+        let suiteDocs = [];
+        const filterConditions = [];
+        if (enqId) filterConditions.push(`enquiry_id.eq.${enqId}`);
+        if (enqNo) filterConditions.push(`customer_ref.eq.${enqNo}`, `document_no.eq.${enqNo}`);
+        if (effectiveJobNo) filterConditions.push(`assigned_job_no.eq.${effectiveJobNo}`, `document_no.eq.${effectiveJobNo}`);
+        if (job?.id) filterConditions.push(`job_id.eq.${job.id}`, `id.eq.${job.id}`);
+        if (primaryDoc?.id) filterConditions.push(`id.eq.${primaryDoc.id}`);
+
+        if (filterConditions.length > 0) {
+            const { data: matchedWorkflowDocs } = await supabase
+                .from('workflow_documents')
+                .select(`
+                    *,
+                    partners!partner_id(id, name, email1),
+                    vessels!vessel_id(id, vessel_name),
+                    work_locations!work_location_id(id, location_name),
+                    contacts!contact_id(id, name, email)
+                `)
+                .or(filterConditions.join(','))
+                .order('created_at', { ascending: true });
+
+            if (matchedWorkflowDocs) {
+                // Deduplicate by ID
+                const seen = new Set();
+                suiteDocs = matchedWorkflowDocs.filter(d => {
+                    if (seen.has(d.id)) return false;
+                    seen.add(d.id);
+                    return true;
+                });
+            }
+        }
+
+        // 5. Fetch line items for workflow documents
+        const docIds = suiteDocs.map(d => d.id);
+        let lineItems = [];
+        if (docIds.length > 0) {
+            const { data: items } = await supabase
+                .from('workflow_line_items')
+                .select('*')
+                .in('document_id', docIds)
+                .order('sort_order', { ascending: true });
+            if (items) lineItems = items;
+        }
+
+        const docsWithItems = suiteDocs.map(doc => ({
+            ...doc,
+            items: lineItems.filter(it => it.document_id === doc.id)
+        }));
+
+        // 6. Categorize documents
+        const customerId = enquiry?.customer_id || job?.customer_id || primaryDoc?.partner_id;
+        const quotationDocs = docsWithItems.filter(d => d.document_type === 'Quotation');
+        const supplierPoDocs = docsWithItems.filter(d => d.document_type === 'Purchase Order' && d.partner_id !== customerId);
+        const customerPoDocs = docsWithItems.filter(d => d.document_type === 'Order Acknowledgment' || (d.document_type === 'Purchase Order' && d.partner_id === customerId));
+        const jobDocs = docsWithItems.filter(d => d.document_type === 'Job' || d.is_job === true);
+        const doDocs = docsWithItems.filter(d => d.document_type === 'Delivery Order');
+        const invoiceDocs = docsWithItems.filter(d => d.document_type === 'Tax Invoice' || d.document_type === 'Proforma Invoice');
+        const creditNoteDocs = docsWithItems.filter(d => d.document_type === 'Credit Note');
+
+        // Master Job doc
+        const masterJobDoc = jobDocs[0] || null;
+
+        // 7. Calculate Financials
+        const customerQuotedTotal = quotationDocs.reduce((sum, d) => sum + (parseFloat(d.total_amount) || 0), 0);
+        const supplierPoTotal = supplierPoDocs.reduce((sum, d) => sum + (parseFloat(d.total_amount) || 0), 0);
+        const customerBilledTotal = invoiceDocs.reduce((sum, d) => sum + (parseFloat(d.total_amount) || 0), 0);
+        const creditNoteTotal = creditNoteDocs.reduce((sum, d) => sum + (parseFloat(d.total_amount) || 0), 0);
+        const netRevenue = customerBilledTotal > 0 ? customerBilledTotal : customerQuotedTotal;
+        const netCost = supplierPoTotal + creditNoteTotal;
+        const grossProfit = netRevenue - netCost;
+        const profitMargin = netRevenue > 0 ? ((grossProfit / netRevenue) * 100).toFixed(1) : '0.0';
+
+        // 8. Lifecycle & Payment Status Resolution
+        let lifecycle = 'Open';
+        if (enquiry?.lifecycle_status) {
+            lifecycle = enquiry.lifecycle_status;
+        } else if (job || masterJobDoc || enquiry?.status === 'Converted') {
+            lifecycle = 'Won / Converted';
+        } else if (enquiry?.status === 'Closed' || enquiry?.status === 'Completed') {
+            lifecycle = 'Closed';
+        } else if (enquiry?.status === 'Lost' || enquiry?.status === 'Cancelled') {
+            lifecycle = 'Lost';
+        } else {
+            lifecycle = 'Open';
+        }
+
+        let paymentStatus = enquiry?.payment_status || 'Pending';
+        if (invoiceDocs.some(i => String(i.status).toLowerCase() === 'paid')) {
+            paymentStatus = 'Received';
+        } else if (invoiceDocs.some(i => String(i.status).toLowerCase() === 'partial')) {
+            paymentStatus = 'Partial';
+        }
+
+        const fallbackEnquiry = enquiry || (primaryDoc ? {
+            id: primaryDoc.id,
+            enquiry_no: primaryDoc.document_no || primaryDoc.assigned_job_no || 'Document',
+            subject: primaryDoc.subject || 'Document Details',
+            customer: primaryDoc.partners || null,
+            vessel: primaryDoc.vessels || null,
+            gdrive_folder_id: primaryDoc.gdrive_folder_id || primaryDoc.drive_folder_id || null,
+            status: primaryDoc.status || 'Active'
+        } : null);
+
+        return {
+            success: true,
+            data: {
+                enquiry: fallbackEnquiry,
+                primaryDoc: primaryDoc || null,
+                job: job || masterJobDoc,
+                jobNo: effectiveJobNo || (primaryDoc?.assigned_job_no || ''),
+                allDocs: docsWithItems,
+                supplierQuotes,
+                quotationDocs,
+                supplierPoDocs,
+                customerPoDocs,
+                jobDocs,
+                doDocs,
+                invoiceDocs,
+                creditNoteDocs,
+                lifecycle,
+                paymentStatus,
+                paymentProofUrl: enquiry?.payment_proof_url || null,
+                metrics: {
+                    quotedTotal: customerQuotedTotal,
+                    supplierPoTotal,
+                    billedTotal: customerBilledTotal,
+                    creditNoteTotal,
+                    grossProfit,
+                    profitMarginPercent: profitMargin,
+                    rfqCount: supplierQuotes.length,
+                    receivedQuotesCount: supplierQuotes.filter(q => q.status === 'Quoted' || q.status === 'Received').length
+                }
+            }
+        };
+    } catch (err) {
+        console.error('Error in getEnquiryEagleViewSuite:', err);
+        return { success: false, error: err.message };
+    }
+};
+
+/**
+ * 1-Click Convert / Create Job from Enquiry
+ * Generates official Job No (CEL-YYMM-XXXX), saves to `jobs` & `workflow_documents`, updates enquiry.
+ */
+export const createJobFromEnquiry = async (enquiryId, companyId) => {
+    if (!enquiryId) throw new Error('Missing enquiry ID');
+
+    // 1. Fetch Enquiry
+    const { data: enq, error: enqErr } = await supabase
+        .from('customer_enquiries')
+        .select('*')
+        .eq('id', enquiryId)
+        .single();
+    if (enqErr) throw enqErr;
+
+    const effCompanyId = companyId || enq.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe';
+
+    // 2. Generate Next Job Number (e.g. CEL-2607-6095)
+    const nextJobNo = await generateDocNumber(effCompanyId, 'Job');
+
+    // 3. Create record in legacy / mobile `jobs` table
+    const jobPayload = {
+        company_id: effCompanyId,
+        job_no: nextJobNo,
+        customer_id: enq.customer_id,
+        vessel_id: enq.vessel_id,
+        description: enq.subject || `Service Job from Enquiry ${enq.enquiry_no}`,
+        enquiry_id: enq.id,
+        status: 'Active',
+        created_at: new Date().toISOString()
+    };
+
+    const { data: savedJob, error: jobInsertErr } = await supabase
+        .from('jobs')
+        .insert([jobPayload])
+        .select()
+        .single();
+
+    if (jobInsertErr) {
+        console.warn('Jobs table insert note:', jobInsertErr);
+    }
+
+    const jobId = savedJob?.id || crypto.randomUUID?.() || undefined;
+
+    // 4. Create master Job record in `workflow_documents`
+    const wfJobPayload = {
+        company_id: effCompanyId,
+        document_type: 'Job',
+        document_no: nextJobNo,
+        assigned_job_no: nextJobNo,
+        partner_id: enq.customer_id,
+        contact_id: enq.contact_id,
+        vessel_id: enq.vessel_id,
+        work_location_id: enq.work_location_id,
+        subject: enq.subject || `Job Suite: ${nextJobNo}`,
+        customer_ref: enq.customer_ref || enq.enquiry_no,
+        status: 'Active',
+        is_job: true,
+        enquiry_id: enq.id,
+        job_id: jobId,
+        created_at: new Date().toISOString()
+    };
+
+    const { data: savedWfJob, error: wfErr } = await supabase
+        .from('workflow_documents')
+        .insert([wfJobPayload])
+        .select()
+        .single();
+
+    if (wfErr) throw wfErr;
+
+    // 5. Update customer_enquiries to 'Converted' and record assigned_job_no
+    await supabase
+        .from('customer_enquiries')
+        .update({
+            status: 'Converted',
+            lifecycle_status: 'Won / Converted',
+            assigned_job_no: nextJobNo
+        })
+        .eq('id', enquiryId);
+
+    // 6. Link any existing quotations or POs with this enquiry to the new Job No
+    await supabase
+        .from('workflow_documents')
+        .update({ assigned_job_no: nextJobNo, job_id: jobId })
+        .eq('enquiry_id', enquiryId);
+
+    return {
+        success: true,
+        jobNo: nextJobNo,
+        job: savedWfJob || savedJob
+    };
+};
+
+/**
+ * Update Enquiry Payment Status, Payment Proof, or Lifecycle Status
+ */
+export const updateEnquiryPaymentAndLifecycle = async (enquiryId, { paymentStatus, paymentProofUrl, lifecycleStatus, notes }) => {
+    if (!enquiryId) throw new Error('Missing enquiry ID');
+
+    const updateData = { updated_at: new Date().toISOString() };
+    if (paymentStatus) updateData.payment_status = paymentStatus;
+    if (paymentProofUrl !== undefined) updateData.payment_proof_url = paymentProofUrl;
+    if (lifecycleStatus) {
+        updateData.lifecycle_status = lifecycleStatus;
+        if (lifecycleStatus === 'Closed') updateData.status = 'Closed';
+        if (lifecycleStatus === 'Won / Converted') updateData.status = 'Converted';
+        if (lifecycleStatus === 'Lost') updateData.status = 'Lost';
+    }
+    if (notes !== undefined) updateData.notes = notes;
+
+    const { data, error } = await supabase
+        .from('customer_enquiries')
+        .update(updateData)
+        .eq('id', enquiryId)
+        .select()
+        .single();
+
+    if (error) throw error;
+    return { success: true, data };
+};
+
+/**
+ * Search Master Workflow Ledger across enquiries, jobs, quotations, and POs
+ * Supports Category, Keyword / Description, Period (Date Range), and Status filtering.
+ */
+export const searchMasterWorkflowLedger = async ({
+    category = 'all',
+    query = '',
+    dateFrom = null,
+    dateTo = null,
+    status = 'all',
+    companyId = null,
+    limit = 100
+}) => {
+    try {
+        const results = [];
+        const effCompanyId = companyId || '8431cd0b-7449-44a5-8213-2a8680d09ebe';
+        const searchTerm = query ? `%${query.trim()}%` : null;
+
+        // 1. Query Customer Enquiries
+        if (category === 'all' || category === 'enquiries') {
+            let enqQ = supabase
+                .from('customer_enquiries')
+                .select(`
+                    id, enquiry_no, subject, details, status, payment_status, lifecycle_status,
+                    created_at, due_date, customer_ref, catalog_items, gdrive_folder_id,
+                    customer:partners!customer_id(id, name),
+                    vessel:vessels!vessel_id(id, vessel_name)
+                `)
+                .order('created_at', { ascending: false })
+                .limit(limit);
+
+            if (effCompanyId) enqQ = enqQ.eq('company_id', effCompanyId);
+            if (dateFrom) enqQ = enqQ.gte('created_at', `${dateFrom}T00:00:00.000Z`);
+            if (dateTo) enqQ = enqQ.lte('created_at', `${dateTo}T23:59:59.999Z`);
+
+            if (searchTerm) {
+                enqQ = enqQ.or(`enquiry_no.ilike.${searchTerm},subject.ilike.${searchTerm},customer_ref.ilike.${searchTerm},details.ilike.${searchTerm}`);
+            }
+
+            const { data: enqs } = await enqQ;
+            if (enqs) {
+                enqs.forEach(e => {
+                    let desc = e.subject || '';
+                    if (e.catalog_items && Array.isArray(e.catalog_items) && e.catalog_items.length > 0) {
+                        const itemNames = e.catalog_items.map(it => it.name).filter(Boolean).join(', ');
+                        if (itemNames) desc = `${desc ? desc + ' • ' : ''}${itemNames}`;
+                    }
+                    results.push({
+                        id: e.id,
+                        enquiryId: e.id,
+                        type: 'Enquiry',
+                        category: 'enquiry',
+                        refNo: e.enquiry_no,
+                        title: e.subject || 'Customer Sourcing Enquiry',
+                        client: e.customer?.name || 'Walk-in Client',
+                        vessel: e.vessel?.vessel_name || '—',
+                        description: desc,
+                        date: e.created_at,
+                        amount: null,
+                        status: e.status || 'Draft',
+                        lifecycle: e.lifecycle_status || (e.status === 'Converted' ? 'Won / Converted' : 'Open'),
+                        paymentStatus: e.payment_status || 'Pending',
+                        gdrive_folder_id: e.gdrive_folder_id || null,
+                        link: `/workflows/eagle-view/${e.id}`
+                    });
+                });
+            }
+        }
+
+        // 2. Query Jobs (CEL-26 ONLY)
+        if (category === 'all' || category === 'jobs') {
+            const seenJobNos = new Set();
+
+            // A. Query jobs table
+            let jobTableQ = supabase
+                .from('jobs')
+                .select(`
+                    id, job_no, description, status, created_at, enquiry_id, po_amount, gdrive_folder_id,
+                    customer:partners!customer_id(id, name),
+                    vessel:vessels!vessel_id(id, vessel_name)
+                `)
+                .ilike('job_no', 'CEL-26%')
+                .order('created_at', { ascending: false })
+                .limit(limit);
+
+            if (effCompanyId) jobTableQ = jobTableQ.eq('company_id', effCompanyId);
+            if (dateFrom) jobTableQ = jobTableQ.gte('created_at', `${dateFrom}T00:00:00.000Z`);
+            if (dateTo) jobTableQ = jobTableQ.lte('created_at', `${dateTo}T23:59:59.999Z`);
+            if (searchTerm) {
+                jobTableQ = jobTableQ.or(`job_no.ilike.${searchTerm},description.ilike.${searchTerm}`);
+            }
+
+            const { data: jobsList } = await jobTableQ;
+            if (jobsList) {
+                jobsList.forEach(j => {
+                    if (!j.job_no || !j.job_no.startsWith('CEL-26')) return;
+                    seenJobNos.add(j.job_no);
+                    results.push({
+                        id: j.id,
+                        enquiryId: j.enquiry_id || j.id,
+                        jobId: j.id,
+                        type: 'Job',
+                        category: 'job',
+                        refNo: j.job_no,
+                        title: j.description || `Job ${j.job_no}`,
+                        client: j.customer?.name || '—',
+                        vessel: j.vessel?.vessel_name || '—',
+                        description: j.description || '',
+                        date: j.created_at,
+                        amount: j.po_amount ? `SGD ${parseFloat(j.po_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : null,
+                        status: j.status || 'Active',
+                        lifecycle: j.status === 'Completed' ? 'Closed' : 'Active',
+                        paymentStatus: j.status === 'Paid' ? 'Received' : 'Pending',
+                        gdrive_folder_id: j.gdrive_folder_id || null,
+                        link: `/workflows/eagle-view/${j.enquiry_id || j.id}`
+                    });
+                });
+            }
+
+            // B. Query workflow_documents where document_type = 'Job' with CEL-26
+            let wfJobQ = supabase
+                .from('workflow_documents')
+                .select(`
+                    id, document_no, document_type, assigned_job_no, subject, status,
+                    total_amount, currency, created_at, enquiry_id, job_id, customer_ref,
+                    gdrive_folder_id, drive_folder_id,
+                    partners!partner_id(id, name),
+                    vessels!vessel_id(id, vessel_name)
+                `)
+                .eq('document_type', 'Job')
+                .or('document_no.ilike.CEL-26%,assigned_job_no.ilike.CEL-26%')
+                .order('created_at', { ascending: false })
+                .limit(limit);
+
+            if (effCompanyId) wfJobQ = wfJobQ.eq('company_id', effCompanyId);
+            if (dateFrom) wfJobQ = wfJobQ.gte('created_at', `${dateFrom}T00:00:00.000Z`);
+            if (dateTo) wfJobQ = wfJobQ.lte('created_at', `${dateTo}T23:59:59.999Z`);
+            if (searchTerm) {
+                wfJobQ = wfJobQ.or(`document_no.ilike.${searchTerm},assigned_job_no.ilike.${searchTerm},subject.ilike.${searchTerm},customer_ref.ilike.${searchTerm}`);
+            }
+
+            const { data: wfJobs } = await wfJobQ;
+            if (wfJobs) {
+                wfJobs.forEach(d => {
+                    const celJobNo = (d.assigned_job_no && d.assigned_job_no.startsWith('CEL-26'))
+                        ? d.assigned_job_no
+                        : (d.document_no && d.document_no.startsWith('CEL-26') ? d.document_no : null);
+                    
+                    if (!celJobNo || seenJobNos.has(celJobNo)) return;
+                    seenJobNos.add(celJobNo);
+
+                    results.push({
+                        id: d.id,
+                        enquiryId: d.enquiry_id || d.id,
+                        jobId: d.job_id || d.id,
+                        type: 'Job',
+                        category: 'job',
+                        refNo: celJobNo,
+                        title: d.subject || `Job ${celJobNo}`,
+                        client: d.partners?.name || '—',
+                        vessel: d.vessels?.vessel_name || '—',
+                        description: d.subject || '',
+                        date: d.created_at,
+                        amount: d.total_amount ? `${d.currency || 'SGD'} ${parseFloat(d.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : null,
+                        status: d.status || 'Active',
+                        lifecycle: d.status === 'Paid' ? 'Closed' : 'Active',
+                        paymentStatus: d.status === 'Paid' ? 'Received' : 'Pending',
+                        gdrive_folder_id: d.gdrive_folder_id || d.drive_folder_id || null,
+                        link: `/workflows/eagle-view/${d.enquiry_id || d.id}`
+                    });
+                });
+            }
+        }
+
+        // 3. Query Quotations and POs
+        if (category === 'all' || category === 'quotations' || category === 'pos') {
+            let docQ = supabase
+                .from('workflow_documents')
+                .select(`
+                    id, document_no, document_type, assigned_job_no, subject, status,
+                    total_amount, currency, created_at, enquiry_id, job_id, customer_ref,
+                    gdrive_folder_id, drive_folder_id,
+                    partners!partner_id(id, name),
+                    vessels!vessel_id(id, vessel_name)
+                `)
+                .order('created_at', { ascending: false })
+                .limit(limit);
+
+            if (effCompanyId) docQ = docQ.eq('company_id', effCompanyId);
+            if (dateFrom) docQ = docQ.gte('created_at', `${dateFrom}T00:00:00.000Z`);
+            if (dateTo) docQ = docQ.lte('created_at', `${dateTo}T23:59:59.999Z`);
+
+            if (category === 'quotations') {
+                docQ = docQ.eq('document_type', 'Quotation');
+            } else if (category === 'pos') {
+                docQ = docQ.eq('document_type', 'Purchase Order');
+            } else {
+                // When category === 'all', include only Quotations and POs (Jobs already queried above)
+                docQ = docQ.in('document_type', ['Quotation', 'Purchase Order']);
+            }
+
+            if (searchTerm) {
+                docQ = docQ.or(`document_no.ilike.${searchTerm},assigned_job_no.ilike.${searchTerm},subject.ilike.${searchTerm},customer_ref.ilike.${searchTerm}`);
+            }
+
+            const { data: docs } = await docQ;
+            if (docs) {
+                docs.forEach(d => {
+                    results.push({
+                        id: d.id,
+                        enquiryId: d.enquiry_id || d.id,
+                        jobId: d.job_id || null,
+                        type: d.document_type || 'Document',
+                        category: d.document_type === 'Quotation' ? 'quotation' : 'po',
+                        refNo: d.document_no || d.assigned_job_no,
+                        title: d.subject || `${d.document_type} Record`,
+                        client: d.partners?.name || '—',
+                        vessel: d.vessels?.vessel_name || '—',
+                        description: d.subject || '',
+                        date: d.created_at,
+                        amount: d.total_amount ? `${d.currency || 'SGD'} ${parseFloat(d.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : null,
+                        status: d.status || 'Active',
+                        lifecycle: d.status === 'Paid' ? 'Closed' : 'Active',
+                        paymentStatus: d.status === 'Paid' ? 'Received' : 'Pending',
+                        gdrive_folder_id: d.gdrive_folder_id || d.drive_folder_id || null,
+                        link: `/workflows/eagle-view/${d.enquiry_id || d.id}`
+                    });
+                });
+            }
+        }
+
+        // Apply status filter if set
+        let filtered = results;
+        if (status !== 'all') {
+            const lowStatus = status.toLowerCase();
+            filtered = filtered.filter(r => 
+                String(r.status).toLowerCase().includes(lowStatus) ||
+                String(r.lifecycle).toLowerCase().includes(lowStatus) ||
+                String(r.paymentStatus).toLowerCase().includes(lowStatus)
+            );
+        }
+
+        // Sort by Date Descending
+        filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        return { success: true, data: filtered };
+    } catch (err) {
+        console.error('Error in searchMasterWorkflowLedger:', err);
+        return { success: false, error: err.message, data: [] };
+    }
+};

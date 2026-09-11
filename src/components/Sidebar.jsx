@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, Link, NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, FolderOpen, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe, History, Plus, ExternalLink, Mail, TrendingUp, Kanban, Zap } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, FolderOpen, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe, History, Plus, ExternalLink, Mail, TrendingUp, Kanban, Zap, Layers } from 'lucide-react';
 
 import { useAuth } from '../contexts/AuthContext';
 import { getTodos } from '../lib/todoService';
@@ -140,6 +140,16 @@ export default function Sidebar() {
                             <span className="nav-text">Dashboard</span>
                         </NavLink>
 
+                        <NavLink to="/workflows/whiteboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Jobs & Enquiry Whiteboard">
+                            <Kanban size={20} color="#f59e0b" />
+                            <span className="nav-text" style={{ fontWeight: 800, color: location.pathname === '/workflows/whiteboard' ? '#ffffff' : '#f59e0b' }}>📌 Jobs Whiteboard</span>
+                        </NavLink>
+
+                        <NavLink to="/workflows/eagle-control" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Master Operations Control Center">
+                            <Layers size={20} color="#38bdf8" />
+                            <span className="nav-text" style={{ fontWeight: 800, color: location.pathname.startsWith('/workflows/eagle') ? '#ffffff' : '#38bdf8' }}>🦅 Master Operations Center</span>
+                        </NavLink>
+
                         <NavLink to="/workflows/wizard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Workflow Wizard">
                             <Sparkles size={20} color="#a855f7" />
                             <span className="nav-text" style={{ fontWeight: 800, color: location.pathname.includes('/wizard') ? '#ffffff' : '#c084fc' }}>Workflow Wizard</span>
@@ -148,11 +158,6 @@ export default function Sidebar() {
                         <NavLink to="/scan-gateway" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Start From Scan Gateway">
                             <Smartphone size={20} color="#38bdf8" />
                             <span className="nav-text" style={{ fontWeight: 800, color: location.pathname === '/scan-gateway' ? '#ffffff' : '#38bdf8' }}>Start From Scan Gateway</span>
-                        </NavLink>
-
-                        <NavLink to="/workflows/whiteboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Jobs & Enquiry Whiteboard">
-                            <Kanban size={20} color="#f59e0b" />
-                            <span className="nav-text" style={{ fontWeight: 800, color: location.pathname === '/workflows/whiteboard' ? '#ffffff' : '#f59e0b' }}>📌 Jobs Whiteboard</span>
                         </NavLink>
 
                         <NavLink to="/storage" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Storage Explorer">
@@ -201,6 +206,7 @@ export default function Sidebar() {
                             <ShoppingCart size={16} color="#10b981" />
                             <span className="nav-text" style={{ fontWeight: 600, color: location.pathname === '/purchase-orders' ? '#ffffff' : '#94a3b8' }}>PO2 Suppliers</span>
                         </NavLink>
+
 
                         {/* ── Unified Supplier Hub-Pro ── */}
                         <NavLink to="/unified-supplier-hub-pro" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Unified Supplier Hub — Pro">

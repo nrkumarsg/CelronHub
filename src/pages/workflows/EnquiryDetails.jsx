@@ -1525,38 +1525,94 @@ export default function EnquiryDetails() {
                             </button>
                         </div>
 
-                        <div style={{ position: 'relative', marginBottom: '12px' }}>
-                            <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                        <div style={{ position: 'relative', marginBottom: '10px' }}>
+                            <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#6366f1' }} />
                             <input 
                                 type="text"
-                                placeholder="Search suppliers..."
+                                placeholder="Search by Company, Group / Category, Products, Services, Contacts, Location..."
                                 value={supplierSearch}
                                 onChange={(e) => setSupplierSearch(e.target.value)}
-                                style={{ width: '100%', padding: '8px 8px 8px 32px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                style={{ width: '100%', padding: '9px 36px 9px 36px', borderRadius: '10px', border: '1.5px solid #cbd5e1', fontSize: '0.86rem', outline: 'none', boxSizing: 'border-box' }}
                             />
+                            {supplierSearch && (
+                                <button
+                                    type="button"
+                                    onClick={() => setSupplierSearch('')}
+                                    style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748b' }}
+                                    title="Clear search"
+                                >
+                                    <X size={12} />
+                                </button>
+                            )}
                         </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', fontSize: '0.75rem', color: '#64748b' }}>
+                            <span>Showing {suppliers.filter(s => {
+                                const q = (supplierSearch || '').trim().toLowerCase();
+                                if (!q) return true;
+                                if ((s.name || '').toLowerCase().includes(q)) return true;
+                                if (Array.isArray(s.types) && s.types.some(t => (t || '').toLowerCase().includes(q))) return true;
+                                if ((s.activity_summary || '').toLowerCase().includes(q)) return true;
+                                if ((s.info || '').toLowerCase().includes(q)) return true;
+                                if ((s.others || '').toLowerCase().includes(q)) return true;
+                                if ((s.country || '').toLowerCase().includes(q) || (s.city || '').toLowerCase().includes(q)) return true;
+                                if ((s.email1 || s.email || '').toLowerCase().includes(q)) return true;
+                                if ((s.phone1 || s.phone || '').toLowerCase().includes(q)) return true;
+                                if (Array.isArray(s.contacts) && s.contacts.some(c => (c.name || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q))) return true;
+                                return false;
+                            }).length} of {suppliers.length} suppliers</span>
+                            {selectedSuppliers.length > 0 && (
+                                <span style={{ fontWeight: 700, color: '#4f46e5' }}>✓ {selectedSuppliers.length} selected</span>
+                            )}
+                        </div>
+
                         <div className="custom-scrollbar" style={{ maxHeight: '400px', overflowY: 'auto', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            {suppliers.filter(s => s.name.toLowerCase().includes(supplierSearch.toLowerCase())).map(supplier => {
+                            {suppliers.filter(s => {
+                                const q = (supplierSearch || '').trim().toLowerCase();
+                                if (!q) return true;
+                                if ((s.name || '').toLowerCase().includes(q)) return true;
+                                if (Array.isArray(s.types) && s.types.some(t => (t || '').toLowerCase().includes(q))) return true;
+                                if ((s.activity_summary || '').toLowerCase().includes(q)) return true;
+                                if ((s.info || '').toLowerCase().includes(q)) return true;
+                                if ((s.others || '').toLowerCase().includes(q)) return true;
+                                if ((s.country || '').toLowerCase().includes(q) || (s.city || '').toLowerCase().includes(q)) return true;
+                                if ((s.email1 || s.email || '').toLowerCase().includes(q)) return true;
+                                if ((s.phone1 || s.phone || '').toLowerCase().includes(q)) return true;
+                                if (Array.isArray(s.contacts) && s.contacts.some(c => (c.name || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q))) return true;
+                                return false;
+                            }).map(supplier => {
                                 const isSelected = selectedSuppliers.some(s => s.id === supplier.id);
+                                const types = Array.isArray(supplier.types) ? supplier.types.filter(Boolean) : [];
+                                const scope = supplier.activity_summary || supplier.info;
                                 return (
                                     <div key={supplier.id} style={{ 
-                                        border: isSelected ? '1px solid #6366f1' : '1px solid #f1f5f9', 
+                                        border: isSelected ? '1.5px solid #6366f1' : '1px solid #e2e8f0', 
                                         borderRadius: '12px', 
-                                        padding: '12px', 
+                                        padding: '12px 14px', 
                                         background: isSelected ? '#f8faff' : '#fff', 
-                                        transition: 'all 0.2s'
+                                        transition: 'all 0.15s ease',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: '6px'
                                     }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', flex: 1, minWidth: 0 }}>
                                                 <input 
                                                     type="checkbox" 
                                                     checked={isSelected}
                                                     onChange={() => handleToggleSupplier(supplier)}
-                                                    style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#6366f1' }}
+                                                    style={{ width: '16px', height: '16px', marginTop: '3px', cursor: 'pointer', accentColor: '#6366f1', flexShrink: 0 }}
                                                 />
-                                                <span style={{ fontSize: '0.9rem', fontWeight: 600, color: isSelected ? '#4f46e5' : '#1e293b' }}>{supplier.name}</span>
+                                                <div style={{ minWidth: 0 }}>
+                                                    <div style={{ fontSize: '0.9rem', fontWeight: 700, color: isSelected ? '#4f46e5' : '#1e293b', wordBreak: 'break-word' }}>
+                                                        {supplier.name}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '2px' }}>
+                                                        {supplier.email1 || supplier.email || 'No email'} {supplier.phone1 || supplier.phone ? `• ${supplier.phone1 || supplier.phone}` : ''}
+                                                    </div>
+                                                </div>
                                             </label>
-                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                            <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                                                 <button 
                                                     onClick={() => {
                                                         setPartnerModalConfig({
@@ -1567,12 +1623,29 @@ export default function EnquiryDetails() {
                                                             mode: 'supplier'
                                                         });
                                                     }}
-                                                    style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+                                                    style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '4px 6px', color: '#6366f1', cursor: 'pointer', display: 'flex' }}
+                                                    title="Edit Supplier"
                                                 >
-                                                    <Edit size={14} />
+                                                    <Edit size={13} />
                                                 </button>
                                             </div>
                                         </div>
+
+                                        {types.length > 0 && (
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginLeft: '26px' }}>
+                                                {types.slice(0, 3).map((t, idx) => (
+                                                    <span key={idx} style={{ fontSize: '0.66rem', fontWeight: 600, background: '#e0e7ff', color: '#3730a3', padding: '1px 6px', borderRadius: '4px' }}>
+                                                        {t}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {scope && (
+                                            <div style={{ marginLeft: '26px', fontSize: '0.72rem', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={scope}>
+                                                <span style={{ fontWeight: 600, color: '#334155' }}>Scope: </span>{scope}
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}

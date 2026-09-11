@@ -1,5 +1,74 @@
 import { supabase } from './supabase';
 
+/**
+ * Deduplicate partners by normalized company name.
+ * Excludes merged duplicates and pending approval records.
+ * If multiple records exist for the same company, preserves the active/primary record
+ * and consolidates contacts and details.
+ */
+export const deduplicatePartners = (partnersList) => {
+  if (!Array.isArray(partnersList)) return [];
+  const map = new Map();
+
+  for (const p of partnersList) {
+    if (!p) continue;
+    // Exclude merged duplicates and pending approval records
+    if (p.status === 'merged_duplicate' || p.status === 'pending_approval') continue;
+
+    const key = (p.name || '').trim().toLowerCase();
+    if (!key) {
+      map.set(p.id, p);
+      continue;
+    }
+
+    if (!map.has(key)) {
+      map.set(key, { ...p, contacts: Array.isArray(p.contacts) ? [...p.contacts] : [] });
+    } else {
+      const existing = map.get(key);
+
+      // Merge contacts without duplicate IDs or emails
+      const existingContactIds = new Set((existing.contacts || []).map(c => c.id || c.email || c.name));
+      if (Array.isArray(p.contacts)) {
+        p.contacts.forEach(c => {
+          const cKey = c.id || c.email || c.name;
+          if (cKey && !existingContactIds.has(cKey)) {
+            existing.contacts.push(c);
+            existingContactIds.add(cKey);
+          }
+        });
+      }
+
+      // If incoming record is Active and existing is not, prioritize incoming core details
+      if (p.status === 'Active' && existing.status !== 'Active') {
+        const mergedContacts = existing.contacts;
+        Object.assign(existing, p);
+        existing.contacts = mergedContacts;
+      }
+
+      // Fill in missing communication / profile details
+      if (!existing.email1 && (p.email1 || p.email)) existing.email1 = p.email1 || p.email;
+      if (!existing.email2 && p.email2) existing.email2 = p.email2;
+      if (!existing.phone1 && (p.phone1 || p.phone)) existing.phone1 = p.phone1 || p.phone;
+      if (!existing.phone2 && p.phone2) existing.phone2 = p.phone2;
+      if (!existing.activity_summary && p.activity_summary) existing.activity_summary = p.activity_summary;
+      if (!existing.info && p.info) existing.info = p.info;
+      if (!existing.weblink && p.weblink) existing.weblink = p.weblink;
+      if (!existing.country && p.country) existing.country = p.country;
+      if (!existing.city && p.city) existing.city = p.city;
+      if (!existing.address && p.address) existing.address = p.address;
+
+      // Merge types
+      if (Array.isArray(p.types)) {
+        const typeSet = new Set(Array.isArray(existing.types) ? existing.types : []);
+        p.types.forEach(t => t && typeSet.add(t));
+        existing.types = Array.from(typeSet);
+      }
+    }
+  }
+
+  return Array.from(map.values());
+};
+
 export const getPartners = async (profile = null) => {
   let allData = [];
   let page = 0;
@@ -13,12 +82,12 @@ export const getPartners = async (profile = null) => {
       .range(page * pageSize, (page + 1) * pageSize - 1)
       .order('name', { ascending: true });
 
-    // Exclude pending drafts from active lists
-    query = query.or('status.neq.pending_approval,status.is.null');
+    // Exclude pending drafts and merged duplicates from active lists
+    query = query.or('status.is.null,and(status.neq.pending_approval,status.neq.merged_duplicate)');
 
-    // ONLY filter if user is NOT a superadmin. Superadmins should see global totals.
+    // ONLY filter if user is NOT a superadmin. Include company-specific and global/unassigned partners.
     if (profile?.company_id && profile.role !== 'superadmin') {
-      query = query.eq('company_id', profile.company_id);
+      query = query.or(`company_id.eq.${profile.company_id},company_id.is.null`);
     }
 
     const { data, error } = await query;
@@ -39,7 +108,20 @@ export const getPartners = async (profile = null) => {
     }
   }
 
-  return allData;
+  // Fallback: If company filter returned 0 records, fetch global partners to prevent empty directory
+  if (allData.length === 0 && profile?.company_id) {
+    const { data } = await supabase
+      .from('partners')
+      .select('*, contacts(*)')
+      .or('status.is.null,and(status.neq.pending_approval,status.neq.merged_duplicate)')
+      .order('name', { ascending: true })
+      .limit(1000);
+    if (data && data.length > 0) {
+      allData = data;
+    }
+  }
+
+  return deduplicatePartners(allData);
 };
 
 export const getPendingPartners = async (profile = null) => {

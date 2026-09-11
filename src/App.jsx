@@ -37,6 +37,8 @@ import JobsDashboard from './pages/workflows/JobsDashboard';
 import JobEagleView from './pages/workflows/JobEagleView';
 import EnquiryList from './pages/workflows/EnquiryList';
 import WorkflowEditor from './pages/workflows/WorkflowEditor';
+import EnquiryEagleView from './pages/workflows/EnquiryEagleView';
+import MasterControlLedger from './pages/workflows/MasterControlLedger';
 import StatementOfAccount from './pages/workflows/StatementOfAccount';
 import ExpensesProfitPage from './pages/workflows/ExpensesProfitPage';
 import WorkflowPrintPreview from './pages/workflows/WorkflowPrintPreview';
@@ -391,9 +393,13 @@ function App() {
               <Route path="/workflows/legacy" element={<ProtectedRoute><WorkflowBoard /></ProtectedRoute>} />
               <Route path="/workflows/enquiry/print/:id" element={<ProtectedRoute><EnquiryPrintPreview /></ProtectedRoute>} />
               <Route path="/workflows/enquiry/:id" element={<ProtectedRoute><EnquiryDetails /></ProtectedRoute>} />
-              <Route path="/workflows/job/:id" element={<ProtectedRoute><JobDetails /></ProtectedRoute>} />
+              <Route path="/workflows/eagle-control" element={<ProtectedRoute><MasterControlLedger /></ProtectedRoute>} />
+              <Route path="/workflows/eagle-control/:id" element={<ProtectedRoute><MasterControlLedger /></ProtectedRoute>} />
+              <Route path="/workflows/eagle-view" element={<ProtectedRoute><MasterControlLedger /></ProtectedRoute>} />
+              <Route path="/workflows/eagle-view/:id" element={<ProtectedRoute><MasterControlLedger /></ProtectedRoute>} />
+              <Route path="/workflows/enquiry-eagle-view/:id" element={<ProtectedRoute><MasterControlLedger /></ProtectedRoute>} />
+              <Route path="/workflows/eagle/:id" element={<ProtectedRoute><MasterControlLedger /></ProtectedRoute>} />
               <Route path="/workflows/job-eagle-view/:id" element={<ProtectedRoute><JobEagleView /></ProtectedRoute>} />
-              <Route path="/workflows/eagle-view/:id" element={<ProtectedRoute><JobEagleView /></ProtectedRoute>} />
               <Route path="/workflows/editor/:type/:id" element={<ProtectedRoute><WorkflowEditor /></ProtectedRoute>} />
               <Route path="/workflows/float-supplier-order" element={<ProtectedRoute><FloatSupplierOrder /></ProtectedRoute>} />
               <Route path="/workflows/print/:id" element={<ProtectedRoute><WorkflowPrintPreview /></ProtectedRoute>} />

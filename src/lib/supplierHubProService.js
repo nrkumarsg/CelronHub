@@ -22,11 +22,11 @@ export const getEnquiriesWithFullData = async (companyId) => {
         .from('customer_enquiries')
         .select(`
             *,
-            customer:partners(id, name, email, country),
+            customer:partners(id, name, email:email1, country),
             contact:contacts(id, name, email, handphone),
             supplier_quotes(
                 id, status, quote_amount,
-                supplier:partners(id, name, email)
+                supplier:partners(id, name, email:email1)
             ),
             workflow_documents(
                 id, document_type, document_no, status, total_amount
@@ -76,7 +76,10 @@ export const filterEnquiriesByTab = (enquiries = [], tab = 'all', searchQuery = 
         filtered = filtered.filter(e =>
             (e.enquiry_no || '').toLowerCase().includes(q) ||
             (e.customer?.name || '').toLowerCase().includes(q) ||
-            (e.description || '').replace(/<[^>]*>/g, '').toLowerCase().includes(q)
+            (e.customer_ref || '').toLowerCase().includes(q) ||
+            (e.description || '').replace(/<[^>]*>/g, '').toLowerCase().includes(q) ||
+            (e.supplier_quotes || []).some(sq => (sq.supplier?.name || '').toLowerCase().includes(q)) ||
+            (e.workflow_documents || []).some(wd => (wd.document_no || '').toLowerCase().includes(q))
         );
     }
 
@@ -118,9 +121,9 @@ export const upsertSupplierFromSearch = async (payload, companyId) => {
     if (email) {
         const { data: existing } = await supabase
             .from('partners')
-            .select('id, name, email, types')
+            .select('id, name, email1, types')
             .eq('company_id', companyId)
-            .ilike('email', email.trim())
+            .ilike('email1', email.trim())
             .maybeSingle();
 
         if (existing) {
@@ -130,8 +133,8 @@ export const upsertSupplierFromSearch = async (payload, companyId) => {
                 .from('partners')
                 .update({
                     types: updatedTypes,
-                    ...(phone ? { phone } : {}),
-                    ...(website ? { website } : {}),
+                    ...(phone ? { phone1: phone } : {}),
+                    ...(website ? { weblink: website } : {}),
                     ...(country ? { country } : {}),
                 })
                 .eq('id', existing.id)
@@ -147,13 +150,13 @@ export const upsertSupplierFromSearch = async (payload, companyId) => {
         .from('partners')
         .insert([{
             name: name.trim(),
-            email: email?.trim() || null,
-            phone: phone?.trim() || null,
-            website: website?.trim() || null,
+            email1: email?.trim() || null,
+            phone1: phone?.trim() || null,
+            weblink: website?.trim() || null,
             country: country?.trim() || null,
             types: ['Supplier'],
             company_id: companyId,
-            notes: notes || null,
+            info: notes || null,
         }])
         .select()
         .single();

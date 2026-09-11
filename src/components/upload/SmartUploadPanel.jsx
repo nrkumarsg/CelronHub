@@ -5,7 +5,8 @@ import {
     Sparkles, ShieldAlert, FileImage, FileCode, Keyboard,
     Smartphone, QrCode, Image as ImageIcon, Loader2, Camera, RefreshCw, Mail, Inbox,
     ExternalLink, Grid, List, MessageSquare, Trash2, Send, Share2,
-    Tag, ShoppingCart, Receipt, Package, Truck, CreditCard, DollarSign, CheckCircle2
+    Tag, ShoppingCart, Receipt, Package, Truck, CreditCard, DollarSign, CheckCircle2,
+    Minimize2, Maximize2
 } from 'lucide-react';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
@@ -33,7 +34,8 @@ export default function SmartUploadPanel({
     activeFolderName = 'System Workspace', 
     initialTab = 'recent',
     embedded = false,
-    runningEnquiryNo = null
+    runningEnquiryNo = null,
+    onToggleMinimize = null
 }) {
     const [activeTab, setActiveTab] = useState(initialTab || 'recent');
     const [searchTerm, setSearchTerm] = useState('');
@@ -110,6 +112,11 @@ export default function SmartUploadPanel({
             getDocumentSettings().then(setDocumentSettings).catch(console.error);
         }
     }, [isOpen, documentType, initialTab]);
+
+    // Reset manual targetFolder override whenever activeFolderId or runningEnquiryNo changes
+    useEffect(() => {
+        setTargetFolder(null);
+    }, [activeFolderId, runningEnquiryNo]);
 
     // Handle Keyboard Shortcuts
     useEffect(() => {
@@ -696,6 +703,29 @@ export default function SmartUploadPanel({
                     >
                         <MessageSquare size={14} /> WhatsApp Scan
                     </button>
+
+                    {onToggleMinimize && (
+                        <button
+                            type="button"
+                            onClick={onToggleMinimize}
+                            title="Minimize Upload Hub"
+                            style={{
+                                background: '#ffffff',
+                                color: '#475569',
+                                border: '1px solid #cbd5e1',
+                                padding: '6px 12px',
+                                borderRadius: '8px',
+                                fontSize: '0.78rem',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px'
+                            }}
+                        >
+                            <Minimize2 size={13} /> Minimize Hub
+                        </button>
+                    )}
 
                     {!embedded && onClose && (
                         <button 

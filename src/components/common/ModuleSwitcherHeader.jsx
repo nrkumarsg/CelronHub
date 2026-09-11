@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { FolderKanban, FileSpreadsheet, Sparkles, Building2, Users, TrendingUp } from 'lucide-react';
+import { FolderKanban, FileSpreadsheet, Sparkles, Building2, Users, TrendingUp, Layers } from 'lucide-react';
 
 export default function ModuleSwitcherHeader({ activeModule = 'filing', activeJobNo = '', activeCustomer = '' }) {
     const navigate = useNavigate();
@@ -56,6 +56,30 @@ export default function ModuleSwitcherHeader({ activeModule = 'filing', activeJo
                     
                     {/* Directories Quick Buttons */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(30, 41, 59, 0.8)', padding: '4px 6px', borderRadius: '12px', border: '1px solid rgba(51, 65, 85, 0.8)' }}>
+                        <button
+                            type="button"
+                            onClick={() => navigate('/workflows/eagle-control')}
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                height: '32px',
+                                padding: '0 12px',
+                                borderRadius: '8px',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                color: '#38bdf8',
+                                background: location.pathname.startsWith('/workflows/eagle') ? 'rgba(56, 189, 248, 0.25)' : 'transparent',
+                                border: '1px solid rgba(56, 189, 248, 0.4)',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s'
+                            }}
+                            title="Open Master Operations Control Center"
+                        >
+                            <Layers size={14} color="#38bdf8" />
+                            <span>🦅 Master Ops</span>
+                        </button>
+
                         <button
                             type="button"
                             onClick={() => navigate('/workflows/whiteboard')}
