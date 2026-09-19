@@ -11,6 +11,7 @@ import {
     ExternalLink, Folder, File as FileIcon, HardDrive, Upload, UploadCloud, MessageSquare, Smartphone,
     ArrowRightLeft,
     CheckCircle,
+    CheckCircle2,
     Copy,
     Users2,
     Eye,
