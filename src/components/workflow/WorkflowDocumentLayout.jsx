@@ -132,25 +132,35 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
         ? (isQuotation ? DEFAULT_QUOTATION_NOTES : (isDeliveryDoc ? DEFAULT_DELIVERY_NOTES : doc.notes))
         : doc.notes;
 
-    const cleanVesselName = doc.vessels?.vessel_name?.trim() || doc.vessels?.name?.trim();
+    const cleanVesselName = doc.vessels?.vessel_name?.trim() || doc.vessels?.name?.trim() || doc.vessel_name?.trim();
     const hasVessel = !!cleanVesselName && 
-        !['', 'N/A', 'N.A', 'N.A.', 'N/A.', 'NONE', 'NIL', '[VESSEL]', 'NOT APPLICABLE'].includes(cleanVesselName.toUpperCase());
+        !['', 'N/A', 'N.A', 'N.A.', 'N/A.', 'NONE', 'NIL', '[VESSEL]', 'NOT APPLICABLE', '-'].includes(cleanVesselName.toUpperCase());
     const vesselName = hasVessel ? cleanVesselName : '';
-    const locationName = doc.work_locations?.location_name || doc.work_locations?.name;
-    const hasLocation = !!locationName && locationName !== 'N/A';
+
+    // Vessel IMO number resolution
+    const rawImo = (doc.vessels?.imo_number || doc.imo_number || doc.vessel_imo || '').toString().trim();
+    const hasImo = !!rawImo && !['', 'N/A', 'N.A', 'N.A.', 'N/A.', 'NONE', 'NIL', 'NOT APPLICABLE', '-', '0'].includes(rawImo.toUpperCase());
+    const formattedImo = hasImo ? (rawImo.toUpperCase().startsWith('IMO') ? rawImo : `IMO: ${rawImo}`) : '';
+    const imoSuffix = formattedImo ? ` (${formattedImo})` : '';
+
+    // Location / Project resolution (filter out dummy 'N.A', 'N/A', etc.)
+    const cleanLocation = (doc.work_locations?.location_name || doc.work_locations?.name || doc.location_name || '').trim();
+    const isDummyLocation = !cleanLocation || ['', 'N/A', 'N.A', 'N.A.', 'N/A.', 'NONE', 'NIL', 'NOT APPLICABLE', '-'].includes(cleanLocation.toUpperCase());
+    const hasLocation = !isDummyLocation;
+    const locationName = hasLocation ? cleanLocation : '';
 
     let vesselLabel = "VESSEL";
     let vesselValue = "N/A";
 
     if (hasVessel && hasLocation) {
         vesselLabel = "VESSEL / PROJECT";
-        vesselValue = `${vesselName} (${locationName})`;
+        vesselValue = `${vesselName}${imoSuffix} (${locationName})`;
     } else if (hasLocation) {
         vesselLabel = "PROJECT";
         vesselValue = locationName;
     } else if (hasVessel) {
         vesselLabel = "VESSEL";
-        vesselValue = vesselName;
+        vesselValue = `${vesselName}${imoSuffix}`;
     }
 
     return (

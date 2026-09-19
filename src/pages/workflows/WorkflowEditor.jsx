@@ -9110,7 +9110,9 @@ export default function WorkflowEditor() {
                             },
                             items: lineItems, 
                             partners: partners.find(p => p.id === formData.partner_id), 
-                            contacts: contacts.find(c => c.id === formData.contact_id) 
+                            contacts: contacts.find(c => c.id === formData.contact_id),
+                            vessels: vessels.find(v => v.id === formData.vessel_id),
+                            work_locations: workLocations.find(w => w.id === formData.work_location_id)
                         }} 
                         settings={settings}
                         logoBase64={logoBase64}
