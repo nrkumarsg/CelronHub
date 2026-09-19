@@ -84,6 +84,12 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
     const isCreditNote = doc.document_type?.toUpperCase() === 'CREDIT NOTE' || doc.document_type === 'CN';
     const isFinancial = isInvoice || isProforma || isPayment || isCreditNote;
     const isEnquiry = doc.document_type?.toUpperCase() === 'ENQUIRY';
+    const isZeroTotal = Boolean(
+        doc.zero_total || 
+        doc.is_zero_total || 
+        doc.delivery_verification?.zero_total || 
+        doc.delivery_verification?.is_zero_total
+    );
     const isAnithaType = ['Tax Invoice', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment', 'Credit Note'].includes(doc.document_type);
     const isKumar = doc.salesperson_name?.toUpperCase() === 'N.R.KUMAR' || doc.salesperson_name?.toUpperCase() === 'KUMAR';
     const effectiveSalesperson = isKumar ? 'N.R.KUMAR' : ((isAnithaType && (!doc.salesperson_name)) ? 'ANITHA (Ms)' : (doc.salesperson_name || 'ANITHA (Ms)'));
@@ -357,9 +363,9 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                                 <div style={{ padding: '6px 20px', display: 'flex', flexDirection: 'column', gap: '2px', justifyContent: 'center', width: '55%', borderRight: '1px solid #ffffff' }}>
                                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                         <span style={{ ...styles.h4, minWidth: '120px' }}>UNTAXED AMOUNT:</span>
-                                        <span style={styles.bodyBold}>{(doc.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        <span style={styles.bodyBold}>{isZeroTotal ? '0.00' : (doc.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                     </div>
-                                    {doc.discount_amount > 0 && (
+                                    {!isZeroTotal && doc.discount_amount > 0 && (
                                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                             <span style={{ ...styles.h4, minWidth: '120px', color: '#ef4444' }}>
                                                 DISCOUNT {parseFloat(doc.discount_percent) > 0 ? `(${doc.discount_percent}%)` : ''}:
@@ -369,7 +375,7 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                                     )}
                                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                         <span style={{ ...styles.h4, minWidth: '120px' }}>GST (9%):</span>
-                                        <span style={styles.bodyBold}>{(doc.tax_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        <span style={styles.bodyBold}>{isZeroTotal ? '0.00' : (doc.tax_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                     </div>
                                 </div>
                                 
@@ -378,12 +384,12 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                                     <span style={{ ...styles.h3, color: '#ffffff', margin: 0 }}>
                                         {isCreditNote ? 'TOTAL CREDITED' : 'TOTAL'} ({doc.currency || 'SGD'})
                                     </span>
-                                    <span style={{ fontSize: '15px', fontWeight: 900, color: '#ffffff' }}>{(doc.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    <span style={{ fontSize: '15px', fontWeight: 900, color: '#ffffff' }}>{isZeroTotal ? '0.00' : (doc.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                 </div>
                             </div>
 
                             {/* Amount in Words */}
-                            {!isQuotation && (
+                            {!isZeroTotal && !isQuotation && (
                                 <div style={{ 
                                     padding: '4px 15px', 
                                     ...styles.small,

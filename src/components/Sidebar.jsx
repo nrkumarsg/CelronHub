@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, Link, NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, FolderOpen, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe, History, Plus, ExternalLink, Mail, TrendingUp, Kanban, Zap, Layers } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, FolderOpen, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe, History, Plus, ExternalLink, Mail, TrendingUp, Kanban, Zap, Layers, Monitor } from 'lucide-react';
 
 import { useAuth } from '../contexts/AuthContext';
 import { getTodos } from '../lib/todoService';
@@ -133,6 +133,11 @@ export default function Sidebar() {
                         <NavLink to="/my-day" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="My Day — Daily Command Center">
                             <span style={{ fontSize: 18, lineHeight: 1 }}>📅</span>
                             <span className="nav-text" style={{ fontWeight: 800, color: location.pathname === '/my-day' ? '#ffffff' : '#a5b4fc' }}>My Day</span>
+                        </NavLink>
+
+                        <NavLink to="/launchpad" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Desktop Launchpad (Multitasking Command Center)">
+                            <Monitor size={20} color="#38bdf8" />
+                            <span className="nav-text" style={{ fontWeight: 800, color: location.pathname === '/launchpad' ? '#ffffff' : '#38bdf8' }}>🖥️ Desktop Launchpad</span>
                         </NavLink>
 
                         <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end title="Dashboard">

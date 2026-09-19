@@ -9,7 +9,9 @@ export const WhatsAppShareModal = ({ isOpen, onClose, contacts, partner, documen
 
     useEffect(() => {
         if (isOpen && documentData) {
-            const defaultMsg = `Dear Customer,\n\nPlease find the ${documentData.document_type} (${documentData.document_no}) from CEL-RON ENTERPRISES.\n\nSubject: ${documentData.subject || 'N/A'}\nTotal: ${documentData.currency} ${documentData.total_amount?.toLocaleString()}\n\nBest Regards,\n${documentData.salesperson_name || 'CEL-RON Team'}`;
+            const isZero = Boolean(documentData.zero_total || documentData.is_zero_total || documentData.delivery_verification?.zero_total || documentData.delivery_verification?.is_zero_total);
+            const totalText = isZero ? `${documentData.currency || 'USD'} 0.00 (Customer to Pick Services)` : `${documentData.currency || 'SGD'} ${(documentData.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+            const defaultMsg = `Dear Customer,\n\nPlease find the ${documentData.document_type} (${documentData.document_no}) from CEL-RON ENTERPRISES.\n\nSubject: ${documentData.subject || 'N/A'}\nTotal: ${totalText}\n\nBest Regards,\n${documentData.salesperson_name || 'CEL-RON Team'}`;
             setMessage(defaultMsg);
 
             // Pre-select primary contact if available

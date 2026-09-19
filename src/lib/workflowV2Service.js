@@ -509,10 +509,14 @@ export const getWorkflowDocumentById = async (id) => {
         }
     });
 
-    // Unnest salesperson details from delivery_verification if they exist
+    // Unnest salesperson details and zero_total from delivery_verification if they exist
     if (document.delivery_verification) {
         if (document.delivery_verification.salesperson_phone) document.salesperson_phone = document.delivery_verification.salesperson_phone;
         if (document.delivery_verification.salesperson_email) document.salesperson_email = document.delivery_verification.salesperson_email;
+        if (document.delivery_verification.zero_total !== undefined || document.delivery_verification.is_zero_total !== undefined) {
+            document.zero_total = Boolean(document.delivery_verification.zero_total || document.delivery_verification.is_zero_total);
+            document.is_zero_total = document.zero_total;
+        }
     }
 
     return { data: { ...document, items: uniqueItems }, error: itemsError };
@@ -695,6 +699,15 @@ export const saveWorkflowDocument = async (docData, lineItems) => {
             ...(sanitizedHeader.delivery_verification || {}),
             salesperson_phone: headerData.salesperson_phone,
             salesperson_email: headerData.salesperson_email
+        };
+    }
+
+    // Nest zero_total (Customer to Pick Services) into delivery_verification
+    if (headerData.zero_total !== undefined || headerData.is_zero_total !== undefined) {
+        sanitizedHeader.delivery_verification = {
+            ...(sanitizedHeader.delivery_verification || {}),
+            zero_total: Boolean(headerData.zero_total || headerData.is_zero_total),
+            is_zero_total: Boolean(headerData.zero_total || headerData.is_zero_total)
         };
     }
 
@@ -1275,6 +1288,7 @@ export const convertQuotationToJob = async (quotationId, poData, options = {}) =
         { type: 'Job', prefix: jobPrefix } // Master Job Record
     ];
 
+    let masterJobDoc = null;
     for (const doc of docTypes) {
         const newDocData = {
             ...qtn,
@@ -1292,10 +1306,13 @@ export const convertQuotationToJob = async (quotationId, poData, options = {}) =
             delivery_verification: qtnUpdate.delivery_verification
         };
         
-        await saveWorkflowDocument(newDocData, qtn.items);
+        const savedDoc = await saveWorkflowDocument(newDocData, qtn.items);
+        if (doc.type === 'Job') {
+            masterJobDoc = savedDoc;
+        }
     }
 
-    return { jobNo };
+    return { jobNo, jobId: masterJobDoc?.id };
 };
 
 /**
@@ -1433,9 +1450,9 @@ export const convertInvoiceToJob = async (invoiceId, poData = {}) => {
         customer_po_no: invUpdate.customer_po_no,
         customer_po_date: invUpdate.customer_po_date
     };
-    await saveWorkflowDocument(newJobData, inv.items);
+    const savedJob = await saveWorkflowDocument(newJobData, inv.items);
 
-    return { jobNo };
+    return { jobNo, jobId: savedJob?.id };
 };
 
 /**

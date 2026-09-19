@@ -92,6 +92,8 @@ import Unauthorized from './pages/auth/Unauthorized';
 
 import GstReporting from './pages/GstReporting';
 
+import DesktopLaunchpad from './pages/DesktopLaunchpad';
+
 // App Layout wrapper to only show sidebar when logged in
 const AppLayout = ({ children }) => {
   const { user } = useAuth();
@@ -99,17 +101,18 @@ const AppLayout = ({ children }) => {
   const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
 
+  const isLaunchpad = location.pathname === '/launchpad' || location.pathname === '/desktop-launcher';
   const isMobilePath = location.pathname.startsWith('/m/') || location.pathname === '/m';
-  const isStandalone = searchParams.get('mobile') === 'true' || searchParams.get('standalone') === 'true' || isMobilePath;
+  const isStandalone = searchParams.get('mobile') === 'true' || searchParams.get('standalone') === 'true' || isMobilePath || isLaunchpad;
 
   // Auto-redirect desktop route to /m/ route on mobile device detection
   useEffect(() => {
     const isMobileDevice = window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (user && isMobileDevice && !isMobilePath) {
+    if (user && isMobileDevice && !isMobilePath && !isLaunchpad) {
       const targetPath = `/m${location.pathname === '/' ? '' : location.pathname}${location.search}`;
       navigate(targetPath, { replace: true });
     }
-  }, [user, location.pathname, isMobilePath, location.search, navigate]);
+  }, [user, location.pathname, isMobilePath, isLaunchpad, location.search, navigate]);
 
   // Auth routes shouldn't show the main layout
   if (!user) {
@@ -119,7 +122,7 @@ const AppLayout = ({ children }) => {
   if (isStandalone) {
     return (
       <div className="app-container standalone-mobile">
-        <main className="main-content" style={{ width: '100%', margin: 0, padding: '16px 24px' }}>
+        <main className="main-content" style={{ width: '100%', margin: 0, padding: isLaunchpad ? 0 : '16px 24px' }}>
           {children}
         </main>
       </div>
@@ -325,6 +328,8 @@ function App() {
               <Route path="/m/workflows/wizard" element={<ProtectedRoute><WorkflowWizard /></ProtectedRoute>} />
               <Route path="/m/job-workflow" element={<ProtectedRoute><JobWorkflow /></ProtectedRoute>} />
               <Route path="/search" element={<ProtectedRoute><SearchResults /></ProtectedRoute>} />
+              <Route path="/launchpad" element={<ProtectedRoute><DesktopLaunchpad /></ProtectedRoute>} />
+              <Route path="/desktop-launcher" element={<ProtectedRoute><DesktopLaunchpad /></ProtectedRoute>} />
 
               {/* User Management (Superadmins & Admins only) */}
               <Route path="/admin/users" element={

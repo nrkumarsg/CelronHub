@@ -18,7 +18,8 @@ import {
     Info,
     Image, FolderOpen, DollarSign,
     List, TrendingUp, TrendingDown, Percent,
-    Truck, RotateCcw, ArrowDownRight, Calendar
+    Truck, RotateCcw, ArrowDownRight, Calendar,
+    Briefcase, LayoutDashboard
 } from 'lucide-react';
 import GoogleCalendarReminderModal from '../../components/common/GoogleCalendarReminderModal';
 import SearchableSelect from '../../components/common/SearchableSelect';
@@ -173,6 +174,7 @@ const buildInitialFormData = (docType, profile, defaultIssue, defaultExpiry) => 
         attachment_urls: [],
         payment_method: 'Bank Transfer',
         payment_ref: '',
+        zero_total: false,
         delivery_verification: {}
     };
 };
@@ -376,6 +378,26 @@ export default function WorkflowEditor() {
     const [signatureBase64, setSignatureBase64] = useState('');
     const [paynowBase64, setPaynowBase64] = useState('');
     const printRef = useRef();
+
+    const isZeroTotal = Boolean(
+        formData.zero_total ||
+        formData.is_zero_total ||
+        formData.delivery_verification?.zero_total ||
+        formData.delivery_verification?.is_zero_total
+    );
+
+    const handleToggleZeroTotal = (checked) => {
+        setFormData(prev => ({
+            ...prev,
+            zero_total: checked,
+            is_zero_total: checked,
+            delivery_verification: {
+                ...(prev.delivery_verification || {}),
+                zero_total: checked,
+                is_zero_total: checked
+            }
+        }));
+    };
 
     // Smooth scroll and highlight helper for summary cards
     const scrollToSection = (sectionId, tabToActivate = 'items') => {
@@ -2177,7 +2199,23 @@ export default function WorkflowEditor() {
                 alert('Error loading document: ' + error.message);
             } else if (data) {
                 console.log('Document loaded:', data);
-                setFormData(prev => ({ ...prev, ...data }));
+                const loadedZeroTotal = Boolean(
+                    data.zero_total || 
+                    data.is_zero_total || 
+                    data.delivery_verification?.zero_total || 
+                    data.delivery_verification?.is_zero_total
+                );
+                setFormData(prev => ({ 
+                    ...prev, 
+                    ...data,
+                    zero_total: loadedZeroTotal,
+                    is_zero_total: loadedZeroTotal,
+                    delivery_verification: {
+                        ...(data.delivery_verification || {}),
+                        zero_total: loadedZeroTotal,
+                        is_zero_total: loadedZeroTotal
+                    }
+                }));
                 
                 // Deduplicate items on load to fix any existing database repeats
                 // We use a more robust key to handle null/undefined and whitespace
@@ -3118,7 +3156,17 @@ export default function WorkflowEditor() {
                 setOriginalJobNo(formData.assigned_job_no);
             }
 
-            const dataToSave = { ...formData, company_id: profile.company_id };
+            const dataToSave = { 
+                ...formData, 
+                company_id: profile.company_id,
+                zero_total: isZeroTotal,
+                is_zero_total: isZeroTotal,
+                delivery_verification: {
+                    ...(formData.delivery_verification || {}),
+                    zero_total: isZeroTotal,
+                    is_zero_total: isZeroTotal
+                }
+            };
             
             const { data, error } = await saveWorkflowDocument(dataToSave, uniqueItems);
             if (error) throw error;
@@ -3342,7 +3390,7 @@ export default function WorkflowEditor() {
             } else {
                 result = await convertQuotationToJob(sourceId, poData, options);
             }
-            const { jobNo } = result;
+            const { jobNo, jobId } = result || {};
             
             // Provision Drive folder and migrate files if Google API is connected
             if (isTokenValid()) {
@@ -3395,12 +3443,56 @@ export default function WorkflowEditor() {
             toast.success(`Job ${jobNo} created successfully with all associated documents!`);
             setPoModal({ isOpen: false });
             setPoFile(null);
-            fetchDocument(); // Refresh to show job info
+            await fetchDocument(); // Refresh to show job info
+
+            // Prompt user to immediately open the new Job
+            if (window.confirm(`🎉 Job ${jobNo} created successfully!\n\nWould you like to open the new Job now?`)) {
+                if (jobId) {
+                    navigate(`/workflows/editor/job/${jobId}`);
+                } else {
+                    navigate(`/workflows/jobs-dashboard?search=${encodeURIComponent(jobNo)}`);
+                }
+            }
         } catch (err) {
             console.error(err);
             toast.error('Failed to convert to job: ' + (err.message || 'Unknown error'));
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleGoToJob = async () => {
+        const targetJobNo = formData.assigned_job_no || (formData.document_type === 'Job' ? formData.document_no : '');
+        if (!targetJobNo) {
+            toast.error('No linked job number found.');
+            return;
+        }
+
+        // 1. Check if master Job document exists in suite
+        let masterDoc = (workflowDocs || []).find(d => d.document_type === 'Job');
+        
+        // 2. If not found in memory, query from supabase
+        if (!masterDoc) {
+            try {
+                const { data } = await supabase
+                    .from('workflow_documents')
+                    .select('id, document_no, document_type')
+                    .eq('company_id', profile?.company_id)
+                    .eq('document_type', 'Job')
+                    .eq('assigned_job_no', targetJobNo)
+                    .maybeSingle();
+                if (data) {
+                    masterDoc = data;
+                }
+            } catch (err) {
+                console.error("Error fetching master job doc:", err);
+            }
+        }
+
+        if (masterDoc?.id) {
+            navigate(`/workflows/editor/job/${masterDoc.id}`);
+        } else {
+            navigate(`/workflows/jobs-dashboard?search=${encodeURIComponent(targetJobNo)}`);
         }
     };
 
@@ -3641,7 +3733,7 @@ export default function WorkflowEditor() {
             alert('Please Save the document first to preview and print.');
             return;
         }
-        window.open(`/workflows/print/${id}?showSignature=${showSignature}`, '_blank');
+        window.open(`/workflows/print/${id}?showSignature=${showSignature}&zeroTotal=${isZeroTotal}`, '_blank');
     };
 
     const handleAnnotate = async () => {
@@ -3702,7 +3794,11 @@ export default function WorkflowEditor() {
             });
 
             itemsContent += "--------------------------------------------------\n";
-            itemsContent += `TOTAL: ${formData.currency} ${(formData.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 }).padStart(10)}\n`;
+            if (isZeroTotal) {
+                itemsContent += `TOTAL: ${formData.currency} 0.00 (Customer to Pick Services)\n`;
+            } else {
+                itemsContent += `TOTAL: ${formData.currency} ${(formData.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 }).padStart(10)}\n`;
+            }
             itemsContent += "--------------------------------------------------\n";
         }
 
@@ -3765,6 +3861,13 @@ export default function WorkflowEditor() {
         try {
             const pdfBlob = await generateSleekPDF({
                 ...formData,
+                zero_total: isZeroTotal,
+                is_zero_total: isZeroTotal,
+                delivery_verification: {
+                    ...(formData.delivery_verification || {}),
+                    zero_total: isZeroTotal,
+                    is_zero_total: isZeroTotal
+                },
                 items: lineItems,
                 partners: partners.find(p => p.id === formData.partner_id),
                 vessels: vessels.find(v => v.id === formData.vessel_id),
@@ -4320,6 +4423,40 @@ export default function WorkflowEditor() {
                                 />
                                 <Pencil size={12} style={{ color: '#94a3b8', pointerEvents: 'none', opacity: 0.5 }} />
                             </div>
+                            {(formData.is_job || formData.assigned_job_no) && (
+                                <button
+                                    type="button"
+                                    onClick={handleGoToJob}
+                                    title={`Click to open linked Job ${formData.assigned_job_no || ''}`}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        marginLeft: '12px',
+                                        padding: '4px 12px',
+                                        borderRadius: '20px',
+                                        background: '#ecfdf5',
+                                        color: '#047857',
+                                        border: '1.5px solid #a7f3d0',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 700,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease',
+                                        boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                                    }}
+                                    onMouseOver={e => {
+                                        e.currentTarget.style.background = '#d1fae5';
+                                        e.currentTarget.style.transform = 'translateY(-1px)';
+                                    }}
+                                    onMouseOut={e => {
+                                        e.currentTarget.style.background = '#ecfdf5';
+                                        e.currentTarget.style.transform = 'none';
+                                    }}
+                                >
+                                    <Briefcase size={13} />
+                                    <span>Job: {formData.assigned_job_no || 'Linked'} ↗</span>
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -4343,6 +4480,28 @@ export default function WorkflowEditor() {
                         >
                             {showSignature ? <Eye size={16} /> : <EyeOff size={16} color="#94a3b8" />}
                         </button>
+                        {formData.document_type === 'Quotation' && (
+                            <button 
+                                type="button"
+                                className={`btn-vibrant-secondary ${isZeroTotal ? 'active' : ''}`}
+                                onClick={() => handleToggleZeroTotal(!isZeroTotal)}
+                                style={{ 
+                                    background: isZeroTotal ? '#eff6ff' : 'transparent', 
+                                    border: isZeroTotal ? '1.5px solid #3b82f6' : 'none',
+                                    color: isZeroTotal ? '#1d4ed8' : '#64748b',
+                                    padding: '8px 12px',
+                                    fontSize: '0.85rem',
+                                    fontWeight: isZeroTotal ? 700 : 500,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px'
+                                }}
+                                title={isZeroTotal ? "Total is set to 0.00 (Customer to Pick Services)" : "Click to show Total as 0.00 in Print/Email (Customer Options)"}
+                            >
+                                <CheckCircle2 size={16} color={isZeroTotal ? "#2563eb" : "#94a3b8"} />
+                                <span className="hide-sm">{isZeroTotal ? 'Total: 0.00' : 'Zero Total'}</span>
+                            </button>
+                        )}
                         <button className="btn-vibrant-secondary" onClick={handlePrint} style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem' }} title="Print PDF">
                             <Printer size={16} /> <span className="hide-sm">Print</span>
                         </button>
@@ -4447,21 +4606,60 @@ export default function WorkflowEditor() {
                         )}
 
                         {!isNew && (formData.document_type?.toUpperCase() === 'QUOTATION' || formData.document_type?.toUpperCase() === 'ENQUIRY') && (
-                            <button 
-                                className="btn-vibrant" 
-                                onClick={handleConvertToJob} 
-                                disabled={saving || formData.is_job} 
-                                style={{ 
-                                    background: formData.is_job ? '#94a3b8' : '#10b981', 
-                                    padding: '8px 12px',
-                                    fontSize: '0.85rem',
-                                    opacity: (saving || formData.is_job) ? 0.7 : 1,
-                                    cursor: formData.is_job ? 'default' : 'pointer'
-                                }}
-                            >
-                                {formData.is_job ? <FileCheck size={16} /> : <Package size={16} />} 
-                                <span className="hide-sm">{formData.is_job ? 'Already Job' : 'To Job'}</span>
-                            </button>
+                            formData.is_job || formData.assigned_job_no ? (
+                                <div className="dropdown" style={{ position: 'relative' }}>
+                                    <button 
+                                        type="button"
+                                        className="btn-vibrant" 
+                                        onClick={handleGoToJob}
+                                        title={`Go to Job ${formData.assigned_job_no || ''}`}
+                                        style={{ 
+                                            background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)', 
+                                            color: '#fff',
+                                            border: 'none',
+                                            padding: '8px 12px',
+                                            fontSize: '0.85rem',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                            boxShadow: '0 2px 6px rgba(16, 185, 129, 0.3)',
+                                            borderRadius: '8px',
+                                            fontWeight: 700
+                                        }}
+                                    >
+                                        <Briefcase size={16} /> 
+                                        <span className="hide-sm">Go to Job {formData.assigned_job_no ? `(${formData.assigned_job_no})` : ''} ↗</span>
+                                        <ChevronDown size={14} />
+                                    </button>
+                                    <div className="dropdown-content">
+                                        <button onClick={handleGoToJob} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <Briefcase size={14} color="#10b981" /> Open Job Details ({formData.assigned_job_no})
+                                        </button>
+                                        <button onClick={() => navigate(`/workflows/jobs-dashboard?search=${encodeURIComponent(formData.assigned_job_no || '')}`)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <LayoutDashboard size={14} color="#3b82f6" /> View in Job Control
+                                        </button>
+                                        <button onClick={() => navigate(`/workflows?type=Job&search=${encodeURIComponent(formData.assigned_job_no || '')}`)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <List size={14} color="#6366f1" /> View in Job Master Board
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <button 
+                                    className="btn-vibrant" 
+                                    onClick={handleConvertToJob} 
+                                    disabled={saving} 
+                                    style={{ 
+                                        background: '#10b981', 
+                                        padding: '8px 12px',
+                                        fontSize: '0.85rem',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    <Package size={16} /> 
+                                    <span className="hide-sm">To Job</span>
+                                </button>
+                            )
                         )}
 
                         {!isNew && formData.is_job && (
@@ -4529,6 +4727,28 @@ export default function WorkflowEditor() {
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            {formData.assigned_job_no && (
+                                <button 
+                                    type="button"
+                                    onClick={handleGoToJob}
+                                    className="btn btn-primary" 
+                                    style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, padding: '10px 16px', borderRadius: '8px', background: '#10b981', borderColor: '#10b981', color: '#fff' }}
+                                    title={`Open Job ${formData.assigned_job_no}`}
+                                >
+                                    <Briefcase size={16} /> Open Job: {formData.assigned_job_no} ↗
+                                </button>
+                            )}
+                            {formData.assigned_job_no && (
+                                <button 
+                                    type="button"
+                                    onClick={() => navigate(`/workflows/jobs-dashboard?search=${encodeURIComponent(formData.assigned_job_no)}`)}
+                                    className="btn btn-secondary" 
+                                    style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, padding: '10px 16px', borderRadius: '8px', borderColor: '#10b981', color: '#047857', background: '#ecfdf5' }}
+                                    title="Open in Job Control Dashboard"
+                                >
+                                    <LayoutDashboard size={16} /> Job Control ↗
+                                </button>
+                            )}
                             <button 
                                 onClick={() => navigate('/workflows?type=Job')}
                                 className="btn btn-secondary" 
@@ -6419,9 +6639,69 @@ export default function WorkflowEditor() {
                                             alignItems: 'center',
                                             boxShadow: '0 3px 10px rgba(30, 58, 138, 0.18)'
                                         }}>
-                                            <span style={{ fontSize: '0.88rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#bfdbfe' }}>Total:</span>
-                                            <span style={{ fontSize: '1.35rem', fontWeight: 900, color: '#ffffff', letterSpacing: '-0.02em' }}>{formData.currency} {(formData.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                            <div>
+                                                <span style={{ fontSize: '0.88rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#bfdbfe' }}>Total:</span>
+                                                {isZeroTotal && (
+                                                    <div style={{ fontSize: '0.68rem', color: '#93c5fd', fontWeight: 700, marginTop: '2px', letterSpacing: '0.03em' }}>
+                                                        CUSTOMER PICKS SERVICES
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div style={{ textAlign: 'right' }}>
+                                                <span style={{ fontSize: '1.35rem', fontWeight: 900, color: '#ffffff', letterSpacing: '-0.02em' }}>
+                                                    {formData.currency} {isZeroTotal ? '0.00' : (formData.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </span>
+                                                {isZeroTotal && (
+                                                    <div style={{ fontSize: '0.72rem', color: '#bfdbfe', fontWeight: 600, marginTop: '1px' }}>
+                                                        (Calculated: {formData.currency} {(formData.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
+
+                                        {/* Zero Total / Customer to Pick Services Toggle */}
+                                        {formData.document_type === 'Quotation' && (
+                                            <div 
+                                                onClick={() => handleToggleZeroTotal(!isZeroTotal)}
+                                                style={{
+                                                    marginTop: '6px',
+                                                    padding: '10px 12px',
+                                                    background: isZeroTotal ? '#eff6ff' : '#f8fafc',
+                                                    border: isZeroTotal ? '1.5px solid #3b82f6' : '1px solid #e2e8f0',
+                                                    borderRadius: '10px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'space-between',
+                                                    gap: '10px',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <input 
+                                                        type="checkbox"
+                                                        id="zero-total-checkbox"
+                                                        checked={isZeroTotal}
+                                                        onChange={(e) => handleToggleZeroTotal(e.target.checked)}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#2563eb' }}
+                                                    />
+                                                    <label htmlFor="zero-total-checkbox" style={{ cursor: 'pointer', margin: 0 }}>
+                                                        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: isZeroTotal ? '#1d4ed8' : '#334155' }}>
+                                                            Customer to Pick Services
+                                                        </div>
+                                                        <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                                            Shows Total as 0.00 in Print & Email
+                                                        </div>
+                                                    </label>
+                                                </div>
+                                                {isZeroTotal && (
+                                                    <span style={{ fontSize: '0.68rem', fontWeight: 800, background: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '12px', whiteSpace: 'nowrap' }}>
+                                                        Total: 0.00
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             )}
@@ -8818,7 +9098,19 @@ export default function WorkflowEditor() {
             <div style={{ position: 'fixed', left: 0, top: 0, zIndex: -9999, pointerEvents: 'none' }}>
                 <div ref={printRef}>
                     <WorkflowDocumentLayout 
-                        doc={{ ...formData, items: lineItems, partners: partners.find(p => p.id === formData.partner_id), contacts: contacts.find(c => c.id === formData.contact_id) }} 
+                        doc={{ 
+                            ...formData, 
+                            zero_total: isZeroTotal, 
+                            is_zero_total: isZeroTotal,
+                            delivery_verification: {
+                                ...(formData.delivery_verification || {}),
+                                zero_total: isZeroTotal,
+                                is_zero_total: isZeroTotal
+                            },
+                            items: lineItems, 
+                            partners: partners.find(p => p.id === formData.partner_id), 
+                            contacts: contacts.find(c => c.id === formData.contact_id) 
+                        }} 
                         settings={settings}
                         logoBase64={logoBase64}
                         signatureBase64={signatureBase64}

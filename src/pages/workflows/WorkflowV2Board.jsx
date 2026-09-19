@@ -542,7 +542,7 @@ export default function WorkflowV2Board() {
             } else {
                 result = await convertQuotationToJob(conversionTarget.id, poData, options);
             }
-            const { jobNo } = result;
+            const { jobNo, jobId } = result || {};
             
             // Provision Drive folder and migrate files if Google API is connected
             if (isTokenValid()) {
@@ -639,10 +639,17 @@ export default function WorkflowV2Board() {
                 }
             }
 
-            alert(`Job ${jobNo} created successfully with all associated documents!`);
             setShowConversionModal(false);
             setPoFile(null);
             fetchDocs();
+
+            if (window.confirm(`🎉 Job ${jobNo} created successfully with all associated documents!\n\nWould you like to open the new Job in Job Control now?`)) {
+                if (jobId) {
+                    navigate(`/workflows/editor/job/${jobId}`);
+                } else {
+                    navigate(`/workflows/jobs-dashboard?search=${encodeURIComponent(jobNo)}`);
+                }
+            }
         } catch (error) {
             console.error("Conversion failed:", error);
             alert("Failed to convert to job: " + (error.message || "Unknown error"));
@@ -2342,37 +2349,39 @@ export default function WorkflowV2Board() {
                                                     {(doc.document_type?.toUpperCase() === 'QUOTATION' || doc.document_type?.toUpperCase() === 'ENQUIRY') && (
                                                         <button
                                                             type="button"
-                                                            style={{ 
-                                                                display: 'inline-flex', 
-                                                                alignItems: 'center', 
+                                                            onClick={(e) => {
+                                                                e.preventDefault();
+                                                                e.stopPropagation();
+                                                                if (doc.is_job || doc.assigned_job_no) {
+                                                                    navigate(`/workflows/jobs-dashboard?search=${encodeURIComponent(doc.assigned_job_no || '')}`);
+                                                                    return;
+                                                                }
+                                                                setConversionTarget(doc);
+                                                                setShowConversionModal(true);
+                                                            }}
+                                                            disabled={conversionLoading}
+                                                            title={doc.is_job ? `Open Job ${doc.assigned_job_no || ''} in Job Control` : "Convert to Job"}
+                                                            style={{
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
                                                                 justifyContent: 'center',
-                                                                gap: '4px', 
+                                                                gap: '4px',
                                                                 height: '32px',
                                                                 padding: '0 10px',
                                                                 borderRadius: '6px',
                                                                 fontSize: '12px',
                                                                 fontWeight: 600,
-                                                                cursor: doc.is_job ? 'default' : 'pointer', 
-                                                                opacity: (conversionLoading || doc.is_job) ? 0.7 : 1,
-                                                                background: doc.is_job ? '#94a3b8' : '#10b981',
-                                                                border: doc.is_job ? '1px solid #94a3b8' : '1px solid #059669',
-                                                                color: '#ffffff',
-                                                                position: 'relative', 
+                                                                background: doc.is_job ? '#ecfdf5' : '#10b981',
+                                                                border: doc.is_job ? '1.5px solid #a7f3d0' : '1px solid #059669',
+                                                                color: doc.is_job ? '#047857' : '#ffffff',
+                                                                cursor: 'pointer',
+                                                                position: 'relative',
                                                                 zIndex: 20
                                                             }}
-                                                            onClick={(e) => {
-                                                                e.preventDefault();
-                                                                e.stopPropagation();
-                                                                if (doc.is_job) return;
-                                                                setConversionTarget(doc);
-                                                                setShowConversionModal(true);
-                                                            }}
-                                                            disabled={conversionLoading || doc.is_job}
-                                                            title={doc.is_job ? "Already Converted to Job" : "Convert to Job"}
                                                         >
                                                             {conversionLoading ? <Loader2 size={12} className="animate-spin" /> : 
                                                              doc.is_job ? <FileCheck size={12} /> : <Play size={12} fill="currentColor" />} 
-                                                            <span>{doc.is_job ? 'Job' : 'Job'}</span>
+                                                            <span>{doc.is_job ? 'Job ↗' : 'Job'}</span>
                                                         </button>
                                                     )}
     

@@ -72,7 +72,19 @@ export default function WorkflowPrintPreview() {
             ]);
 
             if (docRes.data) {
-                setDoc(docRes.data);
+                const searchParams = new URLSearchParams(window.location.search);
+                const zeroTotalParam = searchParams.get('zeroTotal');
+                const isZero = zeroTotalParam === 'true' || Boolean(
+                    docRes.data.zero_total ||
+                    docRes.data.is_zero_total ||
+                    docRes.data.delivery_verification?.zero_total ||
+                    docRes.data.delivery_verification?.is_zero_total
+                );
+                setDoc({
+                    ...docRes.data,
+                    zero_total: isZero,
+                    is_zero_total: isZero
+                });
             }
             if (settingsRes) {
                 setSettings(settingsRes);

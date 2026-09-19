@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { 
     LayoutDashboard, Folder, Calendar, DollarSign, TrendingUp, Plus, 
     Search, Grid, List, ArrowRight, ExternalLink, ShieldCheck, 
@@ -34,22 +34,36 @@ export default function JobsDashboard() {
     const [loading, setLoading] = useState(true);
     const [documents, setDocuments] = useState([]);
     const [settings, setSettings] = useState(null);
-    const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
-    const [searchQuery, setSearchQuery] = useState('');
+    const [searchParams] = useSearchParams();
+    const urlJobSearch = searchParams.get('search') || searchParams.get('job') || searchParams.get('q') || '';
+    const [selectedYear, setSelectedYear] = useState(() => urlJobSearch ? 'All' : new Date().getFullYear().toString());
+    const [searchQuery, setSearchQuery] = useState(() => urlJobSearch || '');
     const [viewMode, setViewMode] = useState('card'); // 'card' or 'table'
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'operations'
 
     // Embedded Job List Table States (Image 2 area)
     const [partners, setPartners] = useState([]);
-    const [tableSubTab, setTableSubTab] = useState('Ongoing');
-    const [tableSearchQuery, setTableSearchQuery] = useState('');
+    const [tableSubTab, setTableSubTab] = useState(() => urlJobSearch ? 'All' : 'Ongoing');
+    const [tableSearchQuery, setTableSearchQuery] = useState(() => urlJobSearch || '');
     const [tableSelectedPartnerId, setTableSelectedPartnerId] = useState('');
     const [tableSortKey, setTableSortKey] = useState('created_at');
     const [tableSortDirection, setTableSortDirection] = useState('desc');
-    const [tableCompactWindow, setTableCompactWindow] = useState(true);
+    const [tableCompactWindow, setTableCompactWindow] = useState(() => !urlJobSearch);
     const [selectedDriveTreeJob, setSelectedDriveTreeJob] = useState(null);
     const [editingJob, setEditingJob] = useState(null);
+
+    // Sync with URL search params whenever they change
+    useEffect(() => {
+        const query = searchParams.get('search') || searchParams.get('job') || searchParams.get('q');
+        if (query) {
+            setSearchQuery(query);
+            setTableSearchQuery(query);
+            setSelectedYear('All');
+            setTableSubTab('All');
+            setTableCompactWindow(false);
+        }
+    }, [searchParams]);
 
     const jobsTools = [
         { title: 'Quote2Customers', description: 'Create and manage sales quotations sent to customers.', icon: <Briefcase size={24} />, color: '#6366f1', path: '/quotations' },
