@@ -647,6 +647,7 @@ export default function UnifiedSupplierHubPro() {
     const [uploadTargetEnquiryId, setUploadTargetEnquiryId] = useState('');
     const [checkingModal, setCheckingModal] = useState({ isOpen: false, enquiry: null });
     const [allPartners, setAllPartners] = useState([]);
+    const [syncingPartners, setSyncingPartners] = useState(false);
     const [showNewFolderModal, setShowNewFolderModal] = useState(false);
     const [customerSearchTerm, setCustomerSearchTerm] = useState('');
     const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
@@ -684,6 +685,72 @@ export default function UnifiedSupplierHubPro() {
         setCalendarModal({ isOpen: true, activityType: 'Enquiry Reminder', enquiryNo: '', ...params });
     };
 
+    // ─── Synchronize Partners & Customers across Database, Jobs & Enquiries ──
+    const syncAllPartners = useCallback(async (showToast = false) => {
+        setSyncingPartners(true);
+        try {
+            const [pProfile, pGlobal] = await Promise.allSettled([
+                profile?.company_id ? getPartners(profile) : Promise.resolve([]),
+                getPartners()
+            ]);
+            let fetched = [];
+            if (pProfile.status === 'fulfilled' && Array.isArray(pProfile.value)) {
+                fetched = [...fetched, ...pProfile.value];
+            }
+            if (pGlobal.status === 'fulfilled' && Array.isArray(pGlobal.value)) {
+                fetched = [...fetched, ...pGlobal.value];
+            }
+
+            // Also harvest customer names & IDs from active jobs and enquiries
+            const extraFromJobs = (jobs || []).map(j => ({
+                id: j.partners?.id || j.partner_id || `job-cust-${j.id}`,
+                name: j.partners?.name || j.customer_name,
+                country: 'Singapore',
+                types: ['Customer'],
+                isFromJob: true
+            })).filter(p => p.name && p.name.trim());
+
+            const extraFromEnqs = (enquiries || []).map(e => ({
+                id: e.customer?.id || e.customer_id || `enq-cust-${e.id}`,
+                name: e.customer?.name || e.customer_name,
+                country: e.customer?.country || 'Singapore',
+                types: ['Customer'],
+                isFromEnq: true
+            })).filter(p => p.name && p.name.trim());
+
+            const combined = [...fetched, ...extraFromJobs, ...extraFromEnqs];
+
+            // Deduplicate by normalized name and ID
+            const seen = new Set();
+            const deduplicated = [];
+            for (const item of combined) {
+                if (!item || !item.name) continue;
+                const norm = item.name.toLowerCase().replace(/[\s\-_.,()/]/g, '');
+                const key = item.id ? `${item.id}-${norm}` : norm;
+                if (!seen.has(key) && !seen.has(norm)) {
+                    seen.add(key);
+                    seen.add(norm);
+                    deduplicated.push(item);
+                }
+            }
+
+            deduplicated.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            setAllPartners(deduplicated);
+            setSuppliers(deduplicated.filter(p => (p.types || []).includes('Supplier')));
+
+            if (showToast) {
+                toast.success(`Synchronized ${deduplicated.length} partners & customers!`);
+            }
+            return deduplicated;
+        } catch (err) {
+            console.error('[HubPro] syncAllPartners error:', err);
+            if (showToast) toast.error('Failed to sync partners: ' + (err.message || err));
+            return [];
+        } finally {
+            setSyncingPartners(false);
+        }
+    }, [profile?.company_id, jobs, enquiries]);
+
     // ─── Load All Data ────────────────────────────────────────────────────────
     const loadAll = useCallback(async () => {
         if (!profile?.company_id) return;
@@ -696,22 +763,58 @@ export default function UnifiedSupplierHubPro() {
                 getDocumentSettings(profile.company_id),
             ]);
 
+            let loadedJobs = [];
+            let loadedEnqs = [];
+
             if (enqRes.status === 'fulfilled') {
-                setEnquiries(enqRes.value || []);
+                loadedEnqs = enqRes.value || [];
+                setEnquiries(loadedEnqs);
             } else {
                 console.error('[HubPro] Enquiries error:', enqRes.reason);
             }
 
             if (jobRes.status === 'fulfilled') {
-                setJobs(jobRes.value || []);
+                loadedJobs = jobRes.value || [];
+                setJobs(loadedJobs);
             } else {
                 console.error('[HubPro] Jobs error:', jobRes.reason);
             }
 
             if (suppRes.status === 'fulfilled') {
                 const suppData = suppRes.value || [];
-                setAllPartners(suppData);
-                setSuppliers(suppData.filter(p => (p.types || []).includes('Supplier')));
+                // Merge customers from loaded jobs and enquiries into partner directory
+                const extraFromJobs = loadedJobs.map(j => ({
+                    id: j.partners?.id || j.partner_id || `job-cust-${j.id}`,
+                    name: j.partners?.name || j.customer_name,
+                    country: 'Singapore',
+                    types: ['Customer'],
+                    isFromJob: true
+                })).filter(p => p.name && p.name.trim());
+
+                const extraFromEnqs = loadedEnqs.map(e => ({
+                    id: e.customer?.id || e.customer_id || `enq-cust-${e.id}`,
+                    name: e.customer?.name || e.customer_name,
+                    country: e.customer?.country || 'Singapore',
+                    types: ['Customer'],
+                    isFromEnq: true
+                })).filter(p => p.name && p.name.trim());
+
+                const combined = [...suppData, ...extraFromJobs, ...extraFromEnqs];
+                const seen = new Set();
+                const deduplicated = [];
+                for (const item of combined) {
+                    if (!item || !item.name) continue;
+                    const norm = item.name.toLowerCase().replace(/[\s\-_.,()/]/g, '');
+                    const key = item.id ? `${item.id}-${norm}` : norm;
+                    if (!seen.has(key) && !seen.has(norm)) {
+                        seen.add(key);
+                        seen.add(norm);
+                        deduplicated.push(item);
+                    }
+                }
+                deduplicated.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                setAllPartners(deduplicated);
+                setSuppliers(deduplicated.filter(p => (p.types || []).includes('Supplier')));
             } else {
                 console.error('[HubPro] Partners error:', suppRes.reason);
             }
@@ -901,13 +1004,7 @@ export default function UnifiedSupplierHubPro() {
         });
         setCustomerSearchTerm('');
         setCustomerDropdownOpen(false);
-        if (!allPartners || allPartners.length === 0) {
-            getPartners().then(pList => {
-                if (pList && pList.length > 0) {
-                    setAllPartners(pList);
-                }
-            }).catch(e => console.warn('Could not load partners for modal:', e));
-        }
+        syncAllPartners(false);
         setShowNewFolderModal(true);
     };
 
@@ -933,6 +1030,35 @@ export default function UnifiedSupplierHubPro() {
         try {
             let partnerId = newFolderForm.customerId || null;
             let primaryContactId = null;
+
+            // If partner was selected from existing job/enquiry harvest, ensure database UUID
+            if (partnerId && (partnerId.startsWith('job-cust-') || partnerId.startsWith('enq-cust-'))) {
+                try {
+                    const { data: dbPartner } = await supabase
+                        .from('partners')
+                        .select('id, name')
+                        .ilike('name', effectiveCustName)
+                        .maybeSingle();
+                    if (dbPartner?.id) {
+                        partnerId = dbPartner.id;
+                    } else {
+                        const { data: newP } = await supabase
+                            .from('partners')
+                            .insert([{
+                                name: effectiveCustName,
+                                company_id: profile.company_id,
+                                types: ['Customer'],
+                                country: 'Singapore',
+                                status: 'active'
+                            }])
+                            .select('id, name')
+                            .single();
+                        if (newP?.id) partnerId = newP.id;
+                    }
+                } catch (e) {
+                    console.warn('Could not auto-link harvested partner:', e);
+                }
+            }
 
             if (newFolderForm.isNewCustomer && effectiveCustName && effectiveCustName !== 'Walk-in') {
                 try {
@@ -3010,30 +3136,46 @@ export default function UnifiedSupplierHubPro() {
                                         <label style={{ fontSize: '0.76rem', fontWeight: 700, color: '#334155' }}>
                                             Customer / Client <span style={{ color: '#ef4444' }}>*</span>
                                         </label>
-                                        <button
-                                            type="button"
-                                            onClick={() => setNewFolderForm(prev => ({
-                                                ...prev,
-                                                isNewCustomer: !prev.isNewCustomer,
-                                                customerId: '',
-                                                customerName: '',
-                                                customerEmail: '',
-                                                customerPhone: '',
-                                                customerCountry: 'Singapore',
-                                                customerAddress: '',
-                                                customerWeblink: '',
-                                                customerNotes: '',
-                                                contactPersonName: '',
-                                                contactPersonEmail: '',
-                                                contactPersonPhone: '',
-                                            }))}
-                                            style={{
-                                                background: 'transparent', border: 'none', color: '#4f46e5',
-                                                fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline'
-                                            }}
-                                        >
-                                            {newFolderForm.isNewCustomer ? '← Choose Existing Customer' : '+ Type New Customer (Full Details)'}
-                                        </button>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => syncAllPartners(true)}
+                                                disabled={syncingPartners}
+                                                title="Synchronize all customers from database, jobs, and enquiries"
+                                                style={{
+                                                    background: '#e0e7ff', border: '1px solid #c7d2fe', color: '#4338ca',
+                                                    fontSize: '0.70rem', fontWeight: 700, borderRadius: '6px',
+                                                    padding: '3px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px'
+                                                }}
+                                            >
+                                                <RefreshCcw size={11} className={syncingPartners ? 'animate-spin' : ''} />
+                                                {syncingPartners ? 'Syncing...' : 'Sync Customers'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setNewFolderForm(prev => ({
+                                                    ...prev,
+                                                    isNewCustomer: !prev.isNewCustomer,
+                                                    customerId: '',
+                                                    customerName: '',
+                                                    customerEmail: '',
+                                                    customerPhone: '',
+                                                    customerCountry: 'Singapore',
+                                                    customerAddress: '',
+                                                    customerWeblink: '',
+                                                    customerNotes: '',
+                                                    contactPersonName: '',
+                                                    contactPersonEmail: '',
+                                                    contactPersonPhone: '',
+                                                }))}
+                                                style={{
+                                                    background: 'transparent', border: 'none', color: '#4f46e5',
+                                                    fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline'
+                                                }}
+                                            >
+                                                {newFolderForm.isNewCustomer ? '← Choose Existing Customer' : '+ Type New Customer (Full Details)'}
+                                            </button>
+                                        </div>
                                     </div>
 
                                     {newFolderForm.isNewCustomer ? (
@@ -3348,22 +3490,62 @@ export default function UnifiedSupplierHubPro() {
 
                                                         {(() => {
                                                             const term = customerSearchTerm.toLowerCase().trim();
+                                                            const termNoSpaces = term.replace(/[\s\-_.,/]+/g, '');
+                                                            const tokens = term.split(/\s+/).filter(Boolean);
+
                                                             const filtered = allPartners.filter(p => {
                                                                 if (!term) return true;
-                                                                return (
-                                                                    (p.name && p.name.toLowerCase().includes(term)) ||
-                                                                    (p.country && p.country.toLowerCase().includes(term)) ||
-                                                                    (p.address && p.address.toLowerCase().includes(term)) ||
-                                                                    (p.email1 && p.email1.toLowerCase().includes(term)) ||
-                                                                    (p.phone1 && p.phone1.toLowerCase().includes(term))
-                                                                );
+                                                                const name = (p.name || '').toLowerCase();
+                                                                const country = (p.country || '').toLowerCase();
+                                                                const address = (p.address || '').toLowerCase();
+                                                                const email = (p.email1 || '').toLowerCase();
+                                                                const phone = (p.phone1 || '').toLowerCase();
+                                                                const contacts = Array.isArray(p.contactPersons)
+                                                                    ? p.contactPersons.map(cp => `${cp.name || ''} ${cp.email || ''}`).join(' ').toLowerCase()
+                                                                    : '';
+                                                                const combined = `${name} ${country} ${address} ${email} ${phone} ${contacts}`;
+
+                                                                // 1. Direct standard substring
+                                                                if (combined.includes(term)) return true;
+
+                                                                // 2. Space/punctuation-insensitive match (e.g. "sea gull" matches "seagull" and vice-versa)
+                                                                if (termNoSpaces) {
+                                                                    const nameNoSpaces = name.replace(/[\s\-_.,/]+/g, '');
+                                                                    if (nameNoSpaces.includes(termNoSpaces)) return true;
+                                                                    const combinedNoSpaces = combined.replace(/[\s\-_.,/]+/g, '');
+                                                                    if (combinedNoSpaces.includes(termNoSpaces)) return true;
+                                                                }
+
+                                                                // 3. Multi-token / all-words match (e.g. "marine seagull" matches "Seagull Marine Pte Ltd")
+                                                                if (tokens.length > 1) {
+                                                                    const allTokensMatch = tokens.every(tk => {
+                                                                        const tkClean = tk.replace(/[\s\-_.,/]+/g, '');
+                                                                        return combined.includes(tk) || (tkClean && name.replace(/[\s\-_.,/]+/g, '').includes(tkClean));
+                                                                    });
+                                                                    if (allTokensMatch) return true;
+                                                                }
+
+                                                                return false;
                                                             }).slice(0, 100); // Top 100 matches for ultra-fast rendering
 
                                                             if (filtered.length === 0) {
                                                                 return (
                                                                     <div style={{ padding: '16px', textAlign: 'center', color: '#64748b', fontSize: '0.78rem' }}>
                                                                         No partners match "{customerSearchTerm}".
-                                                                        <div style={{ marginTop: '8px' }}>
+                                                                        <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => syncAllPartners(true)}
+                                                                                disabled={syncingPartners}
+                                                                                style={{
+                                                                                    background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1',
+                                                                                    borderRadius: '6px', padding: '6px 12px', fontSize: '0.74rem',
+                                                                                    fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                                                                }}
+                                                                            >
+                                                                                <RefreshCcw size={12} className={syncingPartners ? 'animate-spin' : ''} />
+                                                                                {syncingPartners ? 'Syncing...' : 'Resync Customers'}
+                                                                            </button>
                                                                             <button
                                                                                 type="button"
                                                                                 onClick={() => {

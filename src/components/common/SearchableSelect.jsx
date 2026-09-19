@@ -21,8 +21,24 @@ const SearchableSelect = ({
 
     const selectedOption = options.find(opt => opt.id === value);
     const filteredOptions = options.filter(opt => {
+        if (!searchTerm || !searchTerm.trim()) return true;
         const searchStr = (opt.name || opt.label || opt.vessel_name || opt.location_name || '').toLowerCase();
-        return searchStr.includes(searchTerm.toLowerCase());
+        const cleanTerm = searchTerm.toLowerCase().trim();
+        
+        // Direct match
+        if (searchStr.includes(cleanTerm)) return true;
+
+        // Space/punctuation-insensitive match (e.g. "sea gull" matches "seagull")
+        const termNoSpaces = cleanTerm.replace(/[\s\-_.,()/]/g, '');
+        const strNoSpaces = searchStr.replace(/[\s\-_.,()/]/g, '');
+        if (termNoSpaces && strNoSpaces.includes(termNoSpaces)) return true;
+
+        // Multi-word token match
+        const tokens = cleanTerm.split(/[\s\-_.,()/]+/).filter(Boolean);
+        if (tokens.length > 1) {
+            return tokens.every(t => searchStr.includes(t) || strNoSpaces.includes(t.replace(/[\s\-_.,()/]/g, '')));
+        }
+        return false;
     });
 
     useEffect(() => {
