@@ -379,26 +379,6 @@ export default function WorkflowEditor() {
     const [paynowBase64, setPaynowBase64] = useState('');
     const printRef = useRef();
 
-    const isZeroTotal = Boolean(
-        formData.zero_total ||
-        formData.is_zero_total ||
-        formData.delivery_verification?.zero_total ||
-        formData.delivery_verification?.is_zero_total
-    );
-
-    const handleToggleZeroTotal = (checked) => {
-        setFormData(prev => ({
-            ...prev,
-            zero_total: checked,
-            is_zero_total: checked,
-            delivery_verification: {
-                ...(prev.delivery_verification || {}),
-                zero_total: checked,
-                is_zero_total: checked
-            }
-        }));
-    };
-
     // Smooth scroll and highlight helper for summary cards
     const scrollToSection = (sectionId, tabToActivate = 'items') => {
         if (tabToActivate && activeTab !== tabToActivate) {
@@ -937,6 +917,26 @@ export default function WorkflowEditor() {
     });
 
     const isAnithaType = ['Tax Invoice', 'Credit Note', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(formData.document_type);
+
+    const isZeroTotal = Boolean(
+        formData?.zero_total ||
+        formData?.is_zero_total ||
+        formData?.delivery_verification?.zero_total ||
+        formData?.delivery_verification?.is_zero_total
+    );
+
+    const handleToggleZeroTotal = (checked) => {
+        setFormData(prev => ({
+            ...prev,
+            zero_total: checked,
+            is_zero_total: checked,
+            delivery_verification: {
+                ...(prev.delivery_verification || {}),
+                zero_total: checked,
+                is_zero_total: checked
+            }
+        }));
+    };
 
     useEffect(() => {
         // Reset Google Drive provisioning refs when the document ID or job number changes
