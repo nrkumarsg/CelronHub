@@ -1165,13 +1165,16 @@ export default function UnifiedSupplierHubPro() {
                 }
             }
 
-            // 1. Insert enquiry into customer_enquiries
+            // 1. Insert enquiry into customer_enquiries (table links customer via customer_id, no customer_name column)
+            const isValidUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+            const safePartnerId = isValidUuid(partnerId) ? partnerId : null;
+            const safeContactId = isValidUuid(primaryContactId) ? primaryContactId : null;
+
             const newRecord = {
                 company_id: profile.company_id,
                 enquiry_no: newFolderForm.enquiryNo.trim(),
-                customer_id: partnerId,
-                contact_id: primaryContactId,
-                customer_name: effectiveCustName,
+                customer_id: safePartnerId,
+                contact_id: safeContactId,
                 description: newFolderForm.description.trim() || 'New Customer Enquiry',
                 customer_ref: newFolderForm.customerRef.trim() || '',
                 status: 'New',
@@ -1192,7 +1195,16 @@ export default function UnifiedSupplierHubPro() {
 
             if (enqError) throw enqError;
 
-            let finalEnq = createdEnq;
+            let finalEnq = {
+                ...createdEnq,
+                customer_name: effectiveCustName,
+                customer: createdEnq.customer || {
+                    id: safePartnerId,
+                    name: effectiveCustName,
+                    email: newFolderForm.customerEmail || '',
+                    country: newFolderForm.customerCountry || 'Singapore'
+                }
+            };
 
             // 2. Provision Google Drive folder & 7 subfolders if requested
             if (newFolderForm.autoCreateDrive) {
@@ -1202,9 +1214,9 @@ export default function UnifiedSupplierHubPro() {
                 if (token && rootId) {
                     toast.loading(`Provisioning Google Drive folder & 7 standard subfolders...`, { id: toastId });
                     try {
-                        const driveRes = await ensureEnquiryFolderAndSubfolders(token, rootId, createdEnq, true);
+                        const driveRes = await ensureEnquiryFolderAndSubfolders(token, rootId, finalEnq, true);
                         finalEnq = {
-                            ...createdEnq,
+                            ...finalEnq,
                             gdrive_folder_id: driveRes.enqFolderId,
                             gdrive_file_link: driveRes.webViewLink,
                         };
