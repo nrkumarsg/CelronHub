@@ -167,9 +167,35 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
         <div className="print-paper" style={{
             background: '#fff', width: '100%', maxWidth: '210mm', minHeight: '255mm',
             margin: '0 auto', position: 'relative', boxSizing: 'border-box',
-            padding: '24px 30px', display: 'flex', flexDirection: 'column',
+            padding: '24px 30px', display: 'block',
             fontFamily: 'Inter, system-ui, sans-serif'
         }}>
+            <style dangerouslySetInnerHTML={{ __html: `
+                table {
+                    border-collapse: collapse !important;
+                    page-break-inside: auto !important;
+                }
+                thead {
+                    display: table-header-group !important;
+                }
+                tfoot {
+                    display: table-footer-group !important;
+                }
+                tr, .print-row {
+                    page-break-inside: avoid !important;
+                    break-inside: avoid !important;
+                    break-inside: avoid-page !important;
+                }
+                td, th {
+                    page-break-inside: avoid !important;
+                    break-inside: avoid !important;
+                }
+                .page-break-avoid {
+                    page-break-inside: avoid !important;
+                    break-inside: avoid !important;
+                    break-inside: avoid-page !important;
+                }
+            `}} />
             {/* Company Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
                 <img src={logoBase64 || companyLogo} alt="Logo" style={{ maxHeight: '80px', maxWidth: '250px', objectFit: 'contain' }} />
@@ -308,17 +334,17 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
             </div>
 
             {/* Items Table */}
-            <div style={{ border: styles.border, borderRadius: '10px', overflow: 'hidden', marginBottom: '0px' }}>
+            <div className="items-table-container" style={{ border: styles.border, borderRadius: '8px', overflow: 'visible', marginBottom: '15px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                        <tr style={styles.tableHeader}>
-                            <th style={{ padding: '8px 10px', ...styles.h4, width: '6%', borderRight: styles.border }}>S/N</th>
-                            <th style={{ padding: '8px 10px', ...styles.h4, width: '49%', borderRight: styles.border, textAlign: 'center' }}>DESCRIPTION</th>
-                            <th style={{ padding: '8px 10px', ...styles.h4, width: '15%', borderRight: styles.border }}>QTY</th>
+                    <thead style={{ display: 'table-header-group' }}>
+                        <tr style={{ ...styles.tableHeader, pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                            <th style={{ padding: '8px 10px', ...styles.h4, width: '6%', borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>S/N</th>
+                            <th style={{ padding: '8px 10px', ...styles.h4, width: '49%', borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>DESCRIPTION</th>
+                            <th style={{ padding: '8px 10px', ...styles.h4, width: '15%', borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>QTY</th>
                             {!isDeliveryDoc && !isEnquiry && (
                                 <>
-                                    <th style={{ padding: '8px 10px', ...styles.h4, width: '15%', borderRight: styles.border }}>UNIT PRICE</th>
-                                    <th style={{ padding: '8px 10px', ...styles.h4, width: '15%', textAlign: 'right' }}>AMOUNT ({doc.currency || 'SGD'})</th>
+                                    <th style={{ padding: '8px 10px', ...styles.h4, width: '15%', borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>UNIT PRICE</th>
+                                    <th style={{ padding: '8px 10px', ...styles.h4, width: '15%', textAlign: 'right', pageBreakInside: 'avoid', breakInside: 'avoid' }}>AMOUNT ({doc.currency || 'SGD'})</th>
                                 </>
                             )}
                         </tr>
@@ -327,31 +353,31 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                         {(doc.items || []).map((item, idx) => {
                             if (item.is_section) {
                                 return (
-                                    <tr key={idx} style={{ background: '#f8fafc', borderBottom: styles.border }}>
-                                        <td colSpan={(!isDeliveryDoc && !isEnquiry) ? 5 : 3} style={{ padding: '8px 10px', ...styles.bodyBold, color: '#1e3a8a' }}>{item.description?.toUpperCase()}</td>
+                                    <tr key={idx} className="print-row" style={{ background: '#f8fafc', borderBottom: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                                        <td colSpan={(!isDeliveryDoc && !isEnquiry) ? 5 : 3} style={{ padding: '8px 10px', ...styles.bodyBold, color: '#1e3a8a', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{item.description?.toUpperCase()}</td>
                                     </tr>
                                 );
                             }
                             if (item.is_note) {
                                 return (
-                                    <tr key={idx} style={{ borderBottom: styles.border }}>
-                                        <td colSpan={(!isDeliveryDoc && !isEnquiry) ? 5 : 3} style={{ padding: '8px 10px', ...styles.small, fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>{item.description}</td>
+                                    <tr key={idx} className="print-row" style={{ borderBottom: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                                        <td colSpan={(!isDeliveryDoc && !isEnquiry) ? 5 : 3} style={{ padding: '8px 10px', ...styles.small, fontStyle: 'italic', whiteSpace: 'pre-wrap', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{item.description}</td>
                                     </tr>
                                 );
                             }
                             itemCounter++;
                             return (
-                                <tr key={idx} style={{ borderBottom: styles.border }}>
-                                    <td style={{ padding: '8px 10px', ...styles.small, borderRight: styles.border, textAlign: 'center' }}>{itemCounter}</td>
-                                    <td style={{ padding: '8px 10px', ...styles.body, borderRight: styles.border }}>
+                                <tr key={idx} className="print-row" style={{ borderBottom: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                                    <td style={{ padding: '8px 10px', ...styles.small, borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{itemCounter}</td>
+                                    <td style={{ padding: '8px 10px', ...styles.body, borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                                         <div style={{ fontWeight: 800, whiteSpace: 'pre-wrap' }}>{item.description}</div>
                                         {item.details && <div style={{ ...styles.small, marginTop: '2px', whiteSpace: 'pre-wrap' }}>{item.details}</div>}
                                     </td>
-                                    <td style={{ padding: '8px 10px', ...styles.bodyBold, borderRight: styles.border, textAlign: 'center' }}>{item.quantity} {item.uom || 'PC(S)'}</td>
+                                    <td style={{ padding: '8px 10px', ...styles.bodyBold, borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{item.quantity} {item.uom || 'PC(S)'}</td>
                                     {!isDeliveryDoc && !isEnquiry && (
                                         <>
-                                            <td style={{ padding: '8px 10px', ...styles.body, borderRight: styles.border, textAlign: 'center' }}>{(parseFloat(item.unit_price) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                            <td style={{ padding: '8px 10px', ...styles.bodyBold, textAlign: 'right' }}>{(parseFloat(item.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                            <td style={{ padding: '8px 10px', ...styles.body, borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{(parseFloat(item.unit_price) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                            <td style={{ padding: '8px 10px', ...styles.bodyBold, textAlign: 'right', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{(parseFloat(item.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                                         </>
                                     )}
                                 </tr>
@@ -362,10 +388,10 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
             </div>
 
             {/* Footer Section */}
-            <div style={{ pageBreakInside: 'avoid' }}>
+            <div className="page-break-avoid" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                 
                 {/* Totals Section - Separate Rounded Box */}
-                <div style={{ width: '100%', marginBottom: '15px' }}>
+                <div className="page-break-avoid" style={{ width: '100%', marginBottom: '15px', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                     {!isDeliveryDoc && !isEnquiry && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             <div style={{ display: 'flex', border: styles.border, borderRadius: '10px', background: '#f8fafc', alignItems: 'stretch', width: '100%', overflow: 'hidden' }}>
@@ -539,11 +565,11 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                     </div>
                 )}
 
-                {/* Flexible Spacer to push following content to bottom */}
-                <div style={{ flex: 1 }}></div>
+                {/* Spacer between content and signatures */}
+                <div style={{ height: '15px' }}></div>
 
                 {/* Signatures */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '15px' }}>
+                <div className="page-break-avoid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '15px', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                     <div style={{ textAlign: 'center' }}>
                         <div style={{ 
                             border: styles.border, 

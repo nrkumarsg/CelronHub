@@ -4058,20 +4058,23 @@ export default function WorkflowEditor() {
             console.log('Generating high-fidelity PDF from layout...');
             const element = printRef.current;
             const opt = {
-                margin: 0,
+                margin: [8, 0, 12, 0],
                 filename: `${getDocumentDisplayName()}.pdf`,
-                image: { type: 'jpeg', quality: 0.92 },
+                image: { type: 'jpeg', quality: 0.95 },
                 html2canvas: { 
                     scale: 2, 
                     useCORS: true, 
-                    allowTaint: false,
-                    scrollX: 0,
-                    scrollY: 0,
+                    allowTaint: false, 
+                    scrollX: 0, 
+                    scrollY: 0, 
                     logging: false,
-                    windowWidth: 1000 
+                    backgroundColor: '#ffffff'
                 },
                 jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
-                pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+                pagebreak: { 
+                    mode: ['avoid-all', 'css', 'legacy'],
+                    avoid: ['tr', '.print-row', '.page-break-avoid', 'thead']
+                }
             };
 
             if (isMobile && navigator.share && navigator.canShare && !phone) {

@@ -131,11 +131,15 @@ export default function WorkflowPrintPreview() {
         const finalFilename = `${safeFilename}.pdf`;
 
         const opt = {
-            margin: [0, 0, 0, 0],
+            margin: [8, 0, 12, 0],
             filename: finalFilename,
             image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, logging: false },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, logging: false, backgroundColor: '#ffffff' },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+            pagebreak: { 
+                mode: ['avoid-all', 'css', 'legacy'],
+                avoid: ['tr', '.print-row', '.page-break-avoid', 'thead']
+            }
         };
         
         // Add page numbers and save
@@ -148,7 +152,7 @@ export default function WorkflowPrintPreview() {
                 pdf.text(
                     `Page ${i} of ${totalPages}`, 
                     pdf.internal.pageSize.getWidth() - 25, 
-                    pdf.internal.pageSize.getHeight() - 10
+                    pdf.internal.pageSize.getHeight() - 5
                 );
             }
             return pdf.output('blob');
@@ -194,11 +198,15 @@ export default function WorkflowPrintPreview() {
                             const safeFilename = rawFilename.replace(/[/\\?%*:|"<>]/g, '-').trim();
 
                             const opt = {
-                                margin: 0,
+                                margin: [8, 0, 12, 0],
                                 filename: `${safeFilename}.pdf`,
                                 image: { type: 'jpeg', quality: 0.98 },
-                                html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, logging: false },
-                                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                                html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, logging: false, backgroundColor: '#ffffff' },
+                                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                                pagebreak: { 
+                                    mode: ['avoid-all', 'css', 'legacy'],
+                                    avoid: ['tr', '.print-row', '.page-break-avoid', 'thead']
+                                }
                             };
                             
                             html2pdf().set(opt).from(element).toPdf().get('pdf').then((pdf) => {
@@ -207,7 +215,7 @@ export default function WorkflowPrintPreview() {
                                     pdf.setPage(i);
                                     pdf.setFontSize(8);
                                     pdf.setTextColor(150);
-                                    pdf.text(`Page ${i} of ${totalPages}`, pdf.internal.pageSize.getWidth() - 25, pdf.internal.pageSize.getHeight() - 10);
+                                    pdf.text(`Page ${i} of ${totalPages}`, pdf.internal.pageSize.getWidth() - 25, pdf.internal.pageSize.getHeight() - 5);
                                 }
                             }).output('blob').then(blob => {
                                 const pdfFile = new File([blob], `${safeFilename}.pdf`, { type: 'application/pdf' });
@@ -275,23 +283,43 @@ export default function WorkflowPrintPreview() {
                         border-radius: 0 !important;
                         background: transparent !important;
                         box-sizing: border-box !important;
+                        display: block !important;
                     }
-                    @page { margin: 10mm; size: A4 portrait; }
+                    @page { margin: 12mm 10mm 15mm 10mm; size: A4 portrait; }
+                    table {
+                        page-break-inside: auto !important;
+                        border-collapse: collapse !important;
+                    }
+                    tr, .print-row {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                        break-inside: avoid-page !important;
+                    }
+                    td, th {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    thead {
+                        display: table-header-group !important;
+                    }
+                    tfoot {
+                        display: table-footer-group !important;
+                    }
+                    .page-break-avoid {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                        break-inside: avoid-page !important;
+                    }
                     .page-footer {
-                        display: none;
+                        display: block !important;
+                        position: fixed !important;
+                        bottom: 4mm !important;
+                        right: 10mm !important;
+                        font-size: 8pt !important;
+                        color: #94a3b8 !important;
                     }
-                    @media print {
-                        .page-footer {
-                            display: block;
-                            position: fixed;
-                            bottom: 10mm;
-                            right: 10mm;
-                            font-size: 8pt;
-                            color: #94a3b8;
-                        }
-                        .page-footer::after {
-                            content: "Page " counter(page);
-                        }
+                    .page-footer::after {
+                        content: "Page " counter(page);
                     }
                 }
                 `

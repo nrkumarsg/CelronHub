@@ -107,11 +107,11 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
     const safeFilename = `${type}_${docNo}_${customerName}`.replace(/[/\\?%*:|"<>]/g, '-').trim() + '.pdf';
 
     const opt = {
-        margin: [0, 0, 0, 0],
+        margin: [8, 0, 12, 0],
         filename: safeFilename,
-        image: { type: 'jpeg', quality: 0.88 },
+        image: { type: 'jpeg', quality: 0.95 },
         html2canvas: {
-            scale: 1.6,
+            scale: 2,
             useCORS: true,
             allowTaint: false,
             scrollX: 0,
@@ -119,7 +119,11 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
             logging: false,
             backgroundColor: '#ffffff'
         },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true }
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
+        pagebreak: { 
+            mode: ['avoid-all', 'css', 'legacy'],
+            avoid: ['tr', '.print-row', '.page-break-avoid', 'thead']
+        }
     };
 
     try {
@@ -155,7 +159,7 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
                     pdf.text(
                         `Page ${i} of ${totalPages}`,
                         pdf.internal.pageSize.getWidth() - 25,
-                        pdf.internal.pageSize.getHeight() - 10
+                        pdf.internal.pageSize.getHeight() - 5
                     );
                 }
                 return pdf.output('blob');
