@@ -4,7 +4,7 @@ import {
     Clock, Plus, Search, RefreshCw, Calendar, DollarSign, 
     ExternalLink, Eye, Trash2, Tag, Ship, Building2, 
     FileText, CheckCircle2, AlertCircle, Sparkles, Filter, 
-    ChevronDown, ChevronUp, History, Kanban, LayoutDashboard
+    ChevronDown, ChevronUp, History, Kanban, LayoutDashboard, X
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -29,6 +29,19 @@ export default function DailyJobRegister() {
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedStatusTab, setSelectedStatusTab] = useState('All');
+
+    // Date Search & Filter States
+    const [datePreset, setDatePreset] = useState('all'); // 'all' | 'today' | 'yesterday' | 'last7days' | 'this_month' | 'custom'
+    const [dateFieldType, setDateFieldType] = useState('any'); // 'any' | 'update_date' | 'job_date' | 'next_action'
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+
+    const handleClearDateFilter = () => {
+        setDatePreset('all');
+        setStartDate('');
+        setEndDate('');
+        setDateFieldType('any');
+    };
 
     // Inline Form State (NO MODAL BACKDROP)
     const [activeFormJob, setActiveFormJob] = useState(null); // null = closed, {} = new, { ...job } = edit
@@ -124,7 +137,7 @@ export default function DailyJobRegister() {
         });
     }, [documents]);
 
-    // Filter jobs based on search & status tabs
+    // Filter jobs based on search & status tabs + date search
     const filteredJobs = useMemo(() => {
         return processedJobs.filter(j => {
             const matchesSearch = !searchQuery.trim() || 
@@ -133,30 +146,93 @@ export default function DailyJobRegister() {
                 j.vesselLocation.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 j.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 j.customerPoNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                j.lastDailyNote.toLowerCase().includes(searchQuery.toLowerCase());
+                j.lastDailyNote.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                (j.issueDate && j.issueDate.includes(searchQuery)) ||
+                (j.lastDailyUpdateAt && j.lastDailyUpdateAt.includes(searchQuery)) ||
+                (j.nextActionDate && j.nextActionDate.includes(searchQuery));
 
             if (!matchesSearch) return false;
 
-            if (selectedStatusTab === 'All') return true;
+            // Status Tab Filtering
             if (selectedStatusTab === 'Ongoing') {
-                return !['Paid & Closed', 'Paid', 'Completed', 'Closed', 'Archived', 'Cancelled'].includes(j.status);
+                if (['Paid & Closed', 'Paid', 'Completed', 'Closed', 'Archived', 'Cancelled'].includes(j.status)) return false;
+            } else if (selectedStatusTab === 'In Execution') {
+                if (!j.status.includes('Execution') && !j.status.includes('DO')) return false;
+            } else if (selectedStatusTab === 'Billed') {
+                if (!j.status.includes('Billed') && !j.status.includes('Invoice')) return false;
+            } else if (selectedStatusTab === 'Closed') {
+                if (!['Paid & Closed', 'Paid', 'Completed', 'Closed', 'Archived'].includes(j.status)) return false;
+            } else if (selectedStatusTab === 'On Hold') {
+                if (!j.status.includes('Hold') && !j.status.includes('Pending')) return false;
             }
-            if (selectedStatusTab === 'In Execution') {
-                return j.status.includes('Execution') || j.status.includes('DO');
-            }
-            if (selectedStatusTab === 'Billed') {
-                return j.status.includes('Billed') || j.status.includes('Invoice');
-            }
-            if (selectedStatusTab === 'Closed') {
-                return ['Paid & Closed', 'Paid', 'Completed', 'Closed', 'Archived'].includes(j.status);
-            }
-            if (selectedStatusTab === 'On Hold') {
-                return j.status.includes('Hold') || j.status.includes('Pending');
+
+            // Date Range & Preset Filtering
+            if (datePreset !== 'all' || startDate || endDate) {
+                let rangeStart = null;
+                let rangeEnd = null;
+
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                if (datePreset === 'today') {
+                    rangeStart = new Date(today);
+                    rangeEnd = new Date(today);
+                    rangeEnd.setHours(23, 59, 59, 999);
+                } else if (datePreset === 'yesterday') {
+                    rangeStart = new Date(today);
+                    rangeStart.setDate(rangeStart.getDate() - 1);
+                    rangeEnd = new Date(rangeStart);
+                    rangeEnd.setHours(23, 59, 59, 999);
+                } else if (datePreset === 'last7days') {
+                    rangeStart = new Date(today);
+                    rangeStart.setDate(rangeStart.getDate() - 6);
+                    rangeEnd = new Date(today);
+                    rangeEnd.setHours(23, 59, 59, 999);
+                } else if (datePreset === 'this_month') {
+                    rangeStart = new Date(today.getFullYear(), today.getMonth(), 1);
+                    rangeEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+                } else if (datePreset === 'custom' || startDate || endDate) {
+                    if (startDate) {
+                        rangeStart = new Date(`${startDate}T00:00:00`);
+                    }
+                    if (endDate) {
+                        rangeEnd = new Date(`${endDate}T23:59:59`);
+                    }
+                }
+
+                if (rangeStart || rangeEnd) {
+                    const candidateDates = [];
+
+                    if (dateFieldType === 'any' || dateFieldType === 'update_date') {
+                        if (j.lastDailyUpdateAt) candidateDates.push(new Date(j.lastDailyUpdateAt));
+                        if (Array.isArray(j.dailyUpdates)) {
+                            j.dailyUpdates.forEach(upd => {
+                                if (upd.timestamp) candidateDates.push(new Date(upd.timestamp));
+                            });
+                        }
+                    }
+                    if (dateFieldType === 'any' || dateFieldType === 'job_date') {
+                        if (j.issueDate) candidateDates.push(new Date(j.issueDate));
+                        if (j.customerPoDate) candidateDates.push(new Date(j.customerPoDate));
+                    }
+                    if (dateFieldType === 'any' || dateFieldType === 'next_action') {
+                        if (j.nextActionDate) candidateDates.push(new Date(`${j.nextActionDate}T00:00:00`));
+                    }
+
+                    const hasMatchingDate = candidateDates.some(d => {
+                        if (isNaN(d.getTime())) return false;
+                        if (rangeStart && d < rangeStart) return false;
+                        if (rangeEnd && d > rangeEnd) return false;
+                        return true;
+                    });
+
+                    if (!hasMatchingDate) return false;
+                }
             }
 
             return true;
         });
-    }, [processedJobs, searchQuery, selectedStatusTab]);
+    }, [processedJobs, searchQuery, selectedStatusTab, datePreset, dateFieldType, startDate, endDate]);
 
     // Handle opening inline form
     const handleOpenCreateForm = () => {
@@ -404,17 +480,150 @@ export default function DailyJobRegister() {
                     ))}
                 </div>
 
-                {/* Search Box */}
-                <div style={{ position: 'relative', minWidth: '300px', flex: '1 1 300px', maxWidth: '450px' }}>
-                    <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-                    <input
-                        type="text"
-                        className="form-input"
-                        placeholder="Search by Job No, customer, vessel, notes, PO..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        style={{ paddingLeft: '36px', fontSize: '0.85rem', width: '100%' }}
-                    />
+                {/* Right Controls: Date Search & Keyword Search */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', flex: '1 1 auto', justifyContent: 'flex-end' }}>
+                    {/* Date Preset Selector */}
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        background: '#f8fafc',
+                        padding: '4px 10px',
+                        borderRadius: '10px',
+                        border: datePreset !== 'all' ? '1.5px solid #10b981' : '1px solid #cbd5e1',
+                        boxShadow: datePreset !== 'all' ? '0 2px 8px rgba(16, 185, 129, 0.15)' : 'none'
+                    }}>
+                        <Calendar size={15} color={datePreset !== 'all' ? '#059669' : '#64748b'} />
+                        <select
+                            value={datePreset}
+                            onChange={(e) => {
+                                setDatePreset(e.target.value);
+                                if (e.target.value !== 'custom') {
+                                    setStartDate('');
+                                    setEndDate('');
+                                }
+                            }}
+                            style={{
+                                border: 'none',
+                                background: 'transparent',
+                                fontSize: '0.78rem',
+                                fontWeight: 700,
+                                color: datePreset !== 'all' ? '#047857' : '#334155',
+                                outline: 'none',
+                                cursor: 'pointer'
+                            }}
+                            title="Filter jobs by date preset"
+                        >
+                            <option value="all">📅 All Dates</option>
+                            <option value="today">Today's Activity</option>
+                            <option value="yesterday">Yesterday</option>
+                            <option value="last7days">Last 7 Days</option>
+                            <option value="this_month">This Month</option>
+                            <option value="custom">Custom Date Range...</option>
+                        </select>
+
+                        {datePreset !== 'all' && (
+                            <select
+                                value={dateFieldType}
+                                onChange={(e) => setDateFieldType(e.target.value)}
+                                style={{
+                                    border: 'none',
+                                    borderLeft: '1px solid #cbd5e1',
+                                    paddingLeft: '6px',
+                                    background: 'transparent',
+                                    fontSize: '0.72rem',
+                                    color: '#475569',
+                                    fontWeight: 600,
+                                    outline: 'none',
+                                    cursor: 'pointer'
+                                }}
+                                title="Choose which date field to match"
+                            >
+                                <option value="any">Any Date</option>
+                                <option value="update_date">Daily Update Date</option>
+                                <option value="job_date">Job / PO Date</option>
+                                <option value="next_action">Next Action Due</option>
+                            </select>
+                        )}
+
+                        {datePreset !== 'all' && (
+                            <button
+                                type="button"
+                                onClick={handleClearDateFilter}
+                                style={{
+                                    border: 'none',
+                                    background: 'none',
+                                    color: '#ef4444',
+                                    cursor: 'pointer',
+                                    padding: '2px',
+                                    display: 'flex',
+                                    alignItems: 'center'
+                                }}
+                                title="Clear Date Filter"
+                            >
+                                <X size={14} />
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Custom Date Range Pickers (if custom selected) */}
+                    {datePreset === 'custom' && (
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            background: '#ffffff',
+                            padding: '3px 10px',
+                            borderRadius: '8px',
+                            border: '1.5px solid #10b981'
+                        }}>
+                            <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 700 }}>From:</span>
+                            <input
+                                type="date"
+                                value={startDate}
+                                onChange={(e) => setStartDate(e.target.value)}
+                                style={{ border: 'none', outline: 'none', fontSize: '0.78rem', color: '#0f172a', fontWeight: 600 }}
+                            />
+                            <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 700 }}>To:</span>
+                            <input
+                                type="date"
+                                value={endDate}
+                                onChange={(e) => setEndDate(e.target.value)}
+                                style={{ border: 'none', outline: 'none', fontSize: '0.78rem', color: '#0f172a', fontWeight: 600 }}
+                            />
+                        </div>
+                    )}
+
+                    {/* Text Search Box */}
+                    <div style={{ position: 'relative', minWidth: '260px', flex: '1 1 260px', maxWidth: '380px' }}>
+                        <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                        <input
+                            type="text"
+                            className="form-input"
+                            placeholder="Search by Job No, customer, vessel, notes, PO..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            style={{ paddingLeft: '34px', fontSize: '0.82rem', width: '100%', height: '36px' }}
+                        />
+                        {searchQuery && (
+                            <button
+                                type="button"
+                                onClick={() => setSearchQuery('')}
+                                style={{
+                                    position: 'absolute',
+                                    right: '8px',
+                                    top: '50%',
+                                    transform: 'translateY(-50%)',
+                                    border: 'none',
+                                    background: 'none',
+                                    color: '#94a3b8',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                <X size={14} />
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
 
