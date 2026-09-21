@@ -333,12 +333,8 @@ export default function JobsWhiteboard() {
                         >
                             <QrCode size={16} /> Start From Scan Gateway
                         </Link>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setSelectedUpdateJob(null);
-                                setIsUpdateModalOpen(true);
-                            }}
+                        <Link
+                            to="/workflows/daily-jobs"
                             style={{
                                 display: 'inline-flex',
                                 alignItems: 'center',
@@ -349,13 +345,13 @@ export default function JobsWhiteboard() {
                                 borderRadius: '10px',
                                 fontWeight: '800',
                                 fontSize: '13px',
-                                border: 'none',
-                                cursor: 'pointer',
+                                textDecoration: 'none',
                                 boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)'
                             }}
+                            title="Open Daily Job Operations Table & Register"
                         >
-                            <Clock size={16} /> + Daily Job Entry / Update
-                        </button>
+                            <Clock size={16} /> ⏱️ Daily Job Operations Table
+                        </Link>
                         <Link
                             to="/workflows/wizard"
                             style={{

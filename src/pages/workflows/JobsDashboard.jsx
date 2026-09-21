@@ -64,12 +64,6 @@ export default function JobsDashboard() {
             setTableSubTab('All');
             setTableCompactWindow(false);
         }
-
-        const action = searchParams.get('action');
-        if (action === 'daily-entry' || action === 'new-job' || searchParams.get('new') === 'true') {
-            setEditingJob(null);
-            setEverydayModalOpen(true);
-        }
     }, [searchParams]);
 
     const jobsTools = [
@@ -1037,14 +1031,11 @@ export default function JobsDashboard() {
                     </button>
                     <button 
                         className="btn btn-secondary" 
-                        onClick={() => {
-                            setEditingJob(null);
-                            setEverydayModalOpen(true);
-                        }}
+                        onClick={() => navigate('/workflows/daily-jobs')}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, borderColor: '#10b981', color: '#047857', background: '#ecfdf5' }}
-                        title="Daily Job Entry, Everyday Status Update & Calendar Sync"
+                        title="Open Daily Job Operations Table & Entry Register"
                     >
-                        <Clock size={18} /> + Daily Job Entry / Update
+                        <Clock size={18} /> ⏱️ Daily Job Operations Table
                     </button>
                     <button 
                         className="btn btn-primary" 

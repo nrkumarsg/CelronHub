@@ -150,9 +150,9 @@ export default function Sidebar() {
                             <span className="nav-text" style={{ fontWeight: 800, color: location.pathname === '/workflows/whiteboard' ? '#ffffff' : '#f59e0b' }}>📌 Jobs Whiteboard</span>
                         </NavLink>
 
-                        <NavLink to="/workflows/jobs-dashboard?action=daily-entry" className={() => `nav-link ${location.search.includes('action=daily-entry') ? 'active' : ''}`} title="Daily Job Entry & Everyday Update">
+                        <NavLink to="/workflows/daily-jobs" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Daily Job Entry & Operations Table">
                             <Clock size={20} color="#10b981" />
-                            <span className="nav-text" style={{ fontWeight: 800, color: location.search.includes('action=daily-entry') ? '#ffffff' : '#10b981' }}>⏱️ Daily Job Entry</span>
+                            <span className="nav-text" style={{ fontWeight: 800, color: location.pathname.includes('daily-jobs') ? '#ffffff' : '#10b981' }}>⏱️ Daily Job Entry</span>
                         </NavLink>
 
                         <NavLink to="/workflows/eagle-control" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Master Operations Control Center">
