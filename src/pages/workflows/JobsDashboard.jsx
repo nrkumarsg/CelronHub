@@ -678,6 +678,12 @@ export default function JobsDashboard() {
 
             const term = (tableSearchQuery || searchQuery || '').toLowerCase().trim();
             if (term) {
+                const docDateStr = doc.issue_date || doc.created_at || '';
+                const docDateFormatted = docDateStr ? new Date(docDateStr).toLocaleDateString('en-SG') : '';
+                const docPoDateStr = doc.customer_po_date || '';
+                const docPoDateFormatted = docPoDateStr ? new Date(docPoDateStr).toLocaleDateString('en-SG') : '';
+                const lastUpdateStr = doc.delivery_verification?.last_daily_update_at || '';
+
                 const matches = (doc.assigned_job_no || doc.document_no || '').toLowerCase().includes(term) ||
                     (doc.partners?.name || '').toLowerCase().includes(term) ||
                     (doc.delivery_verification?.po_description || '').toLowerCase().includes(term) ||
@@ -686,13 +692,20 @@ export default function JobsDashboard() {
                     (doc.customer_po_no || '').toLowerCase().includes(term) ||
                     (doc.contacts?.name || '').toLowerCase().includes(term) ||
                     (doc.contacts?.first_name || '').toLowerCase().includes(term) ||
+                    docDateStr.toLowerCase().includes(term) ||
+                    docDateFormatted.toLowerCase().includes(term) ||
+                    docPoDateStr.toLowerCase().includes(term) ||
+                    docPoDateFormatted.toLowerCase().includes(term) ||
+                    lastUpdateStr.toLowerCase().includes(term) ||
                     (doc.suiteDocs && doc.suiteDocs.some(sd => 
                         (sd.document_no && sd.document_no.toLowerCase().includes(term)) ||
                         (sd.subject && sd.subject.toLowerCase().includes(term)) ||
                         (sd.customer_ref && sd.customer_ref.toLowerCase().includes(term)) ||
                         (sd.customer_po_no && sd.customer_po_no.toLowerCase().includes(term)) ||
                         (sd.partners?.name && sd.partners.name.toLowerCase().includes(term)) ||
-                        (sd.contacts?.name && sd.contacts.name.toLowerCase().includes(term))
+                        (sd.contacts?.name && sd.contacts.name.toLowerCase().includes(term)) ||
+                        (sd.issue_date && sd.issue_date.toLowerCase().includes(term)) ||
+                        (sd.issue_date && new Date(sd.issue_date).toLocaleDateString('en-SG').includes(term))
                     ));
                 if (!matches) return false;
             }
