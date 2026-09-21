@@ -17,6 +17,7 @@ import {
 import { useVesselsStore } from '../../lib/vesselsStore';
 import { openGoogleCalendarWeb, createGoogleCalendarApiEvent } from '../../lib/googleCalendarService';
 import { isTokenValid } from '../../lib/googleAuthService';
+import { getPartners } from '../../lib/store';
 import SearchableSelect from '../common/SearchableSelect';
 import toast from 'react-hot-toast';
 
@@ -78,29 +79,39 @@ export default function JobEverydayUpdateForm({
     const [calendarTime, setCalendarTime] = useState('09:00');
     const [dailyUpdatesHistory, setDailyUpdatesHistory] = useState([]);
 
-    // Load partners & vessels on mount
+    // Load partners & vessels on mount using full pagination (resolves 1000-row cutoff like TECHSMART)
     useEffect(() => {
         const loadMetadata = async () => {
             try {
                 fetchVessels();
-                let q = supabase.from('partners').select('id, name, types').order('name');
-                if (effectiveCompanyId && profile?.role !== 'superadmin') {
-                    q = q.or(`company_id.eq.${effectiveCompanyId},company_id.is.null`);
-                }
-                const { data } = await q;
-                if (data) {
-                    setPartners(data.map(p => ({
+                const allPartners = await getPartners(profile);
+                if (allPartners && allPartners.length > 0) {
+                    setPartners(allPartners.map(p => ({
                         id: p.id,
                         name: p.name,
-                        label: p.name
+                        label: p.name,
+                        category: Array.isArray(p.types) ? p.types.join(', ') : (p.types || '')
                     })));
+                } else {
+                    let q = supabase.from('partners').select('id, name, types').order('name').limit(3000);
+                    if (effectiveCompanyId && profile?.role !== 'superadmin') {
+                        q = q.or(`company_id.eq.${effectiveCompanyId},is_shared.eq.true,company_id.is.null`);
+                    }
+                    const { data } = await q;
+                    if (data) {
+                        setPartners(data.map(p => ({
+                            id: p.id,
+                            name: p.name,
+                            label: p.name
+                        })));
+                    }
                 }
             } catch (err) {
                 console.warn('Error loading partners/vessels:', err);
             }
         };
         loadMetadata();
-    }, [effectiveCompanyId]);
+    }, [effectiveCompanyId, profile]);
 
     // Handle job selection or initialization
     useEffect(() => {
@@ -600,26 +611,72 @@ export default function JobEverydayUpdateForm({
                                 value={formData.partner_id}
                                 name="partner_id"
                                 onChange={handleFieldChange}
-                                placeholder="Search or select customer..."
+                                placeholder="Search or select customer (e.g. Techsmart)..."
+                                onAddNew={async (typedName) => {
+                                    if (!typedName?.trim()) return;
+                                    const cleanName = typedName.trim();
+                                    try {
+                                        const { data: newP, error } = await supabase.from('partners').insert([{
+                                            name: cleanName,
+                                            company_id: effectiveCompanyId,
+                                            types: ['Customer']
+                                        }]).select('id, name').single();
+                                        if (error) throw error;
+                                        if (newP) {
+                                            const partnerObj = { id: newP.id, name: newP.name, label: newP.name };
+                                            setPartners(prev => [partnerObj, ...prev]);
+                                            setFormData(prev => ({ ...prev, partner_id: newP.id }));
+                                            toast.success(`Created & selected "${newP.name}"!`);
+                                        }
+                                    } catch (e) {
+                                        console.error('Failed to create partner:', e);
+                                        const tempId = `custom-${Date.now()}`;
+                                        const partnerObj = { id: tempId, name: cleanName, label: cleanName };
+                                        setPartners(prev => [partnerObj, ...prev]);
+                                        setFormData(prev => ({ ...prev, partner_id: tempId, po_description: cleanName }));
+                                        toast.success(`Using customer "${cleanName}"`);
+                                    }
+                                }}
+                                addNewText="+ Add New Customer"
                             />
                         </div>
 
                         {/* Vessel */}
                         <div className="form-item">
                             <label className="form-label">Vessel / Location</label>
-                            <select
-                                name="vessel_id"
-                                className="form-input"
+                            <SearchableSelect
+                                options={vessels.map(v => ({
+                                    id: v.id,
+                                    name: `${v.vessel_name}${v.imo_number ? ` (IMO: ${v.imo_number})` : ''}`,
+                                    label: v.vessel_name
+                                }))}
                                 value={formData.vessel_id}
+                                name="vessel_id"
                                 onChange={handleFieldChange}
-                            >
-                                <option value="">Select Vessel / Workplace...</option>
-                                {vessels.map(v => (
-                                    <option key={v.id} value={v.id}>
-                                        {v.vessel_name} {v.imo_number ? `(IMO: ${v.imo_number})` : ''}
-                                    </option>
-                                ))}
-                            </select>
+                                placeholder="Search or select vessel / workplace..."
+                                onAddNew={async (typedVessel) => {
+                                    if (!typedVessel?.trim()) return;
+                                    const cleanName = typedVessel.trim();
+                                    try {
+                                        const { data: newV, error } = await supabase.from('vessels').insert([{
+                                            vessel_name: cleanName,
+                                            company_id: effectiveCompanyId
+                                        }]).select('id, vessel_name').single();
+                                        if (error) throw error;
+                                        if (newV) {
+                                            fetchVessels();
+                                            setFormData(prev => ({ ...prev, vessel_id: newV.id }));
+                                            toast.success(`Added vessel/workplace "${newV.vessel_name}"!`);
+                                        }
+                                    } catch (e) {
+                                        console.error('Failed to create vessel:', e);
+                                        const tempId = `vessel-${Date.now()}`;
+                                        setFormData(prev => ({ ...prev, vessel_id: tempId }));
+                                        toast.success(`Using workplace "${cleanName}"`);
+                                    }
+                                }}
+                                addNewText="+ Add New Vessel / Workplace"
+                            />
                         </div>
 
                         {/* Customer PO No */}
