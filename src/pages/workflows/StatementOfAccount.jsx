@@ -380,7 +380,8 @@ const processStatementData = (rawData, partnerId, start, end, partnersList, fall
 
 export default function StatementOfAccount() {
     const navigate = useNavigate();
-    const { profile } = useAuth();
+    const { profile, activeCompanyId } = useAuth();
+    const targetCompanyId = activeCompanyId || profile?.company_id;
     const [loading, setLoading] = useState(false);
     const [partners, setPartners] = useState([]);
     const [selectedPartner, setSelectedPartner] = useState('');
@@ -518,10 +519,10 @@ export default function StatementOfAccount() {
         }));
 
     useEffect(() => {
-        if (profile?.company_id) {
+        if (targetCompanyId) {
             fetchInitialData();
         }
-    }, [profile?.company_id]);
+    }, [targetCompanyId]);
 
     const getGlobalOldestInvoiceDate = () => {
         let oldest = null;
@@ -559,7 +560,7 @@ export default function StatementOfAccount() {
     }, [selectedPartner, companyAging]);
 
     const fetchInitialData = async () => {
-        if (!profile?.company_id) return;
+        if (!targetCompanyId) return;
 
         // Run overall aging summary and dispatch logs concurrently without waiting
         fetchOverallSummary();
@@ -568,7 +569,7 @@ export default function StatementOfAccount() {
         const { getContacts } = await import('../../lib/store');
         const [pRes, sRes, cRes] = await Promise.all([
             getPartners(profile),
-            getDocumentSettings(profile.company_id),
+            getDocumentSettings(targetCompanyId),
             getContacts(profile)
         ]);
         
@@ -583,10 +584,10 @@ export default function StatementOfAccount() {
     };
 
     const fetchOverallSummary = async () => {
-        if (!profile?.company_id) return;
+        if (!targetCompanyId) return;
         setOverallLoading(true);
         try {
-            const { data } = await getStatementData(profile.company_id, null, null, new Date().toISOString().split('T')[0]);
+            const { data } = await getStatementData(targetCompanyId, null, null, new Date().toISOString().split('T')[0]);
             
             if (data) {
                 // Deduplication logic: If Tax Invoice exists for a job/enquiry, hide Proforma
@@ -725,7 +726,7 @@ export default function StatementOfAccount() {
         setLoading(true);
         try {
             const { data, partner, error: fetchErr } = await getStatementData(
-                profile?.company_id, 
+                targetCompanyId, 
                 partnerId, 
                 start, 
                 end

@@ -89,7 +89,8 @@ export default function JobsDashboard() {
         }
     };
 
-    const { profile } = useAuth();
+    const { profile, activeCompanyId } = useAuth();
+    const targetCompanyId = activeCompanyId || profile?.company_id;
     const [openDropdownJobNo, setOpenDropdownJobNo] = useState(null);
 
     // Close dropdown on click outside
@@ -102,7 +103,7 @@ export default function JobsDashboard() {
     // Fetch User Settings and Workflow Documents based on Active Company
     useEffect(() => {
         const loadInitialData = async () => {
-            if (!profile?.company_id) {
+            if (!targetCompanyId) {
                 setLoading(false);
                 return;
             }
@@ -111,15 +112,15 @@ export default function JobsDashboard() {
 
                 // Fetch Settings, Partners (id, name only for filter), and Job Summaries in parallel
                 const [docSettings, pData, docsRes] = await Promise.all([
-                    getDocumentSettings(profile.company_id).catch(err => {
+                    getDocumentSettings(targetCompanyId).catch(err => {
                         console.warn("Could not load doc settings:", err);
                         return null;
                     }),
                     (async () => {
                         try {
                             let partnersQuery = supabase.from('partners').select('id, name').order('name');
-                            if (profile?.company_id && profile.role !== 'superadmin') {
-                                partnersQuery = partnersQuery.or(`company_id.eq.${profile.company_id},company_id.is.null`);
+                            if (targetCompanyId && profile?.role !== 'superadmin') {
+                                partnersQuery = partnersQuery.or(`company_id.eq.${targetCompanyId},company_id.is.null`);
                             }
                             const { data } = await partnersQuery;
                             return data || [];
@@ -128,7 +129,7 @@ export default function JobsDashboard() {
                             return [];
                         }
                     })(),
-                    getWorkflowDocuments(profile.company_id, null, true, true)
+                    getWorkflowDocuments(targetCompanyId, null, true, true)
                 ]);
 
                 if (docSettings) setSettings(docSettings);
@@ -144,7 +145,7 @@ export default function JobsDashboard() {
         };
 
         loadInitialData();
-    }, [profile?.company_id]);
+    }, [targetCompanyId]);
 
     // Process & group documents by assigned_job_no
     const processJobs = () => {
@@ -454,9 +455,9 @@ export default function JobsDashboard() {
     };
 
     const reloadDocuments = async () => {
-        if (!profile?.company_id) return;
+        if (!targetCompanyId) return;
         try {
-            const { data: docs, error } = await getWorkflowDocuments(profile.company_id, null, true, true);
+            const { data: docs, error } = await getWorkflowDocuments(targetCompanyId, null, true, true);
             if (error) throw error;
             setDocuments(docs || []);
         } catch (err) {

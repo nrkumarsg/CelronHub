@@ -258,7 +258,7 @@ export const getWorkflowDocuments = async (companyId, type = null, onlyJobs = fa
         ? `
             id, document_no, assigned_job_no, document_type, status, total_amount, currency,
             issue_date, created_at, expiry_date, subject, customer_po_no, customer_ref,
-            drive_folder_id, gdrive_folder_id, delivery_verification, partner_id, is_job, revision_no,
+            drive_folder_id, delivery_verification, partner_id, is_job, revision_no,
             partners!partner_id(id, name),
             vessels!vessel_id(id, vessel_name),
             work_locations!work_location_id(id, location_name)
