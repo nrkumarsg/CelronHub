@@ -518,8 +518,10 @@ export default function StatementOfAccount() {
         }));
 
     useEffect(() => {
-        fetchInitialData();
-    }, []);
+        if (profile?.company_id) {
+            fetchInitialData();
+        }
+    }, [profile?.company_id]);
 
     const getGlobalOldestInvoiceDate = () => {
         let oldest = null;
@@ -557,11 +559,17 @@ export default function StatementOfAccount() {
     }, [selectedPartner, companyAging]);
 
     const fetchInitialData = async () => {
+        if (!profile?.company_id) return;
+
+        // Run overall aging summary and dispatch logs concurrently without waiting
+        fetchOverallSummary();
+        fetchDispatchLogs();
+
         const { getContacts } = await import('../../lib/store');
         const [pRes, sRes, cRes] = await Promise.all([
-            getPartners(),
-            getDocumentSettings(profile?.company_id),
-            getContacts()
+            getPartners(profile),
+            getDocumentSettings(profile.company_id),
+            getContacts(profile)
         ]);
         
         if (pRes) setPartners(pRes);
@@ -572,8 +580,6 @@ export default function StatementOfAccount() {
             }
         }
         if (cRes) setContacts(cRes);
-        fetchOverallSummary();
-        fetchDispatchLogs();
     };
 
     const fetchOverallSummary = async () => {
@@ -2060,7 +2066,15 @@ export default function StatementOfAccount() {
                             </div>
                         </div>
                     );
-                })() : (
+                })() : overallLoading ? (
+                    <div style={{ padding: '80px 40px', textAlign: 'center', background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                        <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
+                            <Loader2 size={36} color="#3b82f6" className="animate-spin" />
+                        </div>
+                        <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e3a8a', marginBottom: '8px' }}>Loading Financial Ledger & Aging...</h2>
+                        <p style={{ color: '#64748b', fontSize: '1rem', maxWidth: '500px', margin: '0 auto' }}>Calculating balances and outstanding customer aging summaries.</p>
+                    </div>
+                ) : (
                     <div style={{ padding: '80px 40px', textAlign: 'center', background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
                         <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
                             <Filter size={32} color="#3b82f6" />

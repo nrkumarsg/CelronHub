@@ -253,16 +253,27 @@ export const generateDocNumber = async (companyId, type, isRevision = false, ori
 /**
  * Fetch Documents by Type
  */
-export const getWorkflowDocuments = async (companyId, type = null, onlyJobs = false) => {
-    let query = supabase
-        .from('workflow_documents')
-        .select(`
+export const getWorkflowDocuments = async (companyId, type = null, onlyJobs = false, summaryOnly = false) => {
+    const selectFields = summaryOnly
+        ? `
+            id, document_no, assigned_job_no, document_type, status, total_amount, currency,
+            issue_date, created_at, expiry_date, subject, customer_po_no, customer_ref,
+            drive_folder_id, gdrive_folder_id, delivery_verification, partner_id, is_job, revision_no,
+            partners!partner_id(id, name),
+            vessels!vessel_id(id, vessel_name),
+            work_locations!work_location_id(id, location_name)
+        `
+        : `
             *,
             partners!partner_id(*),
             vessels!vessel_id(id, vessel_name),
             work_locations!work_location_id(id, location_name),
             contacts!contact_id(id, name, email, handphone)
-        `)
+        `;
+
+    let query = supabase
+        .from('workflow_documents')
+        .select(selectFields)
         .eq('company_id', companyId)
         .order('created_at', { ascending: false });
 
@@ -289,9 +300,14 @@ export const getWorkflowDocuments = async (companyId, type = null, onlyJobs = fa
 export const getStatementData = async (companyId, partnerId, startDate, endDate) => {
     // Fetch all Invoices, Proformas, and Payments for this partner up to endDate
     // We need earlier ones to calculate opening balance correctly
+    const isGlobalSummary = !partnerId;
+    const selectFields = isGlobalSummary
+        ? 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, currency, total_amount, issue_date, status, payment_status, partners(id, name)'
+        : 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, currency, total_amount, issue_date, due_date, status, payment_status, internal_notes, original_document_id, customer_ref, customer_po_no, order_reference, subject, partners(id, name), vessels!vessel_id(vessel_name), work_locations!work_location_id(location_name)';
+
     let query = supabase
         .from('workflow_documents')
-        .select('*, partners(name), vessels!vessel_id(vessel_name), work_locations!work_location_id(location_name)')
+        .select(selectFields)
         .eq('company_id', companyId)
         .in('document_type', ['Tax Invoice', 'Proforma Invoice', 'Payment Received', 'Credit Note'])
         .lte('issue_date', endDate)

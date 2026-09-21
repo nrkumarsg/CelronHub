@@ -109,50 +109,32 @@ export default function JobsDashboard() {
             try {
                 setLoading(true);
 
-                // One-time database correction for CEL-2606-6081 issue date
-                try {
-                    const { data: fixDoc } = await supabase
-                        .from('workflow_documents')
-                        .select('id, issue_date')
-                        .eq('document_no', 'CEL-2606-6081')
-                        .eq('issue_date', '2025-11-30')
-                        .maybeSingle();
-                    if (fixDoc) {
-                        await supabase
-                            .from('workflow_documents')
-                            .update({ issue_date: '2026-06-19' })
-                            .eq('id', fixDoc.id);
-                        console.log("Successfully corrected CEL-2606-6081 issue date to 2026-06-19");
-                    }
-                } catch (fixErr) {
-                    console.error("Error executing one-time correction:", fixErr);
-                }
+                // Fetch Settings, Partners (id, name only for filter), and Job Summaries in parallel
+                const [docSettings, pData, docsRes] = await Promise.all([
+                    getDocumentSettings(profile.company_id).catch(err => {
+                        console.warn("Could not load doc settings:", err);
+                        return null;
+                    }),
+                    (async () => {
+                        try {
+                            let partnersQuery = supabase.from('partners').select('id, name').order('name');
+                            if (profile?.company_id && profile.role !== 'superadmin') {
+                                partnersQuery = partnersQuery.or(`company_id.eq.${profile.company_id},company_id.is.null`);
+                            }
+                            const { data } = await partnersQuery;
+                            return data || [];
+                        } catch (pErr) {
+                            console.warn("Could not load partners:", pErr);
+                            return [];
+                        }
+                    })(),
+                    getWorkflowDocuments(profile.company_id, null, true, true)
+                ]);
 
-                // Temporary debug log for CEL-2606-6051
-                try {
-                    const { data: suite6051 } = await supabase
-                        .from('workflow_documents')
-                        .select('id, document_type, document_no, assigned_job_no, total_amount, is_job, revision_no')
-                        .eq('assigned_job_no', 'CEL-2606-6051');
-                    console.log("=== CEL-2606-6051 Suite Documents ===", suite6051);
-                } catch (err) {
-                    console.error("Error querying suite6051:", err);
-                }
-
-                const docSettings = await getDocumentSettings(profile.company_id);
-                setSettings(docSettings);
-
-                try {
-                    const pData = await getPartners(profile);
-                    if (pData) setPartners(pData);
-                } catch (pErr) {
-                    console.warn("Could not load partners:", pErr);
-                }
-                
-                // Load All Workflow Documents for the active company workspace (filtering for job documents at DB level)
-                const { data: docs, error } = await getWorkflowDocuments(profile.company_id, null, true);
-                if (error) throw error;
-                setDocuments(docs || []);
+                if (docSettings) setSettings(docSettings);
+                if (pData) setPartners(pData);
+                if (docsRes?.error) throw docsRes.error;
+                setDocuments(docsRes?.data || []);
             } catch (err) {
                 console.error("Error loading dashboard data:", err);
                 toast.error("Failed to load dashboard data");
@@ -369,7 +351,7 @@ export default function JobsDashboard() {
             toast.success('Folder provisioned successfully!');
             
             // Reload documents
-            const { data: docs } = await getWorkflowDocuments(profile.company_id, null, true);
+            const { data: docs } = await getWorkflowDocuments(profile.company_id, null, true, true);
             setDocuments(docs || []);
 
             window.open(`https://drive.google.com/drive/folders/${projectFolderId}`, '_blank');
@@ -474,7 +456,7 @@ export default function JobsDashboard() {
     const reloadDocuments = async () => {
         if (!profile?.company_id) return;
         try {
-            const { data: docs, error } = await getWorkflowDocuments(profile.company_id, null, true);
+            const { data: docs, error } = await getWorkflowDocuments(profile.company_id, null, true, true);
             if (error) throw error;
             setDocuments(docs || []);
         } catch (err) {
