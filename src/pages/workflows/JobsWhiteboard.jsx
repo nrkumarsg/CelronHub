@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
 import { fetchWhiteboardJobs, updateJobPipelineStage } from '../../lib/workflowV2Service';
 import ModuleSwitcherHeader from '../../components/common/ModuleSwitcherHeader';
+import JobEverydayUpdateModal from '../../components/workflows/JobEverydayUpdateModal';
 import {
     Kanban, Search, RefreshCw, Plus, Clock, AlertTriangle, CheckCircle,
     FileText, ArrowRight, Filter, ChevronRight, Layers, Eye, Smartphone,
@@ -90,6 +91,8 @@ export default function JobsWhiteboard() {
     const [showArchived, setShowArchived] = useState(false);
     const [draggedCardId, setDraggedCardId] = useState(null);
     const [updatingId, setUpdatingId] = useState(null);
+    const [selectedUpdateJob, setSelectedUpdateJob] = useState(null);
+    const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
 
     const loadJobs = async () => {
         setLoading(true);
@@ -330,6 +333,29 @@ export default function JobsWhiteboard() {
                         >
                             <QrCode size={16} /> Start From Scan Gateway
                         </Link>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSelectedUpdateJob(null);
+                                setIsUpdateModalOpen(true);
+                            }}
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                background: '#10b981',
+                                color: '#ffffff',
+                                padding: '10px 16px',
+                                borderRadius: '10px',
+                                fontWeight: '800',
+                                fontSize: '13px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)'
+                            }}
+                        >
+                            <Clock size={16} /> + Daily Job Entry / Update
+                        </button>
                         <Link
                             to="/workflows/wizard"
                             style={{
@@ -621,6 +647,29 @@ export default function JobsWhiteboard() {
 
                                                             <div style={{ display: 'flex', gap: '6px' }}>
                                                                 <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setSelectedUpdateJob(job);
+                                                                        setIsUpdateModalOpen(true);
+                                                                    }}
+                                                                    title="Daily Update & Google Calendar"
+                                                                    style={{
+                                                                        background: '#ecfdf5',
+                                                                        color: '#047857',
+                                                                        border: '1px solid #a7f3d0',
+                                                                        padding: '4px 8px',
+                                                                        borderRadius: '6px',
+                                                                        fontSize: '11px',
+                                                                        fontWeight: '700',
+                                                                        cursor: 'pointer',
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '3px'
+                                                                    }}
+                                                                >
+                                                                    <Clock size={11} /> Update
+                                                                </button>
+                                                                <button
                                                                     onClick={() => navigate(`/workflows/eagle-control?id=${encodeURIComponent(targetEagleId)}`)}
                                                                     title="Open 360° Eagle Cockpit in Master Operations Center"
                                                                     style={{
@@ -670,6 +719,25 @@ export default function JobsWhiteboard() {
                     </div>
                 )}
             </div>
+
+            {/* Everyday Job Update & Full CRUD Modal */}
+            {isUpdateModalOpen && (
+                <JobEverydayUpdateModal
+                    job={selectedUpdateJob}
+                    allJobs={jobs}
+                    isOpen={isUpdateModalOpen}
+                    onClose={() => {
+                        setIsUpdateModalOpen(false);
+                        setSelectedUpdateJob(null);
+                    }}
+                    onSave={async () => {
+                        setIsUpdateModalOpen(false);
+                        setSelectedUpdateJob(null);
+                        await loadJobs();
+                    }}
+                    onNavigateToJob={(id) => navigate(`/workflows/editor/job/${id}`)}
+                />
+            )}
         </div>
     );
 }

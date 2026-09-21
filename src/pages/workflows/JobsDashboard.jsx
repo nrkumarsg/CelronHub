@@ -7,7 +7,7 @@ import {
     RefreshCcw, FolderOpen, Copy, Trash2, MoreVertical,
     Package, CreditCard, Calculator, Image, Info,
     Briefcase, Truck, ClipboardList, Receipt, CheckSquare, Book, Ship, MapPin, Building2,
-    ArrowUpDown, ArrowRightLeft, Upload, Filter
+    ArrowUpDown, ArrowRightLeft, Upload, Filter, Clock
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -21,7 +21,7 @@ import {
 import { isTokenValid, connectGoogleAPI } from '../../lib/googleAuthService';
 import { getDocumentSettings, getPartners } from '../../lib/store';
 import SearchableSelect from '../../components/common/SearchableSelect';
-import JobEditV2Modal from '../../components/workflows/JobEditV2Modal';
+import JobEverydayUpdateModal from '../../components/workflows/JobEverydayUpdateModal';
 import EagleDriveTreeViewer from '../../components/workflows/EagleDriveTreeViewer';
 import toast from 'react-hot-toast';
 
@@ -52,6 +52,7 @@ export default function JobsDashboard() {
     const [tableCompactWindow, setTableCompactWindow] = useState(() => !urlJobSearch);
     const [selectedDriveTreeJob, setSelectedDriveTreeJob] = useState(null);
     const [editingJob, setEditingJob] = useState(null);
+    const [everydayModalOpen, setEverydayModalOpen] = useState(false);
 
     // Sync with URL search params whenever they change
     useEffect(() => {
@@ -62,6 +63,12 @@ export default function JobsDashboard() {
             setSelectedYear('All');
             setTableSubTab('All');
             setTableCompactWindow(false);
+        }
+
+        const action = searchParams.get('action');
+        if (action === 'daily-entry' || action === 'new-job' || searchParams.get('new') === 'true') {
+            setEditingJob(null);
+            setEverydayModalOpen(true);
         }
     }, [searchParams]);
 
@@ -1013,7 +1020,7 @@ export default function JobsDashboard() {
                     </h1>
                     <p style={{ color: 'var(--text-secondary)', marginTop: '4px', fontSize: '1.05rem' }}>Track project lifecycle, financials, files, and milestones.</p>
                 </div>
-                <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                     <button 
                         className="btn btn-secondary" 
                         onClick={() => navigate('/unified-supplier-hub')}
@@ -1029,8 +1036,22 @@ export default function JobsDashboard() {
                         <List size={18} /> View Job List Table
                     </button>
                     <button 
+                        className="btn btn-secondary" 
+                        onClick={() => {
+                            setEditingJob(null);
+                            setEverydayModalOpen(true);
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, borderColor: '#10b981', color: '#047857', background: '#ecfdf5' }}
+                        title="Daily Job Entry, Everyday Status Update & Calendar Sync"
+                    >
+                        <Clock size={18} /> + Daily Job Entry / Update
+                    </button>
+                    <button 
                         className="btn btn-primary" 
-                        onClick={() => navigate('/workflows/editor/job/new')}
+                        onClick={() => {
+                            setEditingJob(null);
+                            setEverydayModalOpen(true);
+                        }}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}
                     >
                         <Plus size={18} /> Create New Job
@@ -1796,11 +1817,14 @@ export default function JobsDashboard() {
                                                 <button
                                                     type="button"
                                                     className="btn btn-sm btn-secondary"
-                                                    style={{ color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', fontSize: '0.74rem', borderRadius: '5px' }}
-                                                    onClick={() => setEditingJob(doc)}
-                                                    title="Edit Job Details"
+                                                    style={{ color: '#047857', borderColor: '#a7f3d0', background: '#ecfdf5', display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', fontSize: '0.74rem', borderRadius: '5px', fontWeight: 700 }}
+                                                    onClick={() => {
+                                                        setEditingJob(doc);
+                                                        setEverydayModalOpen(true);
+                                                    }}
+                                                    title="Everyday Update & Edit Job Details"
                                                 >
-                                                    <Plus size={12} /> Edit
+                                                    <Clock size={12} /> Daily Update
                                                 </button>
                                                 <button
                                                     type="button"
@@ -2620,6 +2644,19 @@ export default function JobsDashboard() {
                                     {/* Actions */}
                                     <td style={{ textAlign: 'right' }}>
                                         <div style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                            {/* Daily Update */}
+                                            <button
+                                                className="btn btn-secondary"
+                                                style={{ padding: '6px 10px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#047857', borderColor: '#a7f3d0', background: '#ecfdf5', fontWeight: 700 }}
+                                                onClick={() => {
+                                                    setEditingJob(job.masterJob || job.allDocs[0] || job);
+                                                    setEverydayModalOpen(true);
+                                                }}
+                                                title="Daily Update & Status Tells"
+                                            >
+                                                <Clock size={13} /> Daily Update
+                                            </button>
+
                                             {/* Open/Edit */}
                                             <button
                                                 className="btn btn-secondary"
@@ -2663,15 +2700,22 @@ export default function JobsDashboard() {
                 </>
             )}
 
-            {/* Job Edit Modal */}
-            {editingJob && (
-                <JobEditV2Modal
+            {/* Job Everyday Update & Full CRUD Modal */}
+            {(everydayModalOpen || editingJob) && (
+                <JobEverydayUpdateModal
                     job={editingJob}
-                    onClose={() => setEditingJob(null)}
+                    allJobs={processedJobs}
+                    isOpen={Boolean(everydayModalOpen || editingJob)}
+                    onClose={() => {
+                        setEverydayModalOpen(false);
+                        setEditingJob(null);
+                    }}
                     onSave={async () => {
+                        setEverydayModalOpen(false);
                         setEditingJob(null);
                         await reloadDocuments();
                     }}
+                    onNavigateToJob={(id) => navigate(`/workflows/editor/job/${id}`)}
                 />
             )}
         </div>

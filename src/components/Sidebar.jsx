@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, Link, NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, FolderOpen, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe, History, Plus, ExternalLink, Mail, TrendingUp, Kanban, Zap, Layers, Monitor } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, Settings, Smartphone, Ship, MapPin, Building2, Package, ShieldCheck, Search, Tags, Hexagon, CheckSquare, CheckCircle, StickyNote, CalendarDays, Database, Folder, FolderOpen, Wrench, Pin, PinOff, Book, HardDrive, Sparkles, Calculator, Navigation2, Briefcase, DollarSign, ShoppingCart, Truck, Receipt, ClipboardList, FileCheck, RefreshCcw, QrCode, AlertCircle, Download, ArrowRightLeft, MessageSquare, Globe, History, Plus, ExternalLink, Mail, TrendingUp, Kanban, Zap, Layers, Monitor, Clock } from 'lucide-react';
 
 import { useAuth } from '../contexts/AuthContext';
 import { getTodos } from '../lib/todoService';
@@ -148,6 +148,11 @@ export default function Sidebar() {
                         <NavLink to="/workflows/whiteboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Jobs & Enquiry Whiteboard">
                             <Kanban size={20} color="#f59e0b" />
                             <span className="nav-text" style={{ fontWeight: 800, color: location.pathname === '/workflows/whiteboard' ? '#ffffff' : '#f59e0b' }}>📌 Jobs Whiteboard</span>
+                        </NavLink>
+
+                        <NavLink to="/workflows/jobs-dashboard?action=daily-entry" className={() => `nav-link ${location.search.includes('action=daily-entry') ? 'active' : ''}`} title="Daily Job Entry & Everyday Update">
+                            <Clock size={20} color="#10b981" />
+                            <span className="nav-text" style={{ fontWeight: 800, color: location.search.includes('action=daily-entry') ? '#ffffff' : '#10b981' }}>⏱️ Daily Job Entry</span>
                         </NavLink>
 
                         <NavLink to="/workflows/eagle-control" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title="Master Operations Control Center">
