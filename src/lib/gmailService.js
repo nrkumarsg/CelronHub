@@ -12,7 +12,7 @@ const GMAIL_API_BASE = 'https://gmail.googleapis.com/v1/users/me';
  * @param {string} accountId - Internal ID of the communication account
  */
 export const connectGmailAPI = (accountId) => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '646093609919-9chvqi80qq34427tejbj0vbl4o87ca3u.apps.googleusercontent.com';
     const redirectUri = window.location.origin + '/oauth-callback';
 
     if (!clientId) {

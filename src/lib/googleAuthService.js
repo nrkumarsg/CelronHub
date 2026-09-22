@@ -31,7 +31,7 @@ const SCOPES = [
  * @param {string} customScope - Optional scope override
  */
 export const connectGoogleAPI = (state = 'sync', customScope = null, loginHint = null) => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '646093609919-9chvqi80qq34427tejbj0vbl4o87ca3u.apps.googleusercontent.com';
     const redirectUri = window.location.origin + '/oauth-callback';
 
     if (!clientId) {
