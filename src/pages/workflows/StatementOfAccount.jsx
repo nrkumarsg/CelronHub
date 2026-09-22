@@ -385,7 +385,7 @@ export default function StatementOfAccount() {
     const [loading, setLoading] = useState(false);
     const [partners, setPartners] = useState([]);
     const [selectedPartner, setSelectedPartner] = useState('');
-    const [onlyOutstanding, setOnlyOutstanding] = useState(true);
+    const [onlyOutstanding, setOnlyOutstanding] = useState(false);
     const [dateRange, setDateRange] = useState({
         start: new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0],
         end: new Date().toISOString().split('T')[0]
@@ -522,7 +522,7 @@ export default function StatementOfAccount() {
         if (targetCompanyId) {
             fetchInitialData();
         }
-    }, [targetCompanyId]);
+    }, [targetCompanyId, profile]);
 
     const getGlobalOldestInvoiceDate = () => {
         let oldest = null;
@@ -566,21 +566,43 @@ export default function StatementOfAccount() {
         fetchOverallSummary();
         fetchDispatchLogs();
 
-        const { getContacts } = await import('../../lib/store');
-        const [pRes, sRes, cRes] = await Promise.all([
-            getPartners(profile),
-            getDocumentSettings(targetCompanyId),
-            getContacts(profile)
-        ]);
-        
-        if (pRes) setPartners(pRes);
-        if (sRes) {
-            setSettings(sRes);
-            if (sRes.logo_url) {
-                toBase64(sRes.logo_url).then(setLogoBase64).catch(console.error);
+        try {
+            const { getContacts, getPartners: fetchPartnersFn } = await import('../../lib/store');
+            const [pRes, sRes, cRes] = await Promise.all([
+                getPartners(profile).catch(err => {
+                    console.warn("Could not load partners with profile, falling back:", err);
+                    return fetchPartnersFn ? fetchPartnersFn() : [];
+                }),
+                getDocumentSettings(targetCompanyId).catch(err => {
+                    console.warn("Could not load document settings:", err);
+                    return null;
+                }),
+                getContacts(profile).catch(err => {
+                    console.warn("Could not load contacts:", err);
+                    return [];
+                })
+            ]);
+            
+            if (pRes && pRes.length > 0) {
+                setPartners(pRes);
+            } else {
+                // Secondary fallback if initial fetch returned empty
+                const fallbackPartners = await (fetchPartnersFn ? fetchPartnersFn() : getPartners());
+                if (fallbackPartners && fallbackPartners.length > 0) {
+                    setPartners(fallbackPartners);
+                }
             }
+
+            if (sRes) {
+                setSettings(sRes);
+                if (sRes.logo_url) {
+                    toBase64(sRes.logo_url).then(setLogoBase64).catch(console.error);
+                }
+            }
+            if (cRes) setContacts(cRes);
+        } catch (err) {
+            console.error('fetchInitialData failed:', err);
         }
-        if (cRes) setContacts(cRes);
     };
 
     const fetchOverallSummary = async () => {
@@ -1307,10 +1329,11 @@ export default function StatementOfAccount() {
         .filter(p => {
             if (p.id === selectedPartner) return true;
             if (!onlyOutstanding) return true;
+            if (companyAging.length === 0) return true;
             const agingInfo = companyAging.find(c => c.id === p.id);
             return agingInfo && agingInfo.outstanding > 0.01;
         })
-        .sort((a, b) => a.name.localeCompare(b.name));
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     return (
         <div className="workflow-editor-theme" style={{ minHeight: '100vh', background: '#f8fafc' }}>
@@ -1557,25 +1580,25 @@ export default function StatementOfAccount() {
 
                     <div className="input-grid" style={{ gridTemplateColumns: '1.5fr 1fr 1fr auto auto auto', alignItems: 'flex-end', gap: '16px' }}>
                         <div className="form-item" style={{ margin: 0 }}>
-                            <label style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>Select Customer</label>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                <label style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', margin: 0 }}>Select Customer</label>
+                                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', margin: 0, fontSize: '0.75rem', fontWeight: 700, color: onlyOutstanding ? '#6366f1' : '#64748b', userSelect: 'none' }}>
+                                    <input 
+                                        type="checkbox" 
+                                        id="onlyOutstanding" 
+                                        checked={onlyOutstanding} 
+                                        onChange={(e) => setOnlyOutstanding(e.target.checked)} 
+                                        style={{ cursor: 'pointer', width: '14px', height: '14px', accentColor: '#6366f1' }}
+                                    />
+                                    Only Overdue
+                                </label>
+                            </div>
                             <SearchableSelect
                                 options={selectOptions}
                                 value={selectedPartner}
                                 onChange={(e) => setSelectedPartner(e.target.value)}
                                 placeholder="-- Choose Customer --"
                             />
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
-                                <input 
-                                    type="checkbox" 
-                                    id="onlyOutstanding" 
-                                    checked={onlyOutstanding} 
-                                    onChange={(e) => setOnlyOutstanding(e.target.checked)} 
-                                    style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#6366f1' }}
-                                />
-                                <label htmlFor="onlyOutstanding" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', cursor: 'pointer', userSelect: 'none' }}>
-                                    Only Outstanding Payment Customers
-                                </label>
-                            </div>
                         </div>
 
                         <div className="form-item" style={{ margin: 0 }}>
