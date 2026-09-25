@@ -18,6 +18,7 @@ export default function WorkflowPrintPreview() {
     const [logoBase64, setLogoBase64] = useState('');
     const [signatureBase64, setSignatureBase64] = useState('');
     const [paynowBase64, setPaynowBase64] = useState('');
+    const [secondaryDoc, setSecondaryDoc] = useState(null);
     const [showSignature, setShowSignature] = useState(true);
     const [showLabelModal, setShowLabelModal] = useState(false);
 
@@ -66,13 +67,17 @@ export default function WorkflowPrintPreview() {
     const fetchData = async () => {
         setLoading(true);
         try {
+            const searchParams = new URLSearchParams(window.location.search);
+            let secId = searchParams.get('secondaryId');
+            const isComboInvDo = searchParams.get('combo') === 'inv_do';
+
             const [docRes, settingsRes] = await Promise.all([
                 getWorkflowDocumentById(id),
                 getDocumentSettings(profile?.company_id)
             ]);
 
+            let loadedDoc = null;
             if (docRes.data) {
-                const searchParams = new URLSearchParams(window.location.search);
                 const zeroTotalParam = searchParams.get('zeroTotal');
                 const isZero = zeroTotalParam === 'true' || Boolean(
                     docRes.data.zero_total ||
@@ -80,12 +85,63 @@ export default function WorkflowPrintPreview() {
                     docRes.data.delivery_verification?.zero_total ||
                     docRes.data.delivery_verification?.is_zero_total
                 );
-                setDoc({
+                loadedDoc = {
                     ...docRes.data,
                     zero_total: isZero,
                     is_zero_total: isZero
-                });
+                };
             }
+
+            // If combo=inv_do and secId wasn't explicitly given in query, find counterpart in database
+            if (!secId && isComboInvDo && loadedDoc) {
+                const jobNo = loadedDoc.assigned_job_no || (loadedDoc.is_job ? loadedDoc.document_no : null);
+                if (jobNo) {
+                    const counterpartType = loadedDoc.document_type === 'Tax Invoice' ? 'Delivery Order' : 'Tax Invoice';
+                    const { supabase } = await import('../../lib/supabase');
+                    const { data: counterpart } = await supabase
+                        .from('workflow_documents')
+                        .select('id')
+                        .or(`assigned_job_no.eq.${jobNo},document_no.eq.${jobNo}`)
+                        .eq('document_type', counterpartType)
+                        .neq('status', 'Cancelled')
+                        .maybeSingle();
+                    if (counterpart) secId = counterpart.id;
+                }
+            }
+
+            let loadedSecDoc = null;
+            if (secId) {
+                const secDocRes = await getWorkflowDocumentById(secId);
+                if (secDocRes.data) {
+                    const zeroTotalParam = searchParams.get('zeroTotal');
+                    const isZero = zeroTotalParam === 'true' || Boolean(
+                        secDocRes.data.zero_total ||
+                        secDocRes.data.is_zero_total ||
+                        secDocRes.data.delivery_verification?.zero_total ||
+                        secDocRes.data.delivery_verification?.is_zero_total
+                    );
+                    loadedSecDoc = {
+                        ...secDocRes.data,
+                        zero_total: isZero,
+                        is_zero_total: isZero
+                    };
+                }
+            }
+
+            // When printing INV + DO, always order Tax Invoice first, Delivery Order second
+            if (loadedDoc && loadedSecDoc) {
+                if (loadedDoc.document_type === 'Delivery Order' && loadedSecDoc.document_type === 'Tax Invoice') {
+                    setDoc(loadedSecDoc);
+                    setSecondaryDoc(loadedDoc);
+                } else {
+                    setDoc(loadedDoc);
+                    setSecondaryDoc(loadedSecDoc);
+                }
+            } else {
+                setDoc(loadedDoc);
+                setSecondaryDoc(null);
+            }
+
             if (settingsRes) {
                 setSettings(settingsRes);
                 if (settingsRes.logo_url) {
@@ -121,14 +177,16 @@ export default function WorkflowPrintPreview() {
             return;
         }
         
-        // Build descriptive filename: Type_No - Customer
+        const isCombined = Boolean(secondaryDoc);
+        const jobNo = doc.assigned_job_no || doc.document_no || 'Job';
         const customerName = (doc.partners?.name || 'Customer').substring(0, 30);
+        const safeCustomerName = customerName.replace(/[/\\?%*:|"<>]/g, '-').trim();
         const docNo = doc.document_no || 'Draft';
         const type = doc.document_type || 'Document';
         
-        // Sanitize filename to remove invalid characters and ensure .pdf extension
-        const safeFilename = `${type}_${docNo}_${customerName}`.replace(/[/\\?%*:|"<>]/g, '-').trim();
-        const finalFilename = `${safeFilename}.pdf`;
+        const finalFilename = isCombined 
+            ? `INV_DO_${jobNo}_${safeCustomerName}.pdf`
+            : `${type}_${docNo}_${safeCustomerName}.pdf`;
 
         const opt = {
             margin: [8, 0, 12, 0],
@@ -138,7 +196,8 @@ export default function WorkflowPrintPreview() {
             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
             pagebreak: { 
                 mode: ['avoid-all', 'css', 'legacy'],
-                avoid: ['tr', '.print-row', '.page-break-avoid', 'thead']
+                avoid: ['tr', '.print-row', '.page-break-avoid', 'thead'],
+                before: '.page-break-before-always'
             }
         };
         
@@ -174,19 +233,26 @@ export default function WorkflowPrintPreview() {
     return (
         <div style={{ background: '#e2e8f0', minHeight: '100vh', padding: '20px', fontFamily: 'Inter, sans-serif' }}>
             {/* Screen Actions (Hidden in Print) */}
-            <div className="print-hide" style={{ maxWidth: '210mm', margin: '0 auto 20px', display: 'flex', justifyContent: 'space-between' }}>
-                <button
-                    onClick={handleBack}
-                    style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
-                >
-                    <ArrowLeft size={16} /> Back
-                </button>
-                <div style={{ display: 'flex', gap: '12px' }}>
+            <div className="print-hide" style={{ maxWidth: '210mm', margin: '0 auto 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <button
+                        onClick={handleBack}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                        <ArrowLeft size={16} /> Back
+                    </button>
+                    {secondaryDoc && (
+                        <span style={{ background: '#e0e7ff', color: '#4338ca', padding: '6px 14px', borderRadius: '12px', fontWeight: 800, fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                            <Printer size={14} /> Continuous Print: Tax Invoice ({doc.document_no}) + Delivery Order ({secondaryDoc.document_no})
+                        </span>
+                    )}
+                </div>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                     <button
                         onClick={handleDownload}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 20px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}
                     >
-                        <Download size={18} /> Download PDF
+                        <Download size={18} /> {secondaryDoc ? 'Download INV+DO PDF' : 'Download PDF'}
                     </button>
                     <button
                         onClick={() => {
@@ -194,7 +260,9 @@ export default function WorkflowPrintPreview() {
                             const customerName = doc.partners?.name || 'Customer';
                             const projectOrVessel = doc.vessels?.name || doc.subject || 'Project';
                             const effectiveType = (doc.document_type === 'Quotation' && (doc.document_no || '').startsWith('ORA')) ? 'Order Acknowledgment' : (doc.document_type || 'Document');
-                            const rawFilename = `${effectiveType}_${doc.document_no || 'Draft'} - ${customerName} - ${projectOrVessel}`;
+                            const rawFilename = secondaryDoc 
+                                ? `INV_DO_${doc.assigned_job_no || doc.document_no}_${customerName}`
+                                : `${effectiveType}_${doc.document_no || 'Draft'} - ${customerName} - ${projectOrVessel}`;
                             const safeFilename = rawFilename.replace(/[/\\?%*:|"<>]/g, '-').trim();
 
                             const opt = {
@@ -205,7 +273,8 @@ export default function WorkflowPrintPreview() {
                                 jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
                                 pagebreak: { 
                                     mode: ['avoid-all', 'css', 'legacy'],
-                                    avoid: ['tr', '.print-row', '.page-break-avoid', 'thead']
+                                    avoid: ['tr', '.print-row', '.page-break-avoid', 'thead'],
+                                    before: '.page-break-before-always'
                                 }
                             };
                             
@@ -226,7 +295,7 @@ export default function WorkflowPrintPreview() {
                     >
                         <Pencil size={18} /> Sign & Annotate
                     </button>
-                    {(doc?.document_type === 'Delivery Order' || doc?.document_type === 'Packing List' || doc?.is_job) && (
+                    {(doc?.document_type === 'Delivery Order' || doc?.document_type === 'Packing List' || doc?.is_job || secondaryDoc?.document_type === 'Delivery Order') && (
                         <button
                             onClick={() => setShowLabelModal(true)}
                             style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 20px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}
@@ -239,7 +308,7 @@ export default function WorkflowPrintPreview() {
                         onClick={() => window.print()}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 24px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}
                     >
-                        <Printer size={18} /> Print Document
+                        <Printer size={18} /> {secondaryDoc ? 'Print INV+DO' : 'Print Document'}
                     </button>
                 </div>
             </div>
@@ -248,12 +317,32 @@ export default function WorkflowPrintPreview() {
             <div id="print-paper-content">
                 <WorkflowDocumentLayout 
                     doc={doc} 
-                    settings={settings}
-                    logoBase64={logoBase64}
-                    signatureBase64={signatureBase64}
-                    paynowBase64={paynowBase64}
+                    settings={settings} 
+                    logoBase64={logoBase64} 
+                    signatureBase64={signatureBase64} 
+                    paynowBase64={paynowBase64} 
                     showSignature={showSignature}
                 />
+
+                {secondaryDoc && (
+                    <>
+                        <div className="print-hide" style={{ textAlign: 'center', margin: '24px auto', maxWidth: '210mm', borderTop: '2px dashed #94a3b8', position: 'relative' }}>
+                            <span style={{ position: 'relative', top: '-13px', background: '#4f46e5', color: '#fff', padding: '4px 18px', borderRadius: '12px', fontSize: '0.82rem', fontWeight: 700, boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
+                                Continuous Print Next Page: {secondaryDoc.document_type} ({secondaryDoc.document_no})
+                            </span>
+                        </div>
+                        <div className="page-break-before-always" style={{ pageBreakBefore: 'always', breakBefore: 'page' }}>
+                            <WorkflowDocumentLayout 
+                                doc={secondaryDoc} 
+                                settings={settings} 
+                                logoBase64={logoBase64} 
+                                signatureBase64={signatureBase64} 
+                                paynowBase64={paynowBase64} 
+                                showSignature={showSignature}
+                            />
+                        </div>
+                    </>
+                )}
                 <div className="page-footer"></div>
             </div>
 
@@ -272,6 +361,10 @@ export default function WorkflowPrintPreview() {
                 @media print {
                     body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #fff !important; }
                     .print-hide { display: none !important; }
+                    .page-break-before-always {
+                        page-break-before: always !important;
+                        break-before: page !important;
+                    }
                     .print-paper { 
                         box-shadow: none !important; 
                         margin: 0 !important; 

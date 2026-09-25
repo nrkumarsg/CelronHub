@@ -3737,6 +3737,104 @@ export default function WorkflowEditor() {
         window.open(`/workflows/print/${id}?showSignature=${showSignature}&zeroTotal=${isZeroTotal}`, '_blank');
     };
 
+    const handlePrintInvAndDo = async () => {
+        if (isNew) {
+            alert('Please Save the current document first before printing.');
+            return;
+        }
+
+        const jobNo = formData.assigned_job_no || (formData.is_job ? formData.document_no : null);
+        if (!jobNo) {
+            toast.error('No Job Number assigned to this document.');
+            return;
+        }
+
+        setSaving(true);
+        try {
+            // Find both Tax Invoice and Delivery Order for this job
+            const { supabase } = await import('../../lib/supabase');
+            const { data: docs, error: fetchErr } = await supabase
+                .from('workflow_documents')
+                .select('id, document_type, document_no, status')
+                .or(`assigned_job_no.eq.${jobNo},document_no.eq.${jobNo}`)
+                .neq('status', 'Cancelled');
+
+            if (fetchErr) throw fetchErr;
+
+            let invDoc = docs?.find(d => d.document_type === 'Tax Invoice');
+            let doDoc = docs?.find(d => d.document_type === 'Delivery Order');
+
+            // Prioritize current document if it is Tax Invoice or Delivery Order
+            if (formData.document_type === 'Tax Invoice') {
+                invDoc = { id: id, document_no: formData.document_no };
+            }
+            if (formData.document_type === 'Delivery Order') {
+                doDoc = { id: id, document_no: formData.document_no };
+            }
+
+            // If Tax Invoice is missing, auto-generate it from this Job suite
+            if (!invDoc) {
+                const parts = jobNo.split('-');
+                const jobPrefix = parts[0];
+                const jobNoPart = parts.slice(1).join('-');
+                const docPrefix = (jobPrefix !== 'CEL') ? `${jobPrefix}-` : '';
+                const nextInvNo = `${docPrefix}INV-${jobNoPart}`;
+
+                const newInvData = {
+                    ...formData,
+                    id: undefined,
+                    document_type: 'Tax Invoice',
+                    document_no: nextInvNo,
+                    status: 'Draft',
+                    issue_date: new Date().toISOString().split('T')[0],
+                    is_job: true,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                };
+
+                const { data: savedInv, error: invErr } = await saveWorkflowDocument(newInvData, lineItems);
+                if (invErr) throw invErr;
+                invDoc = savedInv;
+                toast.success(`Generated Tax Invoice (${savedInv.document_no})!`);
+            }
+
+            // If Delivery Order is missing, auto-generate it from this Job suite
+            if (!doDoc) {
+                const parts = jobNo.split('-');
+                const jobPrefix = parts[0];
+                const jobNoPart = parts.slice(1).join('-');
+                const docPrefix = (jobPrefix !== 'CEL') ? `${jobPrefix}-` : '';
+                const nextDoNo = `${docPrefix}DO-${jobNoPart}`;
+
+                const newDoData = {
+                    ...formData,
+                    id: undefined,
+                    document_type: 'Delivery Order',
+                    document_no: nextDoNo,
+                    status: 'Draft',
+                    issue_date: new Date().toISOString().split('T')[0],
+                    is_job: true,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                };
+
+                const { data: savedDo, error: doErr } = await saveWorkflowDocument(newDoData, lineItems);
+                if (doErr) throw doErr;
+                doDoc = savedDo;
+                toast.success(`Generated Delivery Order (${savedDo.document_no})!`);
+            }
+
+            if (invDoc && doDoc) {
+                window.open(`/workflows/print/${invDoc.id}?secondaryId=${doDoc.id}&combo=inv_do&showSignature=${showSignature}&zeroTotal=${isZeroTotal}`, '_blank');
+            }
+        } catch (err) {
+            console.error('Error opening continuous print:', err);
+            toast.error('Failed to open continuous print: ' + err.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
     const handleAnnotate = async () => {
         if (isNew) {
             alert('Please Save the document first to sign and annotate.');
@@ -4506,9 +4604,28 @@ export default function WorkflowEditor() {
                                 <span className="hide-sm">{isZeroTotal ? 'Total: 0.00' : 'Zero Total'}</span>
                             </button>
                         )}
-                        <button className="btn-vibrant-secondary" onClick={handlePrint} style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem' }} title="Print PDF">
-                            <Printer size={16} /> <span className="hide-sm">Print</span>
-                        </button>
+                        {(formData.is_job || formData.assigned_job_no) ? (
+                            <div className="dropdown" style={{ position: 'relative' }}>
+                                <button className="btn-vibrant-secondary" style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '4px' }} title="Print PDF Options">
+                                    <Printer size={16} /> <span className="hide-sm">Print</span> <ChevronDown size={13} />
+                                </button>
+                                <div className="dropdown-content">
+                                    <button type="button" onClick={handlePrint}>Print {formData.document_type || 'Document'}</button>
+                                    <button 
+                                        type="button" 
+                                        onClick={handlePrintInvAndDo} 
+                                        style={{ color: '#4f46e5', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}
+                                        title="Print Tax Invoice + Delivery Order in one continuous PDF"
+                                    >
+                                        <Printer size={14} /> Print INV + DO (Continuous)
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <button className="btn-vibrant-secondary" onClick={handlePrint} style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem' }} title="Print PDF">
+                                <Printer size={16} /> <span className="hide-sm">Print</span>
+                            </button>
+                        )}
                         <button className="btn-vibrant-secondary" onClick={handleAnnotate} disabled={saving} style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem' }} title="Sign & Annotate">
                             <Pencil size={16} /> <span className="hide-sm">Sign</span>
                         </button>
@@ -4677,6 +4794,14 @@ export default function WorkflowEditor() {
                                     <button onClick={() => handleGenerateAssociatedDoc('Packing List')}>Packing List (PKL)</button>
                                     <button onClick={() => handleGenerateAssociatedDoc('Proforma Invoice')}>Proforma Invoice (PRO)</button>
                                     <button onClick={() => handleGenerateAssociatedDoc('Tax Invoice')}>Tax Invoice (INV)</button>
+                                    <button 
+                                        type="button"
+                                        onClick={handlePrintInvAndDo} 
+                                        style={{ background: '#eef2ff', color: '#4f46e5', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', borderTop: '1px solid #e0e7ff', borderBottom: '1px solid #e0e7ff', margin: '4px 0', padding: '10px 14px', borderRadius: '4px' }}
+                                        title="Continuous Print of Tax Invoice (INV) + Delivery Order (DO) in one PDF"
+                                    >
+                                        <Printer size={15} color="#4f46e5" /> Tax Invoice + Delivery Order (INV+DO)
+                                    </button>
                                     <button onClick={() => handleGenerateAssociatedDoc('Credit Note')} style={{ color: '#e11d48', fontWeight: 600 }}>Credit Note (CRN)</button>
                                     <button onClick={() => handleGenerateAssociatedDoc('Certificate')}>Certificate (CERT)</button>
                                     <button onClick={() => handleGenerateAssociatedDoc('Service Report')}>Service Report (SR)</button>
