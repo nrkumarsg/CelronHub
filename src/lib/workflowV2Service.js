@@ -302,24 +302,36 @@ export const getStatementData = async (companyId, partnerId, startDate, endDate)
     // We need earlier ones to calculate opening balance correctly
     const isGlobalSummary = !partnerId;
     const selectFields = isGlobalSummary
-        ? 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, currency, total_amount, issue_date, status, payment_status, partners(id, name)'
-        : 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, currency, total_amount, issue_date, due_date, status, payment_status, internal_notes, original_document_id, customer_ref, customer_po_no, order_reference, subject, partners(id, name), vessels!vessel_id(vessel_name), work_locations!work_location_id(location_name)';
+        ? 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, customer_id, currency, total_amount, issue_date, status, payment_status, partners!partner_id(id, name)'
+        : 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, customer_id, currency, total_amount, issue_date, due_date, status, payment_status, internal_notes, original_document_id, customer_ref, customer_po_no, order_reference, subject, partners!partner_id(id, name), vessels!vessel_id(vessel_name), work_locations!work_location_id(location_name)';
 
     let query = supabase
         .from('workflow_documents')
-        .select(selectFields)
-        .eq('company_id', companyId)
-        .in('document_type', ['Tax Invoice', 'Proforma Invoice', 'Payment Received', 'Credit Note'])
-        .lte('issue_date', endDate)
+        .select(selectFields);
+
+    if (companyId) {
+        query = query.or(`company_id.eq.${companyId},company_id.is.null`);
+    }
+
+    query = query
+        .in('document_type', ['Tax Invoice', 'Proforma Invoice', 'Invoice', 'Payment Received', 'Credit Note'])
+        .neq('status', 'Cancelled')
         .order('issue_date', { ascending: true });
 
+    if (endDate) {
+        query = query.lte('issue_date', endDate);
+    }
+
     if (partnerId) {
-        query = query.eq('partner_id', partnerId);
+        query = query.or(`partner_id.eq.${partnerId},customer_id.eq.${partnerId}`);
     }
 
     const { data, error } = await query;
 
-    if (error) return { data: null, error };
+    if (error) {
+        console.error('getStatementData query error:', error);
+        return { data: null, error };
+    }
 
     let partner = null;
     if (partnerId) {

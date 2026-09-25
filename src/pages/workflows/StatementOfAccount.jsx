@@ -385,7 +385,7 @@ export default function StatementOfAccount() {
     const [loading, setLoading] = useState(false);
     const [partners, setPartners] = useState([]);
     const [selectedPartner, setSelectedPartner] = useState('');
-    const [onlyOutstanding, setOnlyOutstanding] = useState(false);
+    const [onlyOutstanding, setOnlyOutstanding] = useState(true);
     const [dateRange, setDateRange] = useState({
         start: new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0],
         end: new Date().toISOString().split('T')[0]
@@ -519,10 +519,8 @@ export default function StatementOfAccount() {
         }));
 
     useEffect(() => {
-        if (targetCompanyId) {
-            fetchInitialData();
-        }
-    }, [targetCompanyId, profile]);
+        fetchInitialData();
+    }, [targetCompanyId, profile?.company_id]);
 
     const getGlobalOldestInvoiceDate = () => {
         let oldest = null;
@@ -560,7 +558,7 @@ export default function StatementOfAccount() {
     }, [selectedPartner, companyAging]);
 
     const fetchInitialData = async () => {
-        if (!targetCompanyId) return;
+        const compId = targetCompanyId || profile?.company_id;
 
         // Run overall aging summary and dispatch logs concurrently without waiting
         fetchOverallSummary();
@@ -573,10 +571,10 @@ export default function StatementOfAccount() {
                     console.warn("Could not load partners with profile, falling back:", err);
                     return fetchPartnersFn ? fetchPartnersFn() : [];
                 }),
-                getDocumentSettings(targetCompanyId).catch(err => {
+                compId ? getDocumentSettings(compId).catch(err => {
                     console.warn("Could not load document settings:", err);
                     return null;
-                }),
+                }) : Promise.resolve(null),
                 getContacts(profile).catch(err => {
                     console.warn("Could not load contacts:", err);
                     return [];
@@ -606,10 +604,13 @@ export default function StatementOfAccount() {
     };
 
     const fetchOverallSummary = async () => {
-        if (!targetCompanyId) return;
+        const compId = targetCompanyId || profile?.company_id;
         setOverallLoading(true);
         try {
-            const { data } = await getStatementData(targetCompanyId, null, null, new Date().toISOString().split('T')[0]);
+            const { data, error } = await getStatementData(compId, null, null, null);
+            if (error) {
+                console.error("fetchOverallSummary getStatementData error:", error);
+            }
             
             if (data) {
                 // Deduplication logic: If Tax Invoice exists for a job/enquiry, hide Proforma
@@ -634,13 +635,14 @@ export default function StatementOfAccount() {
                 let absoluteOldestInvoiceDate = null;
                 
                 filteredData.forEach(doc => {
-                    const pid = doc.partner_id;
+                    const pid = doc.partner_id || doc.customer_id;
                     if (!pid) return;
 
                     if (!groups[pid]) {
+                        const matchedPartner = partners.find(p => p.id === pid);
                         groups[pid] = { 
                             id: pid,
-                            name: doc.partners?.name || 'Unknown', 
+                            name: doc.partners?.name || matchedPartner?.name || 'Unknown', 
                             outstanding: 0, 
                             total_invoiced: 0, 
                             total_paid: 0,
@@ -1325,15 +1327,73 @@ export default function StatementOfAccount() {
         setShowWhatsAppModal(true);
     };
 
-    const selectOptions = partners
-        .filter(p => {
-            if (p.id === selectedPartner) return true;
-            if (!onlyOutstanding) return true;
-            if (companyAging.length === 0) return true;
-            const agingInfo = companyAging.find(c => c.id === p.id);
-            return agingInfo && agingInfo.outstanding > 0.01;
-        })
-        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    // Filter only payment pending customers (outstanding > 0.01)
+    const selectOptions = React.useMemo(() => {
+        let list = [];
+        if (onlyOutstanding) {
+            // Collect customers that have pending payments from companyAging
+            const pendingMap = new Map();
+            companyAging.forEach(item => {
+                if ((item.outstanding || 0) > 0.01) {
+                    const matched = partners.find(p => p.id === item.id);
+                    const displayName = (item.name && item.name !== 'Unknown') ? item.name : (matched?.name || 'Unknown');
+                    pendingMap.set(item.id, {
+                        id: item.id,
+                        name: displayName,
+                        outstanding: item.outstanding,
+                        currency: item.currency || 'SGD',
+                        category: `Pending: ${item.currency || 'SGD'} ${Number(item.outstanding).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                    });
+                }
+            });
+
+            // Also include partners who have outstanding balance in companyAging
+            partners.forEach(p => {
+                const agingInfo = companyAging.find(c => c.id === p.id);
+                if (agingInfo && (agingInfo.outstanding || 0) > 0.01 && !pendingMap.has(p.id)) {
+                    pendingMap.set(p.id, {
+                        ...p,
+                        name: p.name,
+                        outstanding: agingInfo.outstanding,
+                        currency: agingInfo.currency || 'SGD',
+                        category: `Pending: ${agingInfo.currency || 'SGD'} ${Number(agingInfo.outstanding).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                    });
+                }
+            });
+
+            list = Array.from(pendingMap.values());
+
+            // If a partner is currently selected, keep it in the list so the dropdown selection isn't lost
+            if (selectedPartner && !list.some(p => p.id === selectedPartner)) {
+                const current = partners.find(p => p.id === selectedPartner) || companyAging.find(c => c.id === selectedPartner);
+                if (current) {
+                    const agingInfo = companyAging.find(c => c.id === selectedPartner);
+                    list.unshift({
+                        id: current.id,
+                        name: current.name,
+                        outstanding: agingInfo?.outstanding || 0,
+                        currency: agingInfo?.currency || 'SGD',
+                        category: agingInfo && agingInfo.outstanding > 0.01 
+                            ? `Pending: ${agingInfo.currency || 'SGD'} ${Number(agingInfo.outstanding).toLocaleString(undefined, { minimumFractionDigits: 2 })}` 
+                            : 'Settled'
+                    });
+                }
+            }
+        } else {
+            // When user unchecks to view all customers
+            list = partners.map(p => {
+                const agingInfo = companyAging.find(c => c.id === p.id);
+                return {
+                    ...p,
+                    category: agingInfo && (agingInfo.outstanding || 0) > 0.01 
+                        ? `Pending: ${agingInfo.currency || 'SGD'} ${Number(agingInfo.outstanding).toLocaleString(undefined, { minimumFractionDigits: 2 })}` 
+                        : undefined
+                };
+            });
+        }
+
+        return list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    }, [partners, companyAging, onlyOutstanding, selectedPartner]);
 
     return (
         <div className="workflow-editor-theme" style={{ minHeight: '100vh', background: '#f8fafc' }}>
@@ -1582,7 +1642,7 @@ export default function StatementOfAccount() {
                         <div className="form-item" style={{ margin: 0 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                 <label style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', margin: 0 }}>Select Customer</label>
-                                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', margin: 0, fontSize: '0.75rem', fontWeight: 700, color: onlyOutstanding ? '#6366f1' : '#64748b', userSelect: 'none' }}>
+                                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', margin: 0, fontSize: '0.75rem', fontWeight: 700, color: onlyOutstanding ? '#6366f1' : '#64748b', userSelect: 'none' }} title="Toggle between pending payment customers and all customers">
                                     <input 
                                         type="checkbox" 
                                         id="onlyOutstanding" 
@@ -1590,14 +1650,14 @@ export default function StatementOfAccount() {
                                         onChange={(e) => setOnlyOutstanding(e.target.checked)} 
                                         style={{ cursor: 'pointer', width: '14px', height: '14px', accentColor: '#6366f1' }}
                                     />
-                                    Only Overdue
+                                    Only Pending Payment
                                 </label>
                             </div>
                             <SearchableSelect
                                 options={selectOptions}
                                 value={selectedPartner}
                                 onChange={(e) => setSelectedPartner(e.target.value)}
-                                placeholder="-- Choose Customer --"
+                                placeholder={overallLoading ? "Loading pending customers..." : (selectOptions.length > 0 ? `-- Choose Customer (${selectOptions.length} Pending) --` : "-- No Pending Payment Customers --")}
                             />
                         </div>
 
