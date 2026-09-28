@@ -71,6 +71,11 @@ export default function ModuleSettings() {
         auth_data: {}
     });
 
+    // Password visibility state
+    const [showSalesPassword, setShowSalesPassword] = useState(false);
+    const [showAccountsPassword, setShowAccountsPassword] = useState(false);
+    const [showCommPassword, setShowCommPassword] = useState(false);
+
     const [initializingVault, setInitializingVault] = useState(false);
     const [migratingDrive, setMigratingDrive] = useState(false);
     const [showFloatingHub, setShowFloatingHub] = useState(localStorage.getItem('show_floating_hub') !== 'false');
@@ -376,6 +381,7 @@ export default function ModuleSettings() {
     };
 
     const openCommModal = (comm = null) => {
+        setShowCommPassword(false);
         if (comm) {
             setEditingComm(comm);
             setCommForm({
@@ -787,7 +793,25 @@ export default function ModuleSettings() {
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                         <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Sales App Password (SMTP)</label>
-                                        <input type="password" name="sales_password" value={settings.sales_password || ''} onChange={handleChange} placeholder="App password" style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }} />
+                                        <div style={{ position: 'relative', width: '100%' }}>
+                                            <input 
+                                                type={showSalesPassword ? "text" : "password"} 
+                                                name="sales_password" 
+                                                value={settings.sales_password || ''} 
+                                                onChange={handleChange} 
+                                                placeholder="App password" 
+                                                style={{ width: '100%', boxSizing: 'border-box', padding: '10px 42px 10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }} 
+                                            />
+                                            <button 
+                                                type="button" 
+                                                onClick={() => setShowSalesPassword(!showSalesPassword)}
+                                                title={showSalesPassword ? "Hide password" : "Show password"}
+                                                aria-label={showSalesPassword ? "Hide password" : "Show password"}
+                                                style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+                                            >
+                                                {showSalesPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                            </button>
+                                        </div>
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                         <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Accounts Email</label>
@@ -795,7 +819,25 @@ export default function ModuleSettings() {
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                         <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Accounts App Password (SMTP)</label>
-                                        <input type="password" name="accounts_password" value={settings.accounts_password || ''} onChange={handleChange} placeholder="App password" style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }} />
+                                        <div style={{ position: 'relative', width: '100%' }}>
+                                            <input 
+                                                type={showAccountsPassword ? "text" : "password"} 
+                                                name="accounts_password" 
+                                                value={settings.accounts_password || ''} 
+                                                onChange={handleChange} 
+                                                placeholder="App password" 
+                                                style={{ width: '100%', boxSizing: 'border-box', padding: '10px 42px 10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }} 
+                                            />
+                                            <button 
+                                                type="button" 
+                                                onClick={() => setShowAccountsPassword(!showAccountsPassword)}
+                                                title={showAccountsPassword ? "Hide password" : "Show password"}
+                                                aria-label={showAccountsPassword ? "Hide password" : "Show password"}
+                                                style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+                                            >
+                                                {showAccountsPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                            </button>
+                                        </div>
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                         <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>SMTP Host</label>
@@ -1755,13 +1797,24 @@ export default function ModuleSettings() {
                             {commForm.platform === 'email' && (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>App Password (SMTP Integration)</label>
-                                    <input
-                                        type="password"
-                                        value={commForm.auth_data?.password || ''}
-                                        onChange={e => setCommForm({ ...commForm, auth_data: { ...commForm.auth_data, password: e.target.value } })}
-                                        placeholder="Enter secure app password"
-                                        style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                                    />
+                                    <div style={{ position: 'relative', width: '100%' }}>
+                                        <input
+                                            type={showCommPassword ? "text" : "password"}
+                                            value={commForm.auth_data?.password || ''}
+                                            onChange={e => setCommForm({ ...commForm, auth_data: { ...commForm.auth_data, password: e.target.value } })}
+                                            placeholder="Enter secure app password"
+                                            style={{ width: '100%', boxSizing: 'border-box', padding: '10px 42px 10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowCommPassword(!showCommPassword)}
+                                            title={showCommPassword ? "Hide password" : "Show password"}
+                                            aria-label={showCommPassword ? "Hide password" : "Show password"}
+                                            style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+                                        >
+                                            {showCommPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
                                     <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Used by the application to automatically send PDFs and notifications on your behalf.</span>
                                 </div>
                             )}
