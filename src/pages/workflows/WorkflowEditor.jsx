@@ -3957,6 +3957,7 @@ export default function WorkflowEditor() {
         // --- Auto-generate Quotation/Document PDF file for Email Attachment ---
         console.log(`Auto-generating PDF attachment for ${formData.document_no || 'Quotation'}...`);
         let docPdfFile = null;
+        const toastId = toast.loading('Generating latest PDF for email preview...');
         try {
             const pdfBlob = await generateSleekPDF({
                 ...formData,
@@ -3980,6 +3981,8 @@ export default function WorkflowEditor() {
             }
         } catch (pdfErr) {
             console.error('[handleEmail] PDF auto-generation error:', pdfErr);
+        } finally {
+            toast.dismiss(toastId);
         }
 
         setEmailPreview({ 
@@ -3988,7 +3991,7 @@ export default function WorkflowEditor() {
             bcc: 'celron.simlim0305@gmail.com', 
             subject: subjectLine, 
             body, 
-            attachments: [] 
+            attachments: docPdfFile ? [docPdfFile] : [] 
         });
         fetchDriveAttachments();
     };
