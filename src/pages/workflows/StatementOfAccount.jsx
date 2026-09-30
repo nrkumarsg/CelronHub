@@ -742,7 +742,7 @@ export default function StatementOfAccount() {
     const handleGenerate = async (partnerOverride = null, startOverride = null, endOverride = null) => {
         const partnerId = partnerOverride || selectedPartner;
         if (!partnerId) {
-            alert('Please select a customer first.');
+            toast.error('Please select a customer first.');
             return;
         }
         const start = startOverride || dateRange.start;
@@ -756,8 +756,15 @@ export default function StatementOfAccount() {
                 end
             );
 
-            if (fetchErr || !data) {
+            if (fetchErr) {
                 console.error('Fetch error:', fetchErr);
+                toast.error(`Database error: ${fetchErr.message || 'Failed to fetch statement records.'}`);
+                setStatementData(null);
+                setLoading(false);
+                return;
+            }
+
+            if (!data) {
                 setStatementData(null);
                 setLoading(false);
                 return;
@@ -765,9 +772,10 @@ export default function StatementOfAccount() {
 
             const processed = processStatementData(data, partnerId, start, end, partners, partner);
             setStatementData(processed);
+            toast.success('Statement generated successfully');
         } catch (err) {
             console.error('Failed to generate statement:', err);
-            alert('Failed to generate statement.');
+            toast.error('Failed to generate statement: ' + (err.message || err));
         } finally {
             setLoading(false);
         }

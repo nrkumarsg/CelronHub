@@ -302,8 +302,8 @@ export const getStatementData = async (companyId, partnerId, startDate, endDate)
     // We need earlier ones to calculate opening balance correctly
     const isGlobalSummary = !partnerId;
     const selectFields = isGlobalSummary
-        ? 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, customer_id, currency, total_amount, issue_date, status, payment_status, partners!partner_id(id, name)'
-        : 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, customer_id, currency, total_amount, issue_date, due_date, status, payment_status, internal_notes, original_document_id, customer_ref, customer_po_no, order_reference, subject, partners!partner_id(id, name), vessels!vessel_id(vessel_name), work_locations!work_location_id(location_name)';
+        ? 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, currency, total_amount, issue_date, status, partners!partner_id(id, name)'
+        : 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, currency, total_amount, issue_date, status, internal_notes, original_document_id, customer_ref, customer_po_no, subject, partners!partner_id(id, name), vessels!vessel_id(vessel_name), work_locations!work_location_id(location_name)';
 
     let query = supabase
         .from('workflow_documents')
@@ -323,7 +323,7 @@ export const getStatementData = async (companyId, partnerId, startDate, endDate)
     }
 
     if (partnerId) {
-        query = query.or(`partner_id.eq.${partnerId},customer_id.eq.${partnerId}`);
+        query = query.eq('partner_id', partnerId);
     }
 
     const { data, error } = await query;
