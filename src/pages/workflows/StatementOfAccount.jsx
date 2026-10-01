@@ -808,11 +808,16 @@ export default function StatementOfAccount() {
         
         const { default: html2pdf } = await import('html2pdf.js');
         const opt = {
-            margin: isSummary ? [10, 10, 10, 10] : 1,
-            filename: isSummary ? `Aging_Summary_Report_${new Date().toISOString().split('T')[0]}.pdf` : `Statement_${statementData?.partner?.name || 'Customer'}.pdf`,
+            margin: isSummary ? [10, 10, 10, 10] : 0,
+            filename: isSummary ? `Aging_Summary_Report_${new Date().toISOString().split('T')[0]}.pdf` : `Statement_${(statementData?.partner?.name || 'Customer').replace(/[/\\?%*:|"<>]/g, '_')}.pdf`,
             image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, letterRendering: true },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: isSummary ? 'landscape' : 'portrait' }
+            html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, letterRendering: true, backgroundColor: '#ffffff' },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: isSummary ? 'landscape' : 'portrait' },
+            pagebreak: { 
+                mode: ['avoid-all', 'css', 'legacy'],
+                avoid: ['tr', '.page-break-avoid'],
+                before: '.page-break-before-always'
+            }
         };
         
         await html2pdf().from(element).set(opt).save();
@@ -879,11 +884,16 @@ export default function StatementOfAccount() {
             
             const { default: html2pdf } = await import('html2pdf.js');
             const opt = {
-                margin: 1,
-                filename: `Statement_${statementData.partner?.name}_${new Date().toISOString().split('T')[0]}.pdf`,
+                margin: 0,
+                filename: `Statement_${(statementData.partner?.name || 'Customer').replace(/[/\\?%*:|"<>]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`,
                 image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: { scale: 1.5, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0 },
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, letterRendering: true, backgroundColor: '#ffffff' },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                pagebreak: { 
+                    mode: ['avoid-all', 'css', 'legacy'],
+                    avoid: ['tr', '.page-break-avoid'],
+                    before: '.page-break-before-always'
+                }
             };
             
             const pdfBlob = await html2pdf().from(element).set(opt).output('blob');
@@ -1063,14 +1073,16 @@ export default function StatementOfAccount() {
 
                 const opt = {
                     margin: 0,
-                    filename: `Statement_${processed.partner?.name?.replace(/\s+/g, '_') || 'Customer'}_${new Date().toISOString().split('T')[0]}.pdf`,
+                    filename: `Statement_${(processed.partner?.name || 'Customer').replace(/[/\\?%*:|"<>]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`,
                     image: { type: 'jpeg', quality: 0.98 },
                     html2canvas: { 
-                        scale: 1.5, 
+                        scale: 2, 
                         useCORS: true, 
                         allowTaint: false, 
                         scrollX: 0, 
                         scrollY: 0,
+                        backgroundColor: '#ffffff',
+                        letterRendering: true,
                         onclone: (clonedDoc) => {
                             const el = clonedDoc.getElementById('soa-offscreen-wrapper');
                             if (el) {
@@ -1080,7 +1092,12 @@ export default function StatementOfAccount() {
                             }
                         }
                     },
-                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                    pagebreak: { 
+                        mode: ['avoid-all', 'css', 'legacy'],
+                        avoid: ['tr', '.page-break-avoid'],
+                        before: '.page-break-before-always'
+                    }
                 };
 
                 // 4. Compile the PDF blob on-the-fly
@@ -1235,11 +1252,16 @@ export default function StatementOfAccount() {
 
             const { default: html2pdf } = await import('html2pdf.js');
             const opt = {
-                margin: 1,
-                filename: `SOA_${statementData.partner?.name?.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}_${statementCurrency}_${statementData.closingBalance.toFixed(0)}.pdf`,
+                margin: 0,
+                filename: `SOA_${(statementData.partner?.name || 'Customer').replace(/[/\\?%*:|"<>]/g, '_')}_${new Date().toISOString().split('T')[0]}_${statementCurrency}_${statementData.closingBalance.toFixed(0)}.pdf`,
                 image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, letterRendering: true },
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, letterRendering: true, backgroundColor: '#ffffff' },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                pagebreak: { 
+                    mode: ['avoid-all', 'css', 'legacy'],
+                    avoid: ['tr', '.page-break-avoid'],
+                    before: '.page-break-before-always'
+                }
             };
 
             const pdfBlob = await html2pdf().from(element).set(opt).output('blob');
@@ -2443,98 +2465,120 @@ export default function StatementOfAccount() {
 
 
             {/* Hidden Print Content - Off-screen for PDF capture */}
-            <div style={{ position: 'fixed', left: 0, top: 0, zIndex: -9999, pointerEvents: 'none', width: '850px', background: '#fff' }}>
-                <div ref={printRef} style={{ background: 'white', padding: '5mm' }}>
+            <div style={{ position: 'fixed', left: 0, top: 0, zIndex: -9999, pointerEvents: 'none', width: '210mm', maxWidth: '210mm', background: '#fff' }}>
+                <div ref={printRef} style={{ background: 'white', padding: '10mm 12mm', width: '210mm', maxWidth: '210mm', boxSizing: 'border-box' }}>
                     <style>{`
-                        @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@300;400;700&display=swap');
+                        @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;600;700;800;900&display=swap');
+                        table {
+                            border-collapse: collapse !important;
+                            page-break-inside: auto !important;
+                        }
+                        thead {
+                            display: table-header-group !important;
+                        }
+                        tfoot {
+                            display: table-footer-group !important;
+                        }
+                        tr {
+                            page-break-inside: avoid !important;
+                            break-inside: avoid !important;
+                        }
+                        td, th {
+                            page-break-inside: avoid !important;
+                            break-inside: avoid !important;
+                        }
+                        .page-break-avoid {
+                            page-break-inside: avoid !important;
+                            break-inside: avoid !important;
+                        }
                     `}</style>
                     {statementData && (
                         <div style={{ background: 'white', color: '#000', fontFamily: "'Roboto Condensed', sans-serif" }}>
                             {/* Celron Letterhead */}
-                            {/* ERP Style Letterhead - Condensed */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
-                                <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-                                    {logoBase64 && <img src={logoBase64} alt="Logo" style={{ height: '50px', objectFit: 'contain' }} />}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '14px', borderBottom: '1.5px solid #1e3a8a', paddingBottom: '10px' }}>
+                                <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+                                    {logoBase64 && <img src={logoBase64} alt="Logo" style={{ height: '48px', maxWidth: '140px', objectFit: 'contain' }} />}
                                     <div>
-                                        <h1 style={{ margin: 0, color: '#1e3a8a', fontSize: '1.4rem', fontWeight: 900, letterSpacing: '-0.03em', textTransform: 'uppercase' }}>Statement of Account</h1>
-                                        <p style={{ margin: '2px 0', fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>Period: {formatDate(dateRange.start)} - {formatDate(dateRange.end)}</p>
+                                        <h1 style={{ margin: 0, color: '#1e3a8a', fontSize: '1.35rem', fontWeight: 900, letterSpacing: '-0.02em', textTransform: 'uppercase' }}>Statement of Account</h1>
+                                        <p style={{ margin: '2px 0 0 0', fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>Period: {formatDate(dateRange.start)} - {formatDate(dateRange.end)}</p>
                                     </div>
                                 </div>
                                 <div style={{ textAlign: 'right' }}>
-                                    <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#1e3a8a' }}>{profile?.company_name || 'CEL-RON ENTERPRISES PTE LTD'}</h2>
-                                    <div style={{ fontSize: '0.6rem', color: '#64748b', marginTop: '4px', lineHeight: 1.3 }}>
+                                    <h2 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#1e3a8a' }}>{profile?.company_name || 'CEL-RON ENTERPRISES PTE LTD'}</h2>
+                                    <div style={{ fontSize: '0.62rem', color: '#64748b', marginTop: '3px', lineHeight: 1.35 }}>
                                         <div>{settings?.address || '10, Jln, Besar, "Sim Lim Tower", #03-05, Singapore 208787'}</div>
-                                        <div>Tel: {settings?.phone || '+6581962270'} | Email: {settings?.email || 'accounts@celron.net'} | www.celron.net</div>
+                                        <div>Tel: {settings?.phone || '+6581962270'} | Email: {settings?.sales_email || settings?.email || 'accounts@celron.net'} | www.celron.net</div>
                                     </div>
                                 </div>
                             </div>
 
-                            {/* Info & Balance Cards - Compact */}
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '15px', marginBottom: '20px' }}>
-                                <div style={{ flex: 1, background: '#f8fafc', padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
-                                    <div style={{ fontSize: '0.55rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Statement To</div>
-                                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 900, color: '#0f172a' }}>{statementData.partner?.name}</h3>
-                                    <div style={{ marginTop: '6px', color: '#475569', fontSize: '0.65rem', lineHeight: 1.4 }}>
-                                        <div style={{ whiteSpace: 'pre-line' }}>
-                                            {statementData.partner?.address}
-                                            {(statementData.partner?.city || statementData.partner?.pincode || statementData.partner?.country) && (
-                                                <div>
-                                                    {[
-                                                        statementData.partner?.city,
-                                                        statementData.partner?.country,
-                                                        statementData.partner?.pincode
-                                                    ].filter(Boolean).join(', ')}
-                                                </div>
-                                            )}
-                                        </div>
-                                        <div style={{ marginTop: '4px' }}>
-                                            {(statementData.partner?.phone1 || statementData.partner?.phone) && (
-                                                <div>Tel: {statementData.partner.phone1 || statementData.partner.phone}</div>
-                                            )}
-                                            {(statementData.partner?.email1 || statementData.partner?.email) && (
-                                                <div style={{ fontWeight: 600 }}>{statementData.partner.email1 || statementData.partner.email}</div>
-                                            )}
-                                            {statementData.partner?.weblink && (
-                                                <div style={{ color: '#1e3a8a', fontSize: '0.6rem' }}>{statementData.partner.weblink}</div>
-                                            )}
-                                        </div>
-                                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '-12px' }}>
-                                            <div style={{ fontSize: '0.6rem', background: '#e2e8f0', padding: '2px 8px', borderRadius: '4px', fontWeight: 700, color: '#1e3a8a' }}>
-                                                TERMS: {statementData.partner?.customerCreditTime && statementData.partner.customerCreditTime !== '0' ? `${statementData.partner.customerCreditTime} DAYS` : 'C.O.D'}
+                            {/* Info & Balance Cards */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', marginBottom: '16px', alignItems: 'stretch' }}>
+                                <div style={{ flex: 1, background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                    <div>
+                                        <div style={{ fontSize: '0.55rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '3px' }}>Statement To</div>
+                                        <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 900, color: '#0f172a' }}>{statementData.partner?.name}</h3>
+                                        <div style={{ marginTop: '4px', color: '#475569', fontSize: '0.65rem', lineHeight: 1.35 }}>
+                                            <div style={{ whiteSpace: 'pre-line' }}>
+                                                {statementData.partner?.billing_address || statementData.partner?.address}
+                                                {(statementData.partner?.city || statementData.partner?.pincode || statementData.partner?.country) && (
+                                                    <div>
+                                                        {[
+                                                            statementData.partner?.city,
+                                                            statementData.partner?.country,
+                                                            statementData.partner?.pincode
+                                                        ].filter(Boolean).join(', ')}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div style={{ marginTop: '3px' }}>
+                                                {(statementData.partner?.phone1 || statementData.partner?.phone) && (
+                                                    <span>Tel: {statementData.partner.phone1 || statementData.partner.phone} &nbsp;</span>
+                                                )}
+                                                {(statementData.partner?.email1 || statementData.partner?.email) && (
+                                                    <span style={{ fontWeight: 600 }}>Email: {statementData.partner.email1 || statementData.partner.email}</span>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                                        <div style={{ fontSize: '0.6rem', background: '#e2e8f0', padding: '2px 8px', borderRadius: '4px', fontWeight: 700, color: '#1e3a8a' }}>
+                                            TERMS: {statementData.partner?.customerCreditTime && statementData.partner.customerCreditTime !== '0' ? `${statementData.partner.customerCreditTime} DAYS` : (statementData.partner?.terms || statementData.partner?.payment_terms || 'C.O.D')}
+                                        </div>
+                                    </div>
                                 </div>
-                                <div style={{ width: '260px', background: 'linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%)', padding: '12px', borderRadius: '10px', color: 'white', display: 'flex', flexDirection: 'column', justifyContent: 'center', boxShadow: '0 4px 10px rgba(30, 58, 138, 0.15)', textAlign: 'right' }}>
-                                    <div style={{ fontSize: '0.55rem', fontWeight: 700, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Outstanding Balance</div>
-                                    <div style={{ fontSize: '2.1rem', fontWeight: 900, marginTop: '2px' }}>
-                                        <span style={{ fontSize: '0.9rem', opacity: 0.9, marginRight: '4px' }}>{statementCurrency}</span>
+                                <div style={{ width: '230px', background: 'linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%)', padding: '12px 14px', borderRadius: '8px', color: 'white', display: 'flex', flexDirection: 'column', justifyContent: 'center', boxShadow: '0 4px 10px rgba(30, 58, 138, 0.15)', textAlign: 'right' }}>
+                                    <div style={{ fontSize: '0.55rem', fontWeight: 700, color: 'rgba(255,255,255,0.75)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Outstanding Balance</div>
+                                    <div style={{ fontSize: '1.75rem', fontWeight: 900, marginTop: '2px', lineHeight: 1.1 }}>
+                                        <span style={{ fontSize: '0.85rem', opacity: 0.9, marginRight: '4px' }}>{statementCurrency}</span>
                                         {statementData.closingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                     </div>
-                                    <div style={{ fontSize: '0.55rem', marginTop: '8px', color: 'rgba(255,255,255,0.6)', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '6px' }}>
+                                    <div style={{ fontSize: '0.55rem', marginTop: '6px', color: 'rgba(255,255,255,0.65)', borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: '4px' }}>
                                         As of {formatDate(dateRange.end)}
                                     </div>
                                 </div>
                             </div>
 
-                            {/* ERP Premium Table - Industrial-Fit Layout */}
-                            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '6px', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', fontFamily: "'Roboto Condensed', sans-serif", letterSpacing: '-0.01em' }}>
+                            {/* ERP Premium Table - Industrial-Fit Layout with strictly controlled column widths */}
+                            <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden', fontFamily: "'Roboto Condensed', sans-serif" }}>
                                 <thead>
                                     <tr style={{ background: '#1e3a8a', color: 'white' }}>
-                                        <th style={{ padding: '8px 6px', textAlign: 'center', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.1)', whiteSpace: 'nowrap', width: '9%' }}>DATE</th>
-                                        <th style={{ padding: '8px 6px', textAlign: 'left', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.1)', width: '20%' }}>DOCUMENT / TYPE</th>
-                                        <th style={{ padding: '8px 6px', textAlign: 'left', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.1)', width: '18%' }}>REFERENCE (CUST PO)</th>
-                                        <th style={{ padding: '8px 6px', textAlign: 'left', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.1)', width: '24%' }}>VESSEL / WORKPLACE</th>
-                                        <th style={{ padding: '8px 6px', textAlign: 'right', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.1)', whiteSpace: 'nowrap', width: '10%' }}>AMOUNT</th>
-                                        <th style={{ padding: '8px 6px', textAlign: 'center', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.1)', whiteSpace: 'nowrap', width: '9%' }}>AGING</th>
-                                        <th style={{ padding: '8px 6px', textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', width: '10%' }}>BALANCE</th>
+                                        <th style={{ padding: '6px 4px', textAlign: 'center', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '10%', letterSpacing: '0.03em' }}>DATE</th>
+                                        <th style={{ padding: '6px 5px', textAlign: 'left', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '16%', letterSpacing: '0.03em' }}>DOCUMENT / TYPE</th>
+                                        <th style={{ padding: '6px 5px', textAlign: 'left', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '22%', letterSpacing: '0.03em' }}>REFERENCE (CUST PO)</th>
+                                        <th style={{ padding: '6px 5px', textAlign: 'left', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '19%', letterSpacing: '0.03em' }}>VESSEL / WORKPLACE</th>
+                                        <th style={{ padding: '6px 5px', textAlign: 'right', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '11%', letterSpacing: '0.03em' }}>AMOUNT</th>
+                                        <th style={{ padding: '6px 4px', textAlign: 'center', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '8%', letterSpacing: '0.03em' }}>AGING</th>
+                                        <th style={{ padding: '6px 5px', textAlign: 'right', fontWeight: 800, fontSize: '8px', width: '14%', letterSpacing: '0.03em' }}>BALANCE</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr style={{ background: '#f1f5f9' }}>
-                                        <td style={{ padding: '12px 6px', borderBottom: '1px solid #e2e8f0', textAlign: 'center', fontWeight: 800, color: '#64748b', fontSize: '11px' }}>-</td>
-                                        <td style={{ padding: '12px 6px', borderBottom: '1px solid #e2e8f0', fontWeight: 900, color: '#1e3a8a', fontSize: '11px' }} colSpan={5}>OPENING BALANCE</td>
-                                        <td style={{ padding: '12px 6px', borderBottom: '1px solid #e2e8f0', textAlign: 'right', fontWeight: 900, color: '#1e3a8a', whiteSpace: 'nowrap', fontSize: '11px' }}>{statementData.openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                        <td style={{ padding: '6px 4px', borderBottom: '1px solid #cbd5e1', textAlign: 'center', fontWeight: 800, color: '#64748b', fontSize: '9px' }}>-</td>
+                                        <td style={{ padding: '6px 5px', borderBottom: '1px solid #cbd5e1', fontWeight: 900, color: '#1e3a8a', fontSize: '9px' }} colSpan={5}>OPENING BALANCE</td>
+                                        <td style={{ padding: '6px 5px', borderBottom: '1px solid #cbd5e1', textAlign: 'right', fontWeight: 900, color: '#1e3a8a', whiteSpace: 'nowrap', fontSize: '9px' }}>
+                                            {statementData.openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </td>
                                     </tr>
                                     {statementData.ledger.map((row, idx) => {
                                         // Calculate running balance for the print template
@@ -2545,41 +2589,53 @@ export default function StatementOfAccount() {
                                         }
 
                                         return (
-                                            <tr key={idx} style={{ background: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
-                                                <td style={{ padding: '4px 6px', borderBottom: '1px solid #f1f5f9', textAlign: 'center', whiteSpace: 'nowrap', color: '#64748b' }}>
+                                            <tr key={idx} style={{ background: idx % 2 === 0 ? '#ffffff' : '#f8fafc', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                                                <td style={{ padding: '5px 4px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', textAlign: 'center', color: '#64748b', fontSize: '8px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
                                                     {formatDate(row.issue_date)}
                                                 </td>
-                                                <td style={{ padding: '4px 6px', borderBottom: '1px solid #f1f5f9', whiteSpace: 'nowrap' }}>
-                                                    <div style={{ color: '#1e293b' }}>{row.document_no}</div>
-                                                    <div style={{ fontSize: '8px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.02em', marginTop: '1px' }}>{row.document_type}</div>
+                                                <td style={{ padding: '5px 5px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', verticalAlign: 'top' }}>
+                                                    <div style={{ color: '#1e293b', fontWeight: 700, fontSize: '8.5px', wordBreak: 'break-word' }}>{row.document_no}</div>
+                                                    <div style={{ fontSize: '7px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.02em', marginTop: '1px' }}>{row.document_type}</div>
                                                 </td>
-                                                <td style={{ padding: '4px 6px', borderBottom: '1px solid #f1f5f9', whiteSpace: 'nowrap' }}>
-                                                    <div style={{ fontWeight: 700, color: '#1e3a8a' }}>{row.customer_ref || row.customer_po_no || row.order_reference || '-'}</div>
+                                                <td style={{ padding: '5px 5px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', verticalAlign: 'top' }}>
+                                                    <div style={{ fontWeight: 700, color: '#1e3a8a', fontSize: '8px', lineHeight: 1.25, wordBreak: 'break-word' }}>
+                                                        {row.customer_ref || row.customer_po_no || row.order_reference || '-'}
+                                                    </div>
                                                 </td>
-                                                <td style={{ padding: '4px 6px', borderBottom: '1px solid #f1f5f9', color: '#475569', wordBreak: 'break-word', lineHeight: 1.2 }}>{row.vessels?.vessel_name || row.work_locations?.location_name || row.vessel_name || row.work_location || '-'}</td>
-                                                <td style={{ padding: '4px 6px', borderBottom: '1px solid #f1f5f9', textAlign: 'right', color: row.debit > 0 ? '#e11d48' : '#059669', whiteSpace: 'nowrap', fontWeight: 500 }}>
+                                                <td style={{ padding: '5px 5px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', color: '#475569', fontSize: '8px', wordBreak: 'break-word', lineHeight: 1.2, verticalAlign: 'top' }}>
+                                                    {row.vessels?.vessel_name || row.work_locations?.location_name || row.vessel_name || row.work_location || '-'}
+                                                </td>
+                                                <td style={{ padding: '5px 5px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', textAlign: 'right', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                                                     {row.debit > 0 ? (
                                                         <div>
-                                                            <div>{row.debit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                                            <div style={{ color: '#dc2626', fontWeight: 700, fontSize: '8.5px' }}>
+                                                                {row.debit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                            </div>
                                                             {row.outstanding !== undefined && row.outstanding !== row.debit && (
-                                                                <div style={{ fontSize: '7px', color: '#64748b', marginTop: '1px' }}>
+                                                                <div style={{ fontSize: '6.5px', color: '#64748b', marginTop: '1px' }}>
                                                                     BAL: {row.currency || 'SGD'} {row.outstanding.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                                                 </div>
                                                             )}
                                                         </div>
-                                                    ) : `(${row.credit.toLocaleString(undefined, { minimumFractionDigits: 2 })})`}
+                                                    ) : (
+                                                        <div style={{ color: '#059669', fontWeight: 700, fontSize: '8.5px' }}>
+                                                            ({row.credit.toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                                                        </div>
+                                                    )}
                                                 </td>
-                                                <td style={{ padding: '4px 6px', borderBottom: '1px solid #f1f5f9', textAlign: 'center', color: '#64748b', fontSize: '9px', fontWeight: 600 }}>
-                                                    {Math.floor((new Date() - new Date(row.issue_date)) / (1000 * 60 * 60 * 24))} Days
+                                                <td style={{ padding: '5px 4px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', textAlign: 'center', color: '#64748b', fontSize: '8px', fontWeight: 600, verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                                                    {Math.floor((new Date() - new Date(row.issue_date)) / (1000 * 60 * 60 * 24))}d
                                                 </td>
-                                                <td style={{ padding: '4px 6px', borderBottom: '1px solid #f1f5f9', textAlign: 'right', fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap' }}>{runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                <td style={{ padding: '5px 5px', borderBottom: '1px solid #e2e8f0', textAlign: 'right', fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap', fontSize: '8.5px', verticalAlign: 'top' }}>
+                                                    {runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </td>
                                             </tr>
                                         );
                                     })}
-                                    <tr style={{ background: '#0f172a', color: 'white' }}>
-                                        <td style={{ padding: '15px 10px', textAlign: 'center', fontWeight: 700, color: 'white', fontSize: '13px' }}>-</td>
-                                        <td style={{ padding: '15px 10px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'white', fontSize: '13px' }} colSpan={5}>TOTAL OUTSTANDING</td>
-                                        <td style={{ padding: '15px 10px', textAlign: 'right', fontWeight: 900, fontSize: '13px', color: 'white', whiteSpace: 'nowrap' }}>
+                                    <tr style={{ background: '#0f172a', color: 'white', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                                        <td style={{ padding: '8px 4px', textAlign: 'center', fontWeight: 700, color: 'white', fontSize: '10px' }}>-</td>
+                                        <td style={{ padding: '8px 5px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'white', fontSize: '10px' }} colSpan={5}>TOTAL OUTSTANDING</td>
+                                        <td style={{ padding: '8px 5px', textAlign: 'right', fontWeight: 900, fontSize: '10px', color: 'white', whiteSpace: 'nowrap' }}>
                                             {statementCurrency} {statementData.closingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                         </td>
                                     </tr>
@@ -2587,23 +2643,23 @@ export default function StatementOfAccount() {
                             </table>
 
                             {/* Aging Summary & Terms */}
-                            <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', flex: 1 }}>
+                            <div className="page-break-avoid" style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'stretch' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', flex: 1 }}>
                                 {[
                                     { label: 'Current', value: statementData.aging.current },
                                     { label: '31-60 Days', value: statementData.aging.thirty },
                                     { label: '61-90 Days', value: statementData.aging.sixty },
                                     { label: '90+ Days', value: statementData.aging.ninety }
                                 ].map((bucket, i) => (
-                                    <div key={i} style={{ background: bucket.value > 0 ? '#fff1f2' : '#f8fafc', padding: '10px', borderRadius: '8px', border: `1px solid ${bucket.value > 0 ? '#fecdd3' : '#e2e8f0'}`, textAlign: 'center' }}>
-                                        <div style={{ fontSize: '0.5rem', fontWeight: 800, color: bucket.value > 0 ? '#e11d48' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>{bucket.label}</div>
-                                        <div style={{ fontSize: '0.8rem', fontWeight: 800, color: bucket.value > 0 ? '#9f1239' : '#0f172a' }}>{statementCurrency} {bucket.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                    <div key={i} style={{ background: bucket.value > 0 ? '#fff1f2' : '#f8fafc', padding: '8px 6px', borderRadius: '6px', border: `1px solid ${bucket.value > 0 ? '#fecdd3' : '#e2e8f0'}`, textAlign: 'center' }}>
+                                        <div style={{ fontSize: '0.52rem', fontWeight: 800, color: bucket.value > 0 ? '#e11d48' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>{bucket.label}</div>
+                                        <div style={{ fontSize: '0.75rem', fontWeight: 800, color: bucket.value > 0 ? '#9f1239' : '#0f172a' }}>{statementCurrency} {bucket.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
                                     </div>
                                 ))}
                                 </div>
-                                <div style={{ width: '120px', marginLeft: '15px', padding: '8px', border: '1px dashed #cbd5e1', borderRadius: '8px', textAlign: 'center', background: '#f8fafc' }}>
-                                    <div style={{ fontSize: '0.45rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Delivery / Payment Terms</div>
-                                    <div style={{ fontSize: '0.9rem', fontWeight: 900, color: '#1e3a8a' }}>
+                                <div style={{ width: '130px', marginLeft: '12px', padding: '8px', border: '1px dashed #cbd5e1', borderRadius: '6px', textAlign: 'center', background: '#f8fafc', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ fontSize: '0.48rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: '2px' }}>Delivery / Payment Terms</div>
+                                    <div style={{ fontSize: '0.85rem', fontWeight: 900, color: '#1e3a8a' }}>
                                         {(() => {
                                             const t = statementData.partner?.terms || statementData.partner?.payment_terms || statementData.partner?.customerCreditTime;
                                             if (!t || t === '0') return 'C.O.D';
@@ -2611,7 +2667,7 @@ export default function StatementOfAccount() {
                                             return String(t).toUpperCase();
                                         })()}
                                     </div>
-                                    <div style={{ fontSize: '0.4rem', color: '#94a3b8', marginTop: '2px' }}>
+                                    <div style={{ fontSize: '0.48rem', color: '#94a3b8', marginTop: '2px' }}>
                                         {(() => {
                                             const t = statementData.partner?.terms || statementData.partner?.payment_terms || statementData.partner?.customerCreditTime;
                                             if (!t || String(t).toUpperCase().includes('C.O.D') || t === '0') return 'Payable upon Delivery';
@@ -2621,7 +2677,7 @@ export default function StatementOfAccount() {
                                 </div>
                             </div>
 
-                            <div style={{ marginTop: '25px', borderTop: '1px solid #e2e8f0', paddingTop: '15px', fontSize: '0.55rem', color: '#94a3b8', textAlign: 'center' }}>
+                            <div className="page-break-avoid" style={{ marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '10px', fontSize: '0.55rem', color: '#94a3b8', textAlign: 'center' }}>
                                 This is a computer generated document. No signature is required.
                             </div>
                         </div>
@@ -2776,132 +2832,222 @@ export default function StatementOfAccount() {
             )}
 
             {/* Offscreen compilation container for sequential dispatching */}
-            <div id="soa-offscreen-wrapper" style={{ position: 'absolute', left: '-9999px', top: 0, pointerEvents: 'none', width: '850px', background: '#fff' }}>
-                <div ref={hiddenPrintRef} style={{ background: 'white', padding: '5mm' }}>
+            <div id="soa-offscreen-wrapper" style={{ position: 'absolute', left: '-9999px', top: 0, pointerEvents: 'none', width: '210mm', maxWidth: '210mm', background: '#fff' }}>
+                <div ref={hiddenPrintRef} style={{ background: 'white', padding: '10mm 12mm', width: '210mm', maxWidth: '210mm', boxSizing: 'border-box' }}>
                     <style>{`
-                        @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@300;400;700&display=swap');
+                        @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;600;700;800;900&display=swap');
+                        table {
+                            border-collapse: collapse !important;
+                            page-break-inside: auto !important;
+                        }
+                        thead {
+                            display: table-header-group !important;
+                        }
+                        tfoot {
+                            display: table-footer-group !important;
+                        }
+                        tr {
+                            page-break-inside: avoid !important;
+                            break-inside: avoid !important;
+                        }
+                        td, th {
+                            page-break-inside: avoid !important;
+                            break-inside: avoid !important;
+                        }
+                        .page-break-avoid {
+                            page-break-inside: avoid !important;
+                            break-inside: avoid !important;
+                        }
                     `}</style>
                     {hiddenStatementData && (
                         <div style={{ background: 'white', color: '#000', fontFamily: "'Roboto Condensed', sans-serif" }}>
                             {/* Letterhead */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
-                                <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-                                    {logoBase64 && <img src={logoBase64} alt="Logo" style={{ height: '50px', objectFit: 'contain' }} />}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '14px', borderBottom: '1.5px solid #1e3a8a', paddingBottom: '10px' }}>
+                                <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+                                    {logoBase64 && <img src={logoBase64} alt="Logo" style={{ height: '48px', maxWidth: '140px', objectFit: 'contain' }} />}
                                     <div>
-                                        <h1 style={{ margin: 0, color: '#1e3a8a', fontSize: '1.4rem', fontWeight: 900, letterSpacing: '-0.03em', textTransform: 'uppercase' }}>Statement of Account</h1>
-                                        <p style={{ margin: '2px 0', fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>Period: {formatDate(dateRange.start)} - {formatDate(dateRange.end)}</p>
+                                        <h1 style={{ margin: 0, color: '#1e3a8a', fontSize: '1.35rem', fontWeight: 900, letterSpacing: '-0.02em', textTransform: 'uppercase' }}>Statement of Account</h1>
+                                        <p style={{ margin: '2px 0 0 0', fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>Period: {formatDate(dateRange.start)} - {formatDate(dateRange.end)}</p>
                                     </div>
                                 </div>
                                 <div style={{ textAlign: 'right' }}>
-                                    <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#1e3a8a' }}>{profile?.company_name || 'CEL-RON ENTERPRISES PTE LTD'}</h2>
-                                    <div style={{ fontSize: '0.6rem', color: '#64748b', marginTop: '4px', lineHeight: 1.3 }}>
+                                    <h2 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#1e3a8a' }}>{profile?.company_name || 'CEL-RON ENTERPRISES PTE LTD'}</h2>
+                                    <div style={{ fontSize: '0.62rem', color: '#64748b', marginTop: '3px', lineHeight: 1.35 }}>
                                         <div>{settings?.address || '10, Jln, Besar, "Sim Lim Tower", #03-05, Singapore 208787'}</div>
-                                        <div>Tel: {settings?.phone || '+6581962270'} | Email: {settings?.email || 'accounts@celron.net'} | www.celron.net</div>
+                                        <div>Tel: {settings?.phone || '+6581962270'} | Email: {settings?.sales_email || settings?.email || 'accounts@celron.net'} | www.celron.net</div>
                                     </div>
                                 </div>
                             </div>
 
-                            {/* Customer details */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', fontSize: '0.75rem' }}>
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ fontWeight: 800, color: '#64748b', textTransform: 'uppercase', fontSize: '0.6rem', marginBottom: '2px' }}>TO:</div>
-                                    <div style={{ fontWeight: 900, fontSize: '0.85rem', color: '#1e3a8a' }}>{hiddenStatementData.partner?.name}</div>
-                                    <div style={{ whiteSpace: 'pre-line', color: '#334155', marginTop: '2px', lineHeight: 1.3 }}>{hiddenStatementData.partner?.billing_address || hiddenStatementData.partner?.address}</div>
+                            {/* Customer details & Outstanding Balance */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', marginBottom: '16px', alignItems: 'stretch' }}>
+                                <div style={{ flex: 1, background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                    <div>
+                                        <div style={{ fontSize: '0.55rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '3px' }}>Statement To</div>
+                                        <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 900, color: '#0f172a' }}>{hiddenStatementData.partner?.name}</h3>
+                                        <div style={{ marginTop: '4px', color: '#475569', fontSize: '0.65rem', lineHeight: 1.35 }}>
+                                            <div style={{ whiteSpace: 'pre-line' }}>
+                                                {hiddenStatementData.partner?.billing_address || hiddenStatementData.partner?.address}
+                                                {(hiddenStatementData.partner?.city || hiddenStatementData.partner?.pincode || hiddenStatementData.partner?.country) && (
+                                                    <div>
+                                                        {[
+                                                            hiddenStatementData.partner?.city,
+                                                            hiddenStatementData.partner?.country,
+                                                            hiddenStatementData.partner?.pincode
+                                                        ].filter(Boolean).join(', ')}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div style={{ marginTop: '3px' }}>
+                                                {(hiddenStatementData.partner?.phone1 || hiddenStatementData.partner?.phone) && (
+                                                    <span>Tel: {hiddenStatementData.partner.phone1 || hiddenStatementData.partner.phone} &nbsp;</span>
+                                                )}
+                                                {(hiddenStatementData.partner?.email1 || hiddenStatementData.partner?.email) && (
+                                                    <span style={{ fontWeight: 600 }}>Email: {hiddenStatementData.partner.email1 || hiddenStatementData.partner.email}</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                                        <div style={{ fontSize: '0.6rem', background: '#e2e8f0', padding: '2px 8px', borderRadius: '4px', fontWeight: 700, color: '#1e3a8a' }}>
+                                            TERMS: {hiddenStatementData.partner?.customerCreditTime && hiddenStatementData.partner.customerCreditTime !== '0' ? `${hiddenStatementData.partner.customerCreditTime} DAYS` : (hiddenStatementData.partner?.terms || hiddenStatementData.partner?.payment_terms || 'C.O.D')}
+                                        </div>
+                                    </div>
                                 </div>
-                                <div style={{ width: '220px', textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Date: </span>{formatDate(new Date())}</div>
-                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Customer Code: </span>{hiddenStatementData.partner?.partner_code || 'N/A'}</div>
-                                    <div><span style={{ fontWeight: 700, color: '#64748b' }}>Currency: </span>{hiddenStatementData.ledger?.find(d => d.currency)?.currency || 'SGD'}</div>
+                                <div style={{ width: '230px', background: 'linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%)', padding: '12px 14px', borderRadius: '8px', color: 'white', display: 'flex', flexDirection: 'column', justifyContent: 'center', boxShadow: '0 4px 10px rgba(30, 58, 138, 0.15)', textAlign: 'right' }}>
+                                    <div style={{ fontSize: '0.55rem', fontWeight: 700, color: 'rgba(255,255,255,0.75)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Outstanding Balance</div>
+                                    <div style={{ fontSize: '1.75rem', fontWeight: 900, marginTop: '2px', lineHeight: 1.1 }}>
+                                        <span style={{ fontSize: '0.85rem', opacity: 0.9, marginRight: '4px' }}>{hiddenStatementData.ledger?.find(d => d.currency)?.currency || 'SGD'}</span>
+                                        {(hiddenStatementData.closingBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </div>
+                                    <div style={{ fontSize: '0.55rem', marginTop: '6px', color: 'rgba(255,255,255,0.65)', borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: '4px' }}>
+                                        As of {formatDate(dateRange.end)}
+                                    </div>
                                 </div>
                             </div>
 
                             {/* Ledger Table */}
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '8.5px', marginBottom: '15px' }}>
+                            <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden', fontFamily: "'Roboto Condensed', sans-serif" }}>
                                 <thead>
                                     <tr style={{ background: '#1e3a8a', color: 'white' }}>
-                                        <th style={{ padding: '6px', textAlign: 'center', color: 'white' }}>Date</th>
-                                        <th style={{ padding: '6px', textAlign: 'left', color: 'white' }}>Ref No / Job No</th>
-                                        <th style={{ padding: '6px', textAlign: 'left', color: 'white' }}>Particulars</th>
-                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Debit (+)</th>
-                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Credit (-)</th>
-                                        <th style={{ padding: '6px', textAlign: 'center', color: 'white' }}>Age</th>
-                                        <th style={{ padding: '6px', textAlign: 'right', color: 'white' }}>Balance</th>
+                                        <th style={{ padding: '6px 4px', textAlign: 'center', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '10%', letterSpacing: '0.03em' }}>DATE</th>
+                                        <th style={{ padding: '6px 5px', textAlign: 'left', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '16%', letterSpacing: '0.03em' }}>DOCUMENT / TYPE</th>
+                                        <th style={{ padding: '6px 5px', textAlign: 'left', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '22%', letterSpacing: '0.03em' }}>REFERENCE (CUST PO)</th>
+                                        <th style={{ padding: '6px 5px', textAlign: 'left', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '19%', letterSpacing: '0.03em' }}>VESSEL / WORKPLACE</th>
+                                        <th style={{ padding: '6px 5px', textAlign: 'right', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '11%', letterSpacing: '0.03em' }}>AMOUNT</th>
+                                        <th style={{ padding: '6px 4px', textAlign: 'center', fontWeight: 800, borderRight: '1px solid rgba(255,255,255,0.15)', fontSize: '8px', width: '8%', letterSpacing: '0.03em' }}>AGING</th>
+                                        <th style={{ padding: '6px 5px', textAlign: 'right', fontWeight: 800, fontSize: '8px', width: '14%', letterSpacing: '0.03em' }}>BALANCE</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr style={{ background: '#f8fafc', fontWeight: 700 }}>
-                                        <td style={{ padding: '4px 6px', textAlign: 'center' }}>{formatDate(dateRange.start)}</td>
-                                        <td style={{ padding: '4px 6px' }}>OPENING BALANCE</td>
-                                        <td style={{ padding: '4px 6px' }}>Balance brought forward</td>
-                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>-</td>
-                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>-</td>
-                                        <td style={{ padding: '4px 6px', textAlign: 'center' }}>-</td>
-                                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>{(hiddenStatementData.openingBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                    <tr style={{ background: '#f1f5f9' }}>
+                                        <td style={{ padding: '6px 4px', borderBottom: '1px solid #cbd5e1', textAlign: 'center', fontWeight: 800, color: '#64748b', fontSize: '9px' }}>-</td>
+                                        <td style={{ padding: '6px 5px', borderBottom: '1px solid #cbd5e1', fontWeight: 900, color: '#1e3a8a', fontSize: '9px' }} colSpan={5}>OPENING BALANCE</td>
+                                        <td style={{ padding: '6px 5px', borderBottom: '1px solid #cbd5e1', textAlign: 'right', fontWeight: 900, color: '#1e3a8a', whiteSpace: 'nowrap', fontSize: '9px' }}>
+                                            {(hiddenStatementData.openingBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </td>
                                     </tr>
                                     {(() => {
                                         let runningBalance = hiddenStatementData.openingBalance || 0;
                                         return hiddenStatementData.ledger?.map((row, idx) => {
                                             runningBalance += (row.debit || 0) - (row.credit || 0);
                                             return (
-                                                <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                                    <td style={{ padding: '4px 6px', textAlign: 'center' }}>{formatDate(row.issue_date)}</td>
-                                                    <td style={{ padding: '4px 6px', fontWeight: 600 }}>{row.document_no}</td>
-                                                    <td style={{ padding: '4px 6px', color: '#475569' }}>{row.subject || row.particulars || 'Invoice'}</td>
-                                                    <td style={{ padding: '4px 6px', textAlign: 'right' }}>{row.debit > 0 ? row.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
-                                                    <td style={{ padding: '4px 6px', textAlign: 'right' }}>{row.credit > 0 ? row.credit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
-                                                    <td style={{ padding: '4px 6px', textAlign: 'center', color: '#64748b' }}>
-                                                        {Math.floor((new Date() - new Date(row.issue_date)) / (1000 * 60 * 60 * 24))} Days
+                                                <tr key={idx} style={{ background: idx % 2 === 0 ? '#ffffff' : '#f8fafc', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                                                    <td style={{ padding: '5px 4px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', textAlign: 'center', color: '#64748b', fontSize: '8px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                                                        {formatDate(row.issue_date)}
                                                     </td>
-                                                    <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 600 }}>{runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                    <td style={{ padding: '5px 5px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', verticalAlign: 'top' }}>
+                                                        <div style={{ color: '#1e293b', fontWeight: 700, fontSize: '8.5px', wordBreak: 'break-word' }}>{row.document_no}</div>
+                                                        <div style={{ fontSize: '7px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.02em', marginTop: '1px' }}>{row.document_type}</div>
+                                                    </td>
+                                                    <td style={{ padding: '5px 5px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', verticalAlign: 'top' }}>
+                                                        <div style={{ fontWeight: 700, color: '#1e3a8a', fontSize: '8px', lineHeight: 1.25, wordBreak: 'break-word' }}>
+                                                            {row.customer_ref || row.customer_po_no || row.order_reference || '-'}
+                                                        </div>
+                                                    </td>
+                                                    <td style={{ padding: '5px 5px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', color: '#475569', fontSize: '8px', wordBreak: 'break-word', lineHeight: 1.2, verticalAlign: 'top' }}>
+                                                        {row.vessels?.vessel_name || row.work_locations?.location_name || row.vessel_name || row.work_location || '-'}
+                                                    </td>
+                                                    <td style={{ padding: '5px 5px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', textAlign: 'right', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                                                        {row.debit > 0 ? (
+                                                            <div>
+                                                                <div style={{ color: '#dc2626', fontWeight: 700, fontSize: '8.5px' }}>
+                                                                    {row.debit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                </div>
+                                                                {row.outstanding !== undefined && row.outstanding !== row.debit && (
+                                                                    <div style={{ fontSize: '6.5px', color: '#64748b', marginTop: '1px' }}>
+                                                                        BAL: {row.currency || 'SGD'} {row.outstanding.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            <div style={{ color: '#059669', fontWeight: 700, fontSize: '8.5px' }}>
+                                                                ({row.credit.toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td style={{ padding: '5px 4px', borderBottom: '1px solid #e2e8f0', borderRight: '1px solid #f1f5f9', textAlign: 'center', color: '#64748b', fontSize: '8px', fontWeight: 600, verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                                                        {Math.floor((new Date() - new Date(row.issue_date)) / (1000 * 60 * 60 * 24))}d
+                                                    </td>
+                                                    <td style={{ padding: '5px 5px', borderBottom: '1px solid #e2e8f0', textAlign: 'right', fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap', fontSize: '8.5px', verticalAlign: 'top' }}>
+                                                        {runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                    </td>
                                                 </tr>
                                             );
                                         });
                                     })()}
-                                    <tr style={{ background: '#0f172a', color: 'white' }}>
-                                        <td style={{ padding: '10px', textAlign: 'center', fontWeight: 700, color: 'white' }}>-</td>
-                                        <td style={{ padding: '10px', fontWeight: 900, textTransform: 'uppercase', color: 'white' }} colSpan={5}>TOTAL OUTSTANDING</td>
-                                        <td style={{ padding: '10px', textAlign: 'right', fontWeight: 900, color: 'white' }}>
+                                    <tr style={{ background: '#0f172a', color: 'white', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                                        <td style={{ padding: '8px 4px', textAlign: 'center', fontWeight: 700, color: 'white', fontSize: '10px' }}>-</td>
+                                        <td style={{ padding: '8px 5px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'white', fontSize: '10px' }} colSpan={5}>TOTAL OUTSTANDING</td>
+                                        <td style={{ padding: '8px 5px', textAlign: 'right', fontWeight: 900, fontSize: '10px', color: 'white', whiteSpace: 'nowrap' }}>
                                             {hiddenStatementData.ledger?.find(d => d.currency)?.currency || 'SGD'} {(hiddenStatementData.closingBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                         </td>
                                     </tr>
                                 </tbody>
-                             </table>
- 
-                             {/* Aging summary & terms */}
-                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginTop: '10px' }}>
-                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', flex: 1 }}>
-                                     {[
-                                         { label: 'Current', value: hiddenStatementData.aging?.current || 0 },
-                                         { label: '31-60 Days', value: hiddenStatementData.aging?.thirty || 0 },
-                                         { label: '61-90 Days', value: hiddenStatementData.aging?.sixty || 0 },
-                                         { label: '90+ Days', value: hiddenStatementData.aging?.ninety || 0 }
-                                     ].map((bucket, i) => (
-                                         <div key={i} style={{ background: bucket.value > 0 ? '#fff1f2' : '#f8fafc', padding: '8px', borderRadius: '6px', border: `1px solid ${bucket.value > 0 ? '#fecdd3' : '#e2e8f0'}`, textAlign: 'center' }}>
-                                            <div style={{ fontSize: '0.5rem', fontWeight: 800, color: bucket.value > 0 ? '#e11d48' : '#64748b', textTransform: 'uppercase', marginBottom: '2px' }}>{bucket.label}</div>
+                            </table>
+
+                            {/* Aging summary & terms */}
+                            <div className="page-break-avoid" style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'stretch' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', flex: 1 }}>
+                                    {[
+                                        { label: 'Current', value: hiddenStatementData.aging?.current || 0 },
+                                        { label: '31-60 Days', value: hiddenStatementData.aging?.thirty || 0 },
+                                        { label: '61-90 Days', value: hiddenStatementData.aging?.sixty || 0 },
+                                        { label: '90+ Days', value: hiddenStatementData.aging?.ninety || 0 }
+                                    ].map((bucket, i) => (
+                                        <div key={i} style={{ background: bucket.value > 0 ? '#fff1f2' : '#f8fafc', padding: '8px 6px', borderRadius: '6px', border: `1px solid ${bucket.value > 0 ? '#fecdd3' : '#e2e8f0'}`, textAlign: 'center' }}>
+                                            <div style={{ fontSize: '0.52rem', fontWeight: 800, color: bucket.value > 0 ? '#e11d48' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>{bucket.label}</div>
                                             <div style={{ fontSize: '0.75rem', fontWeight: 800, color: bucket.value > 0 ? '#9f1239' : '#0f172a' }}>SGD {bucket.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                                         </div>
-                                     ))}
-                                 </div>
-                                 <div style={{ width: '120px', marginLeft: '15px', padding: '8px', border: '1px dashed #cbd5e1', borderRadius: '8px', textAlign: 'center', background: '#f8fafc' }}>
-                                     <div style={{ fontSize: '0.45rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Delivery / Payment Terms</div>
-                                     <div style={{ fontSize: '0.8rem', fontWeight: 900, color: '#1e3a8a' }}>
-                                         {(() => {
-                                             const t = hiddenStatementData.partner?.terms || hiddenStatementData.partner?.payment_terms || hiddenStatementData.partner?.customerCreditTime;
-                                             if (!t || t === '0') return 'C.O.D';
-                                             if (/^\d+$/.test(String(t).trim())) return `${t} DAYS`;
-                                             return String(t).toUpperCase();
-                                         })()}
-                                     </div>
-                                 </div>
-                             </div>
- 
-                             <div style={{ marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '10px', fontSize: '0.55rem', color: '#94a3b8', textAlign: 'center' }}>
-                                 This is a computer generated document. No signature is required.
-                              </div>
-                         </div>
-                     )}
-                 </div>
-             </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div style={{ width: '130px', marginLeft: '12px', padding: '8px', border: '1px dashed #cbd5e1', borderRadius: '6px', textAlign: 'center', background: '#f8fafc', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ fontSize: '0.48rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: '2px' }}>Delivery / Payment Terms</div>
+                                    <div style={{ fontSize: '0.85rem', fontWeight: 900, color: '#1e3a8a' }}>
+                                        {(() => {
+                                            const t = hiddenStatementData.partner?.terms || hiddenStatementData.partner?.payment_terms || hiddenStatementData.partner?.customerCreditTime;
+                                            if (!t || t === '0') return 'C.O.D';
+                                            if (/^\d+$/.test(String(t).trim())) return `${t} DAYS`;
+                                            return String(t).toUpperCase();
+                                        })()}
+                                    </div>
+                                    <div style={{ fontSize: '0.48rem', color: '#94a3b8', marginTop: '2px' }}>
+                                        {(() => {
+                                            const t = hiddenStatementData.partner?.terms || hiddenStatementData.partner?.payment_terms || hiddenStatementData.partner?.customerCreditTime;
+                                            if (!t || String(t).toUpperCase().includes('C.O.D') || t === '0') return 'Payable upon Delivery';
+                                            return 'From Date of Invoice';
+                                        })()}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="page-break-avoid" style={{ marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '10px', fontSize: '0.55rem', color: '#94a3b8', textAlign: 'center' }}>
+                                This is a computer generated document. No signature is required.
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
     );
 }
