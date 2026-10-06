@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getWorkflowDocumentById } from '../../lib/workflowV2Service';
 import { getDocumentSettings } from '../../lib/store';
 import { useAuth } from '../../contexts/AuthContext';
-import { Printer, ArrowLeft, Download, Pencil, Truck } from 'lucide-react';
+import { Printer, ArrowLeft, Download, Pencil, Truck, CheckCircle2 } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import WorkflowDocumentLayout from '../../components/workflow/WorkflowDocumentLayout';
 import DeliveryOrderLabelModal from '../../components/workflow/DeliveryOrderLabelModal';
@@ -227,27 +227,94 @@ export default function WorkflowPrintPreview() {
         });
     };
 
+    const formatLastSaved = (ts) => {
+        if (!ts) return null;
+        try {
+            const d = new Date(ts);
+            if (isNaN(d.getTime())) return null;
+            const dd = String(d.getDate()).padStart(2, '0');
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const yy = String(d.getFullYear()).slice(-2);
+            const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+            return `${dd}/${mm}/${yy} ${time}`;
+        } catch {
+            return null;
+        }
+    };
+
     if (loading) return <div className="text-center py-20">Loading Document Preview...</div>;
     if (!doc) return <div className="text-center py-20 text-red-500">Document not found</div>;
+
+    const primarySavedStr = formatLastSaved(doc.updated_at || doc.created_at);
+    const secondarySavedStr = secondaryDoc ? formatLastSaved(secondaryDoc.updated_at || secondaryDoc.created_at) : null;
 
     return (
         <div style={{ background: '#e2e8f0', minHeight: '100vh', padding: '20px', fontFamily: 'Inter, sans-serif' }}>
             {/* Screen Actions (Hidden in Print) */}
             <div className="print-hide" style={{ maxWidth: '210mm', margin: '0 auto 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                     <button
                         onClick={handleBack}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
                     >
                         <ArrowLeft size={16} /> Back
                     </button>
-                    {secondaryDoc && (
+                    {secondaryDoc ? (
                         <span style={{ background: '#e0e7ff', color: '#4338ca', padding: '6px 14px', borderRadius: '12px', fontWeight: 800, fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                             <Printer size={14} /> Continuous Print: Tax Invoice ({doc.document_no}) + Delivery Order ({secondaryDoc.document_no})
                         </span>
+                    ) : (
+                        <span style={{ background: '#f1f5f9', color: '#334155', padding: '6px 12px', borderRadius: '10px', fontWeight: 700, fontSize: '0.82rem' }}>
+                            {doc.document_type} ({doc.document_no})
+                        </span>
+                    )}
+
+                    {/* Prominent Last Updated / Edited & Saved Indicator */}
+                    {primarySavedStr && (
+                        <div 
+                            style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '6px', 
+                                background: '#ecfdf5', 
+                                border: '1.5px solid #a7f3d0', 
+                                color: '#065f46', 
+                                padding: '5px 12px', 
+                                borderRadius: '12px', 
+                                fontSize: '0.78rem', 
+                                fontWeight: 700,
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                            }}
+                            title={`Tax Invoice last saved: ${primarySavedStr}${secondarySavedStr ? ' | Delivery Order last saved: ' + secondarySavedStr : ''}`}
+                        >
+                            <CheckCircle2 size={14} color="#059669" />
+                            <span>Saved: {primarySavedStr}</span>
+                            {secondarySavedStr && (
+                                <span style={{ color: '#047857', opacity: 0.85, fontWeight: 600, borderLeft: '1px solid #a7f3d0', paddingLeft: '6px', marginLeft: '2px' }}>
+                                    DO: {secondarySavedStr}
+                                </span>
+                            )}
+                        </div>
                     )}
                 </div>
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {/* Quick Edit Links */}
+                    <button
+                        onClick={() => navigate(`/workflows/editor/${encodeURIComponent(doc.document_type || 'Tax Invoice')}/${doc.id}`)}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem', color: '#1e293b' }}
+                        title={`Edit ${doc.document_no}`}
+                    >
+                        <Pencil size={13} color="#2563eb" /> Edit {doc.document_no?.split('-')[0] || 'INV'}
+                    </button>
+                    {secondaryDoc && (
+                        <button
+                            onClick={() => navigate(`/workflows/editor/${encodeURIComponent(secondaryDoc.document_type || 'Delivery Order')}/${secondaryDoc.id}`)}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem', color: '#1e293b' }}
+                            title={`Edit ${secondaryDoc.document_no}`}
+                        >
+                            <Pencil size={13} color="#7c3aed" /> Edit {secondaryDoc.document_no?.split('-')[0] || 'DO'}
+                        </button>
+                    )}
                     <button
                         onClick={handleDownload}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 20px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}

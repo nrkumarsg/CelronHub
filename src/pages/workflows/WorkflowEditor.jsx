@@ -127,15 +127,61 @@ const resolveDocType = (slug) => {
     return slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 };
 
-const buildInitialFormData = (docType, profile, defaultIssue, defaultExpiry) => {
+export const calculateDueDateFromTerms = (issueDateStr, termsStr) => {
+    if (!issueDateStr) return '';
+    const datePart = String(issueDateStr).split('T')[0];
+    const parts = datePart.split('-');
+    if (parts.length !== 3) return issueDateStr;
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    const dateObj = new Date(year, month, day);
+    if (isNaN(dateObj.getTime())) return issueDateStr;
+
+    const t = (termsStr || '').trim().toLowerCase();
+    let daysToAdd = 30; // standard fallback
+
+    if (!t) {
+        daysToAdd = 30;
+    } else if (
+        t === 'cod' || 
+        t.includes('cash on delivery') || 
+        t.includes('immediate') || 
+        t.includes('cash') || 
+        t.includes('advance') || 
+        t.includes('balance cod') ||
+        t.includes('on cod')
+    ) {
+        daysToAdd = 0;
+    } else {
+        const match = t.match(/(\d+)\s*(?:days?|day|d)?/i);
+        if (match) {
+            daysToAdd = parseInt(match[1], 10);
+        } else {
+            daysToAdd = 0;
+        }
+    }
+
+    dateObj.setDate(dateObj.getDate() + daysToAdd);
+    const yyyy = dateObj.getFullYear();
+    const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const dd = String(dateObj.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+};
+
+const buildInitialFormData = (docType, profile, defaultIssue, defaultExpiry, defaultTerms = '') => {
     const isAnithaDoc = ['Tax Invoice', 'Credit Note', 'Purchase Order', 'Delivery Order', 'Proforma Invoice', 'Packing List', 'Statement Of Account', 'Order Acknowledgment'].includes(docType);
+    const issueDateStr = defaultIssue ? defaultIssue.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+    const initialTerms = defaultTerms || ((docType === 'Tax Invoice' || docType === 'Delivery Order') ? 'COD' : '30 Days');
+    const expiryDateStr = defaultExpiry ? defaultExpiry.toISOString().split('T')[0] : calculateDueDateFromTerms(issueDateStr, initialTerms);
+
     return {
         document_type: docType,
         document_no: '',
         job_id: '',
         enquiry_id: '',
-        issue_date: defaultIssue ? defaultIssue.toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        expiry_date: defaultExpiry ? defaultExpiry.toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        issue_date: issueDateStr,
+        expiry_date: expiryDateStr,
         partner_id: '',
         contact_id: '',
         vessel_id: '',
@@ -169,7 +215,7 @@ const buildInitialFormData = (docType, profile, defaultIssue, defaultExpiry) => 
         customer_po_attachment_url: '',
         is_job: false,
         assigned_job_no: '',
-        payment_terms: '',
+        payment_terms: initialTerms,
         original_document_id: '',
         revision_no: 0,
         attachment_urls: [],
@@ -284,6 +330,19 @@ export default function WorkflowEditor() {
     const [linkedInvoiceDoc, setLinkedInvoiceDoc] = useState(null); // Reference / Parent Tax Invoice for Credit Notes
     const [suiteDocs, setSuiteDocs] = useState([]);          // For the Job Document Suite panel
     const [loadingSuiteDocs, setLoadingSuiteDocs] = useState(false);
+    const [lastSavedTime, setLastSavedTime] = useState(null);
+    const [autoSyncToCounterpart, setAutoSyncToCounterpart] = useState(true);
+
+    const pairedCounterpart = React.useMemo(() => {
+        if (!formData || !suiteDocs || suiteDocs.length === 0) return null;
+        if (formData.document_type === 'Tax Invoice') {
+            return suiteDocs.find(d => d.document_type === 'Delivery Order' && d.id !== id);
+        }
+        if (formData.document_type === 'Delivery Order') {
+            return suiteDocs.find(d => d.document_type === 'Tax Invoice' && d.id !== id);
+        }
+        return null;
+    }, [formData?.document_type, suiteDocs, id]);
     const [showCreateDocMenu, setShowCreateDocMenu] = useState(false);
     const [expenses, setExpenses] = useState([]);
 
@@ -2012,6 +2071,56 @@ export default function WorkflowEditor() {
         return `#${idx + 1}`;
     };
 
+    // ⚡ Simultaneous Edit / Sync between Tax Invoice and Delivery Order
+    const handleSyncToCounterpart = async (targetDocOverride = null, silent = false) => {
+        const target = targetDocOverride || pairedCounterpart;
+        if (!target || !target.id) {
+            if (!silent) toast.error('No paired Delivery Order or Tax Invoice found for this Job.');
+            return;
+        }
+        try {
+            const { data: targetDoc, error: fetchErr } = await getWorkflowDocumentById(target.id);
+            if (fetchErr || !targetDoc) {
+                throw new Error(fetchErr ? fetchErr.message : 'Could not load target document');
+            }
+
+            // Map line items to target document
+            const isTargetDO = targetDoc.document_type === 'Delivery Order' || targetDoc.document_type === 'Packing List';
+            const syncedItems = lineItems.map((item, idx) => ({
+                ...item,
+                id: undefined,
+                document_id: targetDoc.id,
+                unit_price: isTargetDO ? 0 : item.unit_price,
+                total_price: isTargetDO ? 0 : item.total_price,
+                sort_order: item.sort_order ?? idx
+            }));
+
+            const updatedTargetData = {
+                ...targetDoc,
+                partner_id: formData.partner_id,
+                vessel_id: formData.vessel_id,
+                work_location_id: formData.work_location_id,
+                contact_id: formData.contact_id,
+                customer_ref: formData.customer_ref,
+                subject: formData.subject,
+                currency: formData.currency,
+                items: syncedItems,
+                updated_at: new Date().toISOString()
+            };
+
+            const { error: saveErr } = await saveWorkflowDocument(updatedTargetData, syncedItems);
+            if (saveErr) throw saveErr;
+
+            if (!silent) {
+                toast.success(`⚡ Synced line items & details to ${targetDoc.document_type} (${targetDoc.document_no})!`, { duration: 4000 });
+            }
+            fetchSuiteDocsPanel();
+        } catch (err) {
+            console.error('Failed to sync to counterpart:', err);
+            if (!silent) toast.error('Sync failed: ' + err.message);
+        }
+    };
+
     const SUITE_DOC_TYPES = [
         'Delivery Order',
         'Tax Invoice',
@@ -2217,6 +2326,9 @@ export default function WorkflowEditor() {
                         is_zero_total: loadedZeroTotal
                     }
                 }));
+                if (data.updated_at || data.created_at) {
+                    setLastSavedTime(data.updated_at || data.created_at);
+                }
                 
                 // Deduplicate items on load to fix any existing database repeats
                 // We use a more robust key to handle null/undefined and whitespace
@@ -2789,11 +2901,19 @@ export default function WorkflowEditor() {
         setFormData(prev => {
             const next = { ...prev, [name]: value };
             if (name === 'issue_date') {
-                const newExpiry = new Date(value);
-                // Check if date is valid
-                if (!isNaN(newExpiry.getTime())) {
-                    newExpiry.setDate(newExpiry.getDate() + 30);
-                    next.expiry_date = newExpiry.toISOString().split('T')[0];
+                next.expiry_date = calculateDueDateFromTerms(value, next.payment_terms);
+            } else if (name === 'payment_terms') {
+                next.expiry_date = calculateDueDateFromTerms(next.issue_date, value);
+            } else if (name === 'partner_id') {
+                const selectedP = partners.find(p => p.id === value);
+                if (selectedP) {
+                    const pTerms = selectedP.customerCreditTime && selectedP.customerCreditTime !== '0'
+                        ? `${selectedP.customerCreditTime} Days`
+                        : (selectedP.terms || selectedP.payment_terms || '');
+                    if (pTerms) {
+                        next.payment_terms = pTerms;
+                        next.expiry_date = calculateDueDateFromTerms(next.issue_date, pTerms);
+                    }
                 }
             }
             return next;
@@ -2876,18 +2996,38 @@ export default function WorkflowEditor() {
 
         // Handle dual data from QuickPartnerContactDualAdd
         if (data && data.partner) {
-            setFormData(prev => ({ 
-                ...prev, 
-                partner_id: data.partner.id, 
-                contact_id: data.contact?.id || '' 
-            }));
+            const partnerTerms = data.partner.customerCreditTime && data.partner.customerCreditTime !== '0'
+                ? `${data.partner.customerCreditTime} Days`
+                : (data.partner.terms || data.partner.payment_terms || '');
+            setFormData(prev => {
+                const nextTerms = partnerTerms || prev.payment_terms;
+                return { 
+                    ...prev, 
+                    partner_id: data.partner.id, 
+                    contact_id: data.contact?.id || '',
+                    payment_terms: nextTerms,
+                    expiry_date: calculateDueDateFromTerms(prev.issue_date, nextTerms)
+                };
+            });
             return;
         }
 
         // Select the new item for single-add cases
         const newItem = data;
         if (typeAdded === 'partner_id') {
-            setFormData(prev => ({ ...prev, partner_id: newItem.id, contact_id: '' }));
+            const partnerTerms = newItem?.customerCreditTime && newItem.customerCreditTime !== '0'
+                ? `${newItem.customerCreditTime} Days`
+                : (newItem?.terms || newItem?.payment_terms || '');
+            setFormData(prev => {
+                const nextTerms = partnerTerms || prev.payment_terms;
+                return { 
+                    ...prev, 
+                    partner_id: newItem.id, 
+                    contact_id: '',
+                    payment_terms: nextTerms,
+                    expiry_date: calculateDueDateFromTerms(prev.issue_date, nextTerms)
+                };
+            });
         } else if (typeAdded === 'contact_id') {
             setFormData(prev => ({ ...prev, contact_id: newItem.id }));
         } else if (typeAdded === 'vessel_id') {
@@ -3157,8 +3297,11 @@ export default function WorkflowEditor() {
                 setOriginalJobNo(formData.assigned_job_no);
             }
 
+            const computedExpiry = calculateDueDateFromTerms(formData.issue_date, formData.payment_terms) || formData.expiry_date || formData.issue_date;
+
             const dataToSave = { 
                 ...formData, 
+                expiry_date: computedExpiry,
                 company_id: profile.company_id,
                 zero_total: isZeroTotal,
                 is_zero_total: isZeroTotal,
@@ -3335,7 +3478,13 @@ export default function WorkflowEditor() {
                     navigate(`/workflows/editor/${type}/${data.id}${returnQuery}`, { replace: true });
                 }
             } else {
-                toast.success('Saved successfully');
+                setLastSavedTime(new Date().toISOString());
+                if (autoSyncToCounterpart && pairedCounterpart) {
+                    await handleSyncToCounterpart(pairedCounterpart, true);
+                    toast.success(`Saved & synced with ${pairedCounterpart.document_no}!`);
+                } else {
+                    toast.success('Saved successfully');
+                }
                 fetchDocument();
             }
             return data;
@@ -3541,7 +3690,8 @@ export default function WorkflowEditor() {
         try {
             const activeId = currentIdRef.current;
             // 1. Generate Next Number for Target Type based on Job Number
-            const parts = formData.assigned_job_no.split('-');
+            const effectiveJobNo = formData.assigned_job_no || (formData.document_type === 'Job' ? formData.document_no : jobNo);
+            const parts = (effectiveJobNo || '').split('-');
             const jobPrefix = parts[0];
             const jobNoPart = parts.slice(1).join('-');
             const prefixMap = {
@@ -3581,14 +3731,19 @@ export default function WorkflowEditor() {
             }
 
             // 3. Prepare Header
+            const newIssueDate = new Date().toISOString().split('T')[0];
+            const targetTerms = formData.payment_terms || (targetType === 'Tax Invoice' ? 'COD' : '30 Days');
             const newDocData = {
                 ...formData,
                 id: undefined,
                 document_type: targetType,
                 document_no: nextNo,
                 status: 'Draft',
-                issue_date: new Date().toISOString().split('T')[0],
-                is_job: true,
+                issue_date: newIssueDate,
+                expiry_date: calculateDueDateFromTerms(newIssueDate, targetTerms),
+                payment_terms: targetTerms,
+                assigned_job_no: effectiveJobNo,
+                is_job: false,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
             };
@@ -3734,6 +3889,14 @@ export default function WorkflowEditor() {
             alert('Please Save the document first to preview and print.');
             return;
         }
+        setSaving(true);
+        try {
+            await handleSave();
+        } catch (e) {
+            console.warn('Auto-save prior to print warning:', e);
+        } finally {
+            setSaving(false);
+        }
         window.open(`/workflows/print/${id}?showSignature=${showSignature}&zeroTotal=${isZeroTotal}`, '_blank');
     };
 
@@ -3751,6 +3914,9 @@ export default function WorkflowEditor() {
 
         setSaving(true);
         try {
+            // Persist current edits first so preview has latest data
+            await handleSave();
+
             // Find both Tax Invoice and Delivery Order for this job
             const { supabase } = await import('../../lib/supabase');
             const { data: docs, error: fetchErr } = await supabase
@@ -3822,6 +3988,15 @@ export default function WorkflowEditor() {
                 if (doErr) throw doErr;
                 doDoc = savedDo;
                 toast.success(`Generated Delivery Order (${savedDo.document_no})!`);
+            }
+
+            // Ensure counterpart is synced if auto-sync is on
+            if (invDoc && doDoc && autoSyncToCounterpart) {
+                if (formData.document_type === 'Tax Invoice') {
+                    await handleSyncToCounterpart(doDoc, true);
+                } else if (formData.document_type === 'Delivery Order') {
+                    await handleSyncToCounterpart(invDoc, true);
+                }
             }
 
             if (invDoc && doDoc) {
@@ -4485,139 +4660,192 @@ export default function WorkflowEditor() {
         <div className="workflow-editor-theme" style={{ overflow: 'visible' }}>
             {/* Header / Actions */}
             <header className="editor-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    <button className="icon-btn" onClick={handleGoBack} title="Go Back">
-                        <ArrowLeft size={20} />
-                    </button>
-                    <div>
-                        <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>
-                            {formData.document_type}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center' }}>
-                            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                                <input 
-                                    type="text" 
-                                    value={formData.document_no || ''} 
-                                    onChange={(e) => {
-                                        const nextVal = e.target.value.toUpperCase();
-                                        setFormData(prev => {
-                                            const updated = { ...prev, document_no: nextVal };
-                                            if (prev.document_type === 'Job') {
-                                                updated.assigned_job_no = nextVal;
-                                            }
-                                            return updated;
-                                        });
-                                    }}
-                                    className="doc-no-input"
-                                    style={{
-                                        fontSize: '1.25rem',
-                                        fontWeight: 800,
-                                        color: 'var(--text-primary)',
-                                        background: 'transparent',
-                                        border: 'none',
-                                        padding: '0 4px',
-                                        margin: 0,
-                                        width: 'auto',
-                                        minWidth: '150px',
-                                        outline: 'none',
-                                        fontFamily: 'inherit',
-                                        cursor: 'text'
-                                    }}
-                                    placeholder="Draft"
-                                    title="Click to edit document number"
-                                />
-                                <Pencil size={12} style={{ color: '#94a3b8', pointerEvents: 'none', opacity: 0.5 }} />
+                {/* Tier 1: Document Identity & Core Actions */}
+                <div className="editor-header-top-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: '16px', flexWrap: 'wrap' }}>
+                    {/* Left: Document info */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <button className="icon-btn" onClick={handleGoBack} title="Go Back">
+                            <ArrowLeft size={18} />
+                        </button>
+                        <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ 
+                                    fontSize: '0.68rem', 
+                                    fontWeight: 700, 
+                                    color: '#475569', 
+                                    textTransform: 'uppercase', 
+                                    letterSpacing: '0.06em', 
+                                    background: '#f1f5f9', 
+                                    padding: '2px 8px', 
+                                    borderRadius: '6px' 
+                                }}>
+                                    {formData.document_type || 'DOCUMENT'}
+                                </span>
+                                {formData.status && (
+                                    <span style={{ 
+                                        fontSize: '0.68rem', 
+                                        fontWeight: 700, 
+                                        color: formData.status === 'Draft' ? '#64748b' : (formData.status === 'Sent' ? '#2563eb' : '#059669'), 
+                                        background: formData.status === 'Draft' ? '#f8fafc' : (formData.status === 'Sent' ? '#eff6ff' : '#ecfdf5'), 
+                                        padding: '2px 8px', 
+                                        borderRadius: '6px' 
+                                    }}>
+                                        {formData.status}
+                                    </span>
+                                )}
                             </div>
-                            {(formData.is_job || formData.assigned_job_no) && (
-                                <button
-                                    type="button"
-                                    onClick={handleGoToJob}
-                                    title={`Click to open linked Job ${formData.assigned_job_no || ''}`}
-                                    style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '6px',
-                                        marginLeft: '12px',
-                                        padding: '4px 12px',
-                                        borderRadius: '20px',
-                                        background: '#ecfdf5',
-                                        color: '#047857',
-                                        border: '1.5px solid #a7f3d0',
-                                        fontSize: '0.8rem',
-                                        fontWeight: 700,
-                                        cursor: 'pointer',
-                                        transition: 'all 0.15s ease',
-                                        boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
-                                    }}
-                                    onMouseOver={e => {
-                                        e.currentTarget.style.background = '#d1fae5';
-                                        e.currentTarget.style.transform = 'translateY(-1px)';
-                                    }}
-                                    onMouseOut={e => {
-                                        e.currentTarget.style.background = '#ecfdf5';
-                                        e.currentTarget.style.transform = 'none';
-                                    }}
-                                >
-                                    <Briefcase size={13} />
-                                    <span>Job: {formData.assigned_job_no || 'Linked'} ↗</span>
-                                </button>
-                            )}
+                            <div style={{ display: 'flex', alignItems: 'center', marginTop: '2px' }}>
+                                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                    <input 
+                                        type="text" 
+                                        value={formData.document_no || ''} 
+                                        onChange={(e) => {
+                                            const nextVal = e.target.value.toUpperCase();
+                                            setFormData(prev => {
+                                                const updated = { ...prev, document_no: nextVal };
+                                                if (prev.document_type === 'Job') {
+                                                    updated.assigned_job_no = nextVal;
+                                                }
+                                                return updated;
+                                            });
+                                        }}
+                                        className="doc-no-input"
+                                        style={{
+                                            fontSize: '1.25rem',
+                                            fontWeight: 800,
+                                            color: 'var(--text-primary)',
+                                            background: 'transparent',
+                                            border: 'none',
+                                            padding: '0 4px',
+                                            margin: 0,
+                                            width: 'auto',
+                                            minWidth: '150px',
+                                            outline: 'none',
+                                            fontFamily: 'inherit',
+                                            cursor: 'text'
+                                        }}
+                                        placeholder="Draft"
+                                        title="Click to edit document number"
+                                    />
+                                    <Pencil size={12} style={{ color: '#94a3b8', pointerEvents: 'none', opacity: 0.5 }} />
+                                </div>
+                                {(formData.is_job || formData.assigned_job_no) && (
+                                    <button
+                                        type="button"
+                                        onClick={handleGoToJob}
+                                        title={`Click to open linked Job ${formData.assigned_job_no || ''}`}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                            marginLeft: '10px',
+                                            padding: '3px 10px',
+                                            borderRadius: '16px',
+                                            background: '#ecfdf5',
+                                            color: '#047857',
+                                            border: '1.5px solid #a7f3d0',
+                                            fontSize: '0.78rem',
+                                            fontWeight: 700,
+                                            cursor: 'pointer',
+                                            transition: 'all 0.15s ease',
+                                            boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                                        }}
+                                        onMouseOver={e => {
+                                            e.currentTarget.style.background = '#d1fae5';
+                                            e.currentTarget.style.transform = 'translateY(-1px)';
+                                        }}
+                                        onMouseOut={e => {
+                                            e.currentTarget.style.background = '#ecfdf5';
+                                            e.currentTarget.style.transform = 'none';
+                                        }}
+                                    >
+                                        <Briefcase size={12} />
+                                        <span>Job: {formData.assigned_job_no || 'Linked'} ↗</span>
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    {/* Primary Actions */}
-                    <div style={{ display: 'flex', background: '#f1f5f9', padding: '4px', borderRadius: '10px', gap: '4px' }}>
-                        <button className="btn-vibrant" onClick={handleSave} disabled={saving} style={{ padding: '8px 16px', fontSize: '0.85rem' }}>
-                            <Save size={16} /> {saving ? 'Saving...' : 'Save'}
-                        </button>
-                        <button 
-                            className={`btn-vibrant-secondary ${!showSignature ? 'off' : ''}`} 
-                            onClick={() => setShowSignature(!showSignature)}
-                            style={{ 
-                                background: showSignature ? '#fff' : 'transparent', 
-                                border: showSignature ? '1px solid #e2e8f0' : 'none',
-                                padding: '8px 12px',
-                                fontSize: '0.85rem'
-                            }}
-                            title={showSignature ? "Signature Visible" : "Signature Hidden"}
-                        >
-                            {showSignature ? <Eye size={16} /> : <EyeOff size={16} color="#94a3b8" />}
-                        </button>
-                        {formData.document_type === 'Quotation' && (
-                            <button 
-                                type="button"
-                                className={`btn-vibrant-secondary ${isZeroTotal ? 'active' : ''}`}
-                                onClick={() => handleToggleZeroTotal(!isZeroTotal)}
-                                style={{ 
-                                    background: isZeroTotal ? '#eff6ff' : 'transparent', 
-                                    border: isZeroTotal ? '1.5px solid #3b82f6' : 'none',
-                                    color: isZeroTotal ? '#1d4ed8' : '#64748b',
-                                    padding: '8px 12px',
-                                    fontSize: '0.85rem',
-                                    fontWeight: isZeroTotal ? 700 : 500,
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '6px'
-                                }}
-                                title={isZeroTotal ? "Total is set to 0.00 (Customer to Pick Services)" : "Click to show Total as 0.00 in Print/Email (Customer Options)"}
-                            >
-                                <CheckCircle2 size={16} color={isZeroTotal ? "#2563eb" : "#94a3b8"} />
-                                <span className="hide-sm">{isZeroTotal ? 'Total: 0.00' : 'Zero Total'}</span>
-                            </button>
+                    {/* Right: Core Actions (+ Suite, Print, Save, Close) */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {/* + Suite Dropdown (Visible for Jobs and any Job-linked documents) */}
+                        {!isNew && (formData.is_job || formData.assigned_job_no || formData.document_type === 'Job' || (suiteDocs && suiteDocs.length > 0)) && (
+                            <div className="dropdown" style={{ position: 'relative' }}>
+                                <button 
+                                    type="button"
+                                    className="btn-vibrant" 
+                                    style={{ 
+                                        background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)', 
+                                        color: '#fff', 
+                                        border: 'none', 
+                                        padding: '8px 14px', 
+                                        fontSize: '0.85rem',
+                                        fontWeight: 700,
+                                        borderRadius: '8px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        boxShadow: '0 2px 6px rgba(124, 58, 237, 0.25)',
+                                        cursor: 'pointer'
+                                    }}
+                                    title="Generate Associated Job Suite Documents"
+                                >
+                                    <Plus size={16} /> <span>+ Suite</span> <ChevronDown size={14} />
+                                </button>
+                                <div className="dropdown-content" style={{ right: 0, minWidth: '240px', maxHeight: '420px', zIndex: 120 }}>
+                                    <div style={{ padding: '6px 12px', fontSize: '0.72rem', fontWeight: 700, color: '#6b21a8', background: '#f5f3ff', borderBottom: '1px solid #ede9fe', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                        Add to Job Suite
+                                    </div>
+                                    <button onClick={() => handleGenerateAssociatedDoc('Order Acknowledgment')}>Order Acknowledgment (ORA)</button>
+                                    <button onClick={() => handleGenerateAssociatedDoc('Delivery Order')}>Delivery Order (DO)</button>
+                                    <button onClick={() => handleGenerateAssociatedDoc('Packing List')}>Packing List (PKL)</button>
+                                    <button onClick={() => handleGenerateAssociatedDoc('Proforma Invoice')}>Proforma Invoice (PRO)</button>
+                                    <button onClick={() => handleGenerateAssociatedDoc('Tax Invoice')}>Tax Invoice (INV)</button>
+                                    <button 
+                                        type="button"
+                                        onClick={handlePrintInvAndDo} 
+                                        style={{ background: '#eef2ff', color: '#4f46e5', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', borderTop: '1px solid #e0e7ff', borderBottom: '1px solid #e0e7ff', margin: '2px 0', padding: '10px 14px' }}
+                                        title="Continuous Print of Tax Invoice (INV) + Delivery Order (DO) in one PDF"
+                                    >
+                                        <Printer size={15} color="#4f46e5" /> Tax Invoice + Delivery Order (INV+DO)
+                                    </button>
+                                    <button onClick={() => handleGenerateAssociatedDoc('Credit Note')} style={{ color: '#e11d48', fontWeight: 600 }}>Credit Note (CRN)</button>
+                                    <button onClick={() => handleGenerateAssociatedDoc('Certificate')}>Certificate (CERT)</button>
+                                    <button onClick={() => handleGenerateAssociatedDoc('Service Report')}>Service Report (SR)</button>
+                                </div>
+                            </div>
                         )}
+
+                        {/* Print Dropdown */}
                         {(formData.is_job || formData.assigned_job_no) ? (
                             <div className="dropdown" style={{ position: 'relative' }}>
-                                <button className="btn-vibrant-secondary" style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '4px' }} title="Print PDF Options">
-                                    <Printer size={16} /> <span className="hide-sm">Print</span> <ChevronDown size={13} />
+                                <button 
+                                    className="btn-vibrant-secondary" 
+                                    style={{ 
+                                        border: '1px solid #cbd5e1', 
+                                        background: '#ffffff', 
+                                        padding: '8px 14px', 
+                                        fontSize: '0.85rem', 
+                                        fontWeight: 600,
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        gap: '6px',
+                                        borderRadius: '8px',
+                                        color: '#334155'
+                                    }} 
+                                    title="Print PDF Options"
+                                >
+                                    <Printer size={16} /> <span>Print</span> <ChevronDown size={13} />
                                 </button>
-                                <div className="dropdown-content">
-                                    <button type="button" onClick={handlePrint}>Print {formData.document_type || 'Document'}</button>
+                                <div className="dropdown-content" style={{ right: 0, minWidth: '220px', zIndex: 120 }}>
+                                    <button type="button" onClick={handlePrint} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <Printer size={14} /> Print {formData.document_type || 'Document'}
+                                    </button>
                                     <button 
                                         type="button" 
                                         onClick={handlePrintInvAndDo} 
-                                        style={{ color: '#4f46e5', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}
+                                        style={{ color: '#4f46e5', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', borderTop: '1px solid #f1f5f9' }}
                                         title="Print Tax Invoice + Delivery Order in one continuous PDF"
                                     >
                                         <Printer size={14} /> Print INV + DO (Continuous)
@@ -4625,13 +4853,223 @@ export default function WorkflowEditor() {
                                 </div>
                             </div>
                         ) : (
-                            <button className="btn-vibrant-secondary" onClick={handlePrint} style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem' }} title="Print PDF">
-                                <Printer size={16} /> <span className="hide-sm">Print</span>
+                            <button 
+                                className="btn-vibrant-secondary" 
+                                onClick={handlePrint} 
+                                style={{ 
+                                    border: '1px solid #cbd5e1', 
+                                    background: '#ffffff', 
+                                    padding: '8px 14px', 
+                                    fontSize: '0.85rem', 
+                                    fontWeight: 600,
+                                    borderRadius: '8px',
+                                    color: '#334155'
+                                }} 
+                                title="Print PDF"
+                            >
+                                <Printer size={16} /> <span>Print</span>
                             </button>
                         )}
-                        <button className="btn-vibrant-secondary" onClick={handleAnnotate} disabled={saving} style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem' }} title="Sign & Annotate">
-                            <Pencil size={16} /> <span className="hide-sm">Sign</span>
+
+                        {/* Saved Status Indicator */}
+                        {lastSavedTime && (
+                            <div 
+                                style={{ 
+                                    display: 'inline-flex', 
+                                    alignItems: 'center', 
+                                    gap: '5px', 
+                                    background: '#ecfdf5', 
+                                    border: '1.5px solid #a7f3d0', 
+                                    color: '#065f46', 
+                                    padding: '6px 12px', 
+                                    borderRadius: '8px', 
+                                    fontSize: '0.78rem', 
+                                    fontWeight: 700,
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                                }} 
+                                title={`Saved to database: ${new Date(lastSavedTime).toLocaleString()}`}
+                            >
+                                <CheckCircle2 size={13} color="#059669" />
+                                <span>Saved: {new Date(lastSavedTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
+                            </div>
+                        )}
+
+                        {/* Save button */}
+                        <button 
+                            className="btn-vibrant" 
+                            onClick={handleSave} 
+                            disabled={saving} 
+                            style={{ 
+                                background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', 
+                                color: '#fff',
+                                padding: '8px 18px', 
+                                fontSize: '0.85rem',
+                                fontWeight: 700,
+                                borderRadius: '8px',
+                                border: 'none',
+                                boxShadow: '0 2px 6px rgba(37, 99, 235, 0.25)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                            }}
+                        >
+                            <Save size={16} /> {saving ? 'Saving...' : 'Save'}
                         </button>
+
+                        {/* Close Editor button */}
+                        <button 
+                            className="icon-btn" 
+                            onClick={handleGoBack} 
+                            style={{ 
+                                background: '#fee2e2', 
+                                color: '#ef4444', 
+                                border: '1px solid #fecaca', 
+                                padding: '8px',
+                                borderRadius: '8px' 
+                            }} 
+                            title="Close Editor"
+                        >
+                            <X size={18} />
+                        </button>
+                    </div>
+                </div>
+
+                {/* Tier 2: Document Utility & Workflow Toolbar Strip */}
+                <div className="editor-header-bottom-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: '12px', flexWrap: 'wrap', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
+                    {/* Left Toolbar Group: Tools & Annotations */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        {/* Paired Document Simultaneous Sync & Switch Bar */}
+                        {pairedCounterpart && (
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#eff6ff', border: '1.5px solid #bfdbfe', padding: '3px 8px', borderRadius: '8px' }}>
+                                <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#1e40af', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <ArrowRightLeft size={12} color="#2563eb" />
+                                    <span>Paired: {pairedCounterpart.document_type} ({pairedCounterpart.document_no})</span>
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => handleSyncToCounterpart(pairedCounterpart, false)}
+                                    style={{ 
+                                        background: '#2563eb', 
+                                        color: '#fff', 
+                                        border: 'none', 
+                                        borderRadius: '5px', 
+                                        padding: '3px 8px', 
+                                        fontSize: '0.72rem', 
+                                        fontWeight: 700, 
+                                        cursor: 'pointer', 
+                                        display: 'inline-flex', 
+                                        alignItems: 'center', 
+                                        gap: '3px',
+                                        boxShadow: '0 1px 2px rgba(37,99,235,0.2)'
+                                    }}
+                                    title="Push current line items, quantities, and vessel details to paired document"
+                                >
+                                    <Sparkles size={11} /> ⚡ Sync to {pairedCounterpart.document_type === 'Tax Invoice' ? 'INV' : 'DO'}
+                                </button>
+                                <label 
+                                    style={{ fontSize: '0.72rem', color: '#1e3a8a', display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', margin: 0, fontWeight: 600 }}
+                                    title="When checked, saving this document automatically updates the paired document with the latest items"
+                                >
+                                    <input 
+                                        type="checkbox" 
+                                        checked={autoSyncToCounterpart} 
+                                        onChange={e => setAutoSyncToCounterpart(e.target.checked)} 
+                                        style={{ cursor: 'pointer', margin: 0 }}
+                                    />
+                                    Auto-Sync on Save
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        await handleSave();
+                                        navigate(`/workflows/editor/${encodeURIComponent(pairedCounterpart.document_type)}/${pairedCounterpart.id}`);
+                                    }}
+                                    style={{ 
+                                        background: '#ffffff', 
+                                        color: '#2563eb', 
+                                        border: '1px solid #93c5fd', 
+                                        borderRadius: '5px', 
+                                        padding: '3px 8px', 
+                                        fontSize: '0.72rem', 
+                                        fontWeight: 700, 
+                                        cursor: 'pointer' 
+                                    }}
+                                    title={`Save current document and switch to editing ${pairedCounterpart.document_no}`}
+                                >
+                                    Switch to {pairedCounterpart.document_no?.split('-')[0] || 'Doc'} ↗
+                                </button>
+                            </div>
+                        )}
+                        {/* Signature Visible/Hidden */}
+                        <button 
+                            className={`btn-vibrant-secondary ${!showSignature ? 'off' : ''}`} 
+                            onClick={() => setShowSignature(!showSignature)}
+                            style={{ 
+                                background: showSignature ? '#f8fafc' : '#ffffff', 
+                                border: '1px solid #e2e8f0',
+                                padding: '6px 10px',
+                                fontSize: '0.8rem',
+                                fontWeight: 500,
+                                borderRadius: '7px',
+                                color: showSignature ? '#0f172a' : '#94a3b8',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px'
+                            }}
+                            title={showSignature ? "Signature Visible in PDF" : "Signature Hidden in PDF"}
+                        >
+                            {showSignature ? <Eye size={15} color="#2563eb" /> : <EyeOff size={15} color="#94a3b8" />}
+                            <span style={{ fontSize: '0.78rem' }}>{showSignature ? 'Sign On' : 'Sign Off'}</span>
+                        </button>
+
+                        {/* Zero Total for Quotation */}
+                        {formData.document_type === 'Quotation' && (
+                            <button 
+                                type="button"
+                                className={`btn-vibrant-secondary ${isZeroTotal ? 'active' : ''}`}
+                                onClick={() => handleToggleZeroTotal(!isZeroTotal)}
+                                style={{ 
+                                    background: isZeroTotal ? '#eff6ff' : '#ffffff', 
+                                    border: isZeroTotal ? '1.5px solid #3b82f6' : '1px solid #e2e8f0',
+                                    color: isZeroTotal ? '#1d4ed8' : '#64748b',
+                                    padding: '6px 10px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: isZeroTotal ? 700 : 500,
+                                    borderRadius: '7px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px'
+                                }}
+                                title={isZeroTotal ? "Total is set to 0.00 (Customer to Pick Services)" : "Click to show Total as 0.00 in Print/Email (Customer Options)"}
+                            >
+                                <CheckCircle2 size={15} color={isZeroTotal ? "#2563eb" : "#94a3b8"} />
+                                <span>{isZeroTotal ? 'Total: 0.00' : 'Zero Total'}</span>
+                            </button>
+                        )}
+
+                        {/* Sign & Annotate */}
+                        <button 
+                            className="btn-vibrant-secondary" 
+                            onClick={handleAnnotate} 
+                            disabled={saving} 
+                            style={{ 
+                                border: '1px solid #e2e8f0', 
+                                background: '#ffffff', 
+                                padding: '6px 11px', 
+                                fontSize: '0.8rem', 
+                                fontWeight: 500,
+                                borderRadius: '7px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px',
+                                color: '#334155'
+                            }} 
+                            title="Sign & Annotate Document"
+                        >
+                            <Pencil size={15} color="#6366f1" /> <span>Sign</span>
+                        </button>
+
+                        {/* Calendar Reminder */}
                         <button 
                             className="btn-vibrant-secondary" 
                             onClick={() => setCalendarModal({
@@ -4642,13 +5080,25 @@ export default function WorkflowEditor() {
                                 activityType: `${formData.document_type} Milestone`,
                                 jobNo: formData.assigned_job_no || formData.document_no
                             })}
-                            style={{ border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '0.85rem', color: '#3b82f6' }} 
+                            style={{ 
+                                border: '1px solid #e2e8f0', 
+                                background: '#ffffff', 
+                                padding: '6px 11px', 
+                                fontSize: '0.8rem', 
+                                fontWeight: 500,
+                                borderRadius: '7px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px',
+                                color: '#0284c7' 
+                            }} 
                             title="Schedule Google Calendar Reminder"
                         >
-                            <Calendar size={16} /> <span className="hide-sm">Remind</span>
+                            <Calendar size={15} /> <span>Remind</span>
                         </button>
+
                         {/* DO Shipping Label Sticker */}
-                        {(formData.document_type === 'Delivery Order' || formData.document_type === 'Packing List' || formData.is_job) && !isNew && (
+                        {(formData.document_type === 'Delivery Order' || formData.document_type === 'Packing List' || formData.document_type === 'Tax Invoice' || formData.is_job || formData.assigned_job_no) && !isNew && (
                             <button 
                                 className="btn-vibrant-secondary" 
                                 onClick={() => {
@@ -4657,46 +5107,146 @@ export default function WorkflowEditor() {
                                         : ((suiteDocs || []).find(d => d.document_type === 'Delivery Order') || { ...formData, items: lineItems, partners: partners.find(p => p.id === formData.partner_id), contacts: contacts.find(c => c.id === formData.contact_id), vessels: vessels.find(v => v.id === formData.vessel_id), work_locations: workLocations.find(w => w.id === formData.work_location_id) });
                                     setDoLabelModal({ isOpen: true, doc: targetDoc });
                                 }}
-                                style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '8px 12px', fontSize: '0.85rem', fontWeight: 600 }} 
+                                style={{ 
+                                    background: '#ecfdf5', 
+                                    color: '#047857', 
+                                    border: '1px solid #a7f3d0', 
+                                    padding: '6px 11px', 
+                                    fontSize: '0.8rem', 
+                                    fontWeight: 600,
+                                    borderRadius: '7px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px'
+                                }} 
                                 title="Print DO Shipping Sticker / Label (4x6, A6, Half-A4, A4)"
                             >
-                                <Truck size={16} /> <span className="hide-sm">DO Label</span>
+                                <Truck size={15} /> <span>DO Label</span>
                             </button>
                         )}
                     </div>
 
-                    {/* Communication */}
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                        <button className="btn-vibrant-secondary" onClick={handleEmail} style={{ padding: '8px 12px', fontSize: '0.85rem' }}>
-                            <Send size={16} /> <span className="hide-sm">Email</span>
+                    {/* Right Toolbar Group: Communication, Financial, Lifecycle */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        {/* Email */}
+                        <button 
+                            className="btn-vibrant-secondary" 
+                            onClick={handleEmail} 
+                            style={{ 
+                                border: '1px solid #e2e8f0', 
+                                background: '#ffffff', 
+                                padding: '6px 11px', 
+                                fontSize: '0.8rem', 
+                                fontWeight: 500,
+                                borderRadius: '7px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px',
+                                color: '#334155'
+                            }}
+                            title="Compose & Send Email"
+                        >
+                            <Send size={15} color="#2563eb" /> <span>Email</span>
                         </button>
-                        <button className="btn-vibrant-secondary" style={{ background: '#25D366', color: '#fff', border: 'none', padding: '8px 12px', fontSize: '0.85rem' }} onClick={handleWhatsApp}>
-                            <MessageSquare size={16} /> <span className="hide-sm">WhatsApp</span>
-                        </button>
-                    </div>
 
-                    {/* Financial / Ops */}
-                    <div style={{ display: 'flex', gap: '4px' }}>
+                        {/* WhatsApp */}
+                        <button 
+                            className="btn-vibrant-secondary" 
+                            style={{ 
+                                background: '#25D366', 
+                                color: '#fff', 
+                                border: 'none', 
+                                padding: '6px 12px', 
+                                fontSize: '0.8rem',
+                                fontWeight: 600,
+                                borderRadius: '7px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px'
+                            }} 
+                            onClick={handleWhatsApp}
+                            title="Share via WhatsApp"
+                        >
+                            <MessageSquare size={15} /> <span>WhatsApp</span>
+                        </button>
+
+                        {/* Payment Button (for Invoices) */}
                         {(formData.document_type === 'Tax Invoice' || formData.document_type === 'Proforma Invoice') && !isNew && (
                             <button 
                                 className="btn-vibrant" 
-                                style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '8px 12px', fontSize: '0.85rem' }} 
+                                style={{ 
+                                    background: '#ef4444', 
+                                    color: '#fff', 
+                                    border: 'none', 
+                                    padding: '6px 12px', 
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    borderRadius: '7px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px'
+                                }} 
                                 onClick={() => {
                                     setPaymentPrefill(formData);
                                     setShowPaymentModal(true);
                                 }}
+                                title="Record Payment for this Invoice"
                             >
-                                <CreditCard size={16} /> <span className="hide-sm">Payment</span>
+                                <CreditCard size={15} /> <span>Payment</span>
                             </button>
                         )}
-                        {!isNew && (
-                            <button className="btn-vibrant-secondary" onClick={handleRevision} style={{ padding: '8px 12px', fontSize: '0.85rem' }}>
-                                <FileText size={16} /> <span className="hide-sm">Revision</span>
-                            </button>
-                        )}
-                    </div>
 
-                    <div style={{ display: 'flex', gap: '4px' }}>
+                        {/* Revision */}
+                        {!isNew && (
+                            <button 
+                                className="btn-vibrant-secondary" 
+                                onClick={handleRevision} 
+                                style={{ 
+                                    border: '1px solid #e2e8f0', 
+                                    background: '#ffffff', 
+                                    padding: '6px 11px', 
+                                    fontSize: '0.8rem', 
+                                    fontWeight: 500,
+                                    borderRadius: '7px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px',
+                                    color: '#334155'
+                                }}
+                                title="Create New Revision (e.g. Rev A)"
+                            >
+                                <FileText size={15} color="#64748b" /> <span>Revision</span>
+                            </button>
+                        )}
+
+                        {/* Issue Credit Note (if Tax Invoice) */}
+                        {!isNew && formData.document_type === 'Tax Invoice' && (
+                            <button 
+                                className="btn-vibrant" 
+                                onClick={() => {
+                                    const jobNo = formData.assigned_job_no || '';
+                                    navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(jobNo)}&source_id=${id}`);
+                                }} 
+                                disabled={saving} 
+                                style={{ 
+                                    background: 'linear-gradient(135deg, #e11d48, #be123c)', 
+                                    color: '#fff', 
+                                    padding: '6px 11px', 
+                                    fontSize: '0.8rem', 
+                                    fontWeight: 600, 
+                                    borderRadius: '7px', 
+                                    border: 'none', 
+                                    display: 'inline-flex', 
+                                    alignItems: 'center', 
+                                    gap: '5px' 
+                                }}
+                                title="Issue a Credit Note against this Tax Invoice"
+                            >
+                                <RotateCcw size={15} /> <span>Issue Credit Note</span>
+                            </button>
+                        )}
+
+                        {/* Reverse Dropdown */}
                         {!isNew && canAdmin && (
                             formData.document_type === 'Quotation' ||
                             ((formData.document_type === 'Tax Invoice' || formData.document_type === 'Proforma Invoice') && !formData.is_job) ||
@@ -4704,10 +5254,25 @@ export default function WorkflowEditor() {
                             formData.document_type === 'Payment Received'
                         ) && (
                             <div className="dropdown" style={{ position: 'relative' }}>
-                                <button className="btn-vibrant-secondary" style={{ background: '#64748b', color: '#fff', border: 'none', padding: '8px 12px', fontSize: '0.85rem' }}>
-                                    <RefreshCw size={16} /> <span className="hide-sm">Reverse</span> <ChevronDown size={14} />
+                                <button 
+                                    className="btn-vibrant-secondary" 
+                                    style={{ 
+                                        background: '#64748b', 
+                                        color: '#fff', 
+                                        border: 'none', 
+                                        padding: '6px 11px', 
+                                        fontSize: '0.8rem',
+                                        fontWeight: 500,
+                                        borderRadius: '7px',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '5px'
+                                    }}
+                                    title="Reverse or Revert Document Status"
+                                >
+                                    <RefreshCw size={14} /> <span>Reverse</span> <ChevronDown size={13} />
                                 </button>
-                                <div className="dropdown-content">
+                                <div className="dropdown-content" style={{ right: 0, minWidth: '220px', zIndex: 120 }}>
                                     {formData.document_type === 'Quotation' && (
                                         <button onClick={handleRevertQuotationToEnquiry}>Revert Quotation to Enquiry</button>
                                     )}
@@ -4729,6 +5294,7 @@ export default function WorkflowEditor() {
                             </div>
                         )}
 
+                        {/* Go to Job / To Job for Quotation/Enquiry */}
                         {!isNew && (formData.document_type?.toUpperCase() === 'QUOTATION' || formData.document_type?.toUpperCase() === 'ENQUIRY') && (
                             formData.is_job || formData.assigned_job_no ? (
                                 <div className="dropdown" style={{ position: 'relative' }}>
@@ -4741,22 +5307,21 @@ export default function WorkflowEditor() {
                                             background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)', 
                                             color: '#fff',
                                             border: 'none',
-                                            padding: '8px 12px',
-                                            fontSize: '0.85rem',
+                                            padding: '6px 11px',
+                                            fontSize: '0.8rem',
                                             cursor: 'pointer',
-                                            display: 'flex',
+                                            display: 'inline-flex',
                                             alignItems: 'center',
-                                            gap: '6px',
-                                            boxShadow: '0 2px 6px rgba(16, 185, 129, 0.3)',
-                                            borderRadius: '8px',
+                                            gap: '5px',
+                                            borderRadius: '7px',
                                             fontWeight: 700
                                         }}
                                     >
-                                        <Briefcase size={16} /> 
-                                        <span className="hide-sm">Go to Job {formData.assigned_job_no ? `(${formData.assigned_job_no})` : ''} ↗</span>
-                                        <ChevronDown size={14} />
+                                        <Briefcase size={14} /> 
+                                        <span>Go to Job {formData.assigned_job_no ? `(${formData.assigned_job_no})` : ''} ↗</span>
+                                        <ChevronDown size={13} />
                                     </button>
-                                    <div className="dropdown-content">
+                                    <div className="dropdown-content" style={{ right: 0, minWidth: '220px', zIndex: 120 }}>
                                         <button onClick={handleGoToJob} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                             <Briefcase size={14} color="#10b981" /> Open Job Details ({formData.assigned_job_no})
                                         </button>
@@ -4775,73 +5340,41 @@ export default function WorkflowEditor() {
                                     disabled={saving} 
                                     style={{ 
                                         background: '#10b981', 
-                                        padding: '8px 12px',
-                                        fontSize: '0.85rem',
-                                        cursor: 'pointer'
+                                        padding: '6px 11px', 
+                                        fontSize: '0.8rem', 
+                                        cursor: 'pointer',
+                                        borderRadius: '7px',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '5px'
                                     }}
                                 >
-                                    <Package size={16} /> 
-                                    <span className="hide-sm">To Job</span>
+                                    <Package size={14} /> 
+                                    <span>To Job</span>
                                 </button>
                             )
                         )}
 
-                        {!isNew && formData.is_job && (
-                            <div className="dropdown" style={{ position: 'relative' }}>
-                                <button className="btn-vibrant" style={{ background: '#8b5cf6', color: '#fff', border: 'none', padding: '8px 12px', fontSize: '0.85rem' }}>
-                                    <Plus size={16} /> <span className="hide-sm">Suite</span> <ChevronDown size={14} />
-                                </button>
-                                <div className="dropdown-content">
-                                    <button onClick={() => handleGenerateAssociatedDoc('Order Acknowledgment')}>Order Acknowledgment (ORA)</button>
-                                    <button onClick={() => handleGenerateAssociatedDoc('Delivery Order')}>Delivery Order (DO)</button>
-                                    <button onClick={() => handleGenerateAssociatedDoc('Packing List')}>Packing List (PKL)</button>
-                                    <button onClick={() => handleGenerateAssociatedDoc('Proforma Invoice')}>Proforma Invoice (PRO)</button>
-                                    <button onClick={() => handleGenerateAssociatedDoc('Tax Invoice')}>Tax Invoice (INV)</button>
-                                    <button 
-                                        type="button"
-                                        onClick={handlePrintInvAndDo} 
-                                        style={{ background: '#eef2ff', color: '#4f46e5', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', borderTop: '1px solid #e0e7ff', borderBottom: '1px solid #e0e7ff', margin: '4px 0', padding: '10px 14px', borderRadius: '4px' }}
-                                        title="Continuous Print of Tax Invoice (INV) + Delivery Order (DO) in one PDF"
-                                    >
-                                        <Printer size={15} color="#4f46e5" /> Tax Invoice + Delivery Order (INV+DO)
-                                    </button>
-                                    <button onClick={() => handleGenerateAssociatedDoc('Credit Note')} style={{ color: '#e11d48', fontWeight: 600 }}>Credit Note (CRN)</button>
-                                    <button onClick={() => handleGenerateAssociatedDoc('Certificate')}>Certificate (CERT)</button>
-                                    <button onClick={() => handleGenerateAssociatedDoc('Service Report')}>Service Report (SR)</button>
-                                </div>
-                            </div>
-                        )}
-
+                        {/* To Invoice for Proforma Invoice */}
                         {!isNew && formData.document_type === 'Proforma Invoice' && (
                             <button 
                                 className="btn-vibrant" 
                                 onClick={handleConvertToTaxInvoice} 
                                 disabled={saving} 
-                                style={{ background: '#ef4444', padding: '8px 12px', fontSize: '0.85rem' }}
+                                style={{ 
+                                    background: '#ef4444', 
+                                    padding: '6px 11px', 
+                                    fontSize: '0.8rem',
+                                    borderRadius: '7px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px'
+                                }}
                             >
-                                <FileText size={16} /> <span className="hide-sm">To Invoice</span>
-                            </button>
-                        )}
-
-                        {!isNew && formData.document_type === 'Tax Invoice' && (
-                            <button 
-                                className="btn-vibrant" 
-                                onClick={() => {
-                                    const jobNo = formData.assigned_job_no || '';
-                                    navigate(`/workflows/editor/credit-note/new?assigned_job_no=${encodeURIComponent(jobNo)}&source_id=${id}`);
-                                }} 
-                                disabled={saving} 
-                                style={{ background: 'linear-gradient(135deg, #e11d48, #be123c)', color: '#fff', padding: '8px 12px', fontSize: '0.85rem', fontWeight: 700, borderRadius: '8px', border: 'none', display: 'flex', alignItems: 'center', gap: '6px' }}
-                                title="Issue a Credit Note against this Tax Invoice"
-                            >
-                                <RotateCcw size={16} /> <span className="hide-sm">Issue Credit Note</span>
+                                <FileText size={14} /> <span>To Invoice</span>
                             </button>
                         )}
                     </div>
-
-                    <button className="icon-btn" onClick={handleGoBack} style={{ background: '#fee2e2', color: '#ef4444', border: 'none' }} title="Close Editor">
-                        <X size={20} />
-                    </button>
                 </div>
             </header>
 
@@ -5710,8 +6243,29 @@ export default function WorkflowEditor() {
                                 <input type="date" className="form-input" name="issue_date" value={formData.issue_date} onChange={handleHeaderChange} />
                             </div>
                             <div className="form-item">
-                                <label>Expiration / Due Date</label>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <label>Expiration / Due Date</label>
+                                    {formData.payment_terms && (
+                                        <button 
+                                            type="button" 
+                                            onClick={() => {
+                                                const synced = calculateDueDateFromTerms(formData.issue_date, formData.payment_terms);
+                                                setFormData(prev => ({ ...prev, expiry_date: synced }));
+                                                toast.success(`Due Date synced: ${synced}`);
+                                            }}
+                                            style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px', padding: 0 }}
+                                            title="Click to recalculate: Date + Payment Terms = Due Date"
+                                        >
+                                            <RefreshCw size={11} /> Sync with Terms
+                                        </button>
+                                    )}
+                                </div>
                                 <input type="date" className="form-input" name="expiry_date" value={formData.expiry_date} onChange={handleHeaderChange} />
+                                {formData.payment_terms && (
+                                    <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '3px' }}>
+                                        Formula: Date + <strong>{formData.payment_terms}</strong> = {formData.expiry_date || 'N/A'}
+                                    </div>
+                                )}
                             </div>
                             <div className="form-item">
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -5893,11 +6447,12 @@ export default function WorkflowEditor() {
                                     value={formData.payment_terms && !['COD', 'Immediate', '7 Days', '14 Days', '30 Days', '60 Days', '90 Days', 'Advance Payment', '50% on Order and 50% on COD'].includes(formData.payment_terms) ? "CUSTOM" : (formData.payment_terms || "")} 
                                     onChange={(e) => {
                                         const val = e.target.value;
-                                        if (val === "CUSTOM") {
-                                            setFormData(prev => ({ ...prev, payment_terms: "50% Advance, Balance COD" }));
-                                        } else {
-                                            setFormData(prev => ({ ...prev, payment_terms: val }));
-                                        }
+                                        const newTerms = val === "CUSTOM" ? "50% Advance, Balance COD" : val;
+                                        setFormData(prev => ({ 
+                                            ...prev, 
+                                            payment_terms: newTerms,
+                                            expiry_date: calculateDueDateFromTerms(prev.issue_date, newTerms)
+                                        }));
                                     }}
                                 >
                                     <option value="">-- Select Payment Terms --</option>
@@ -5919,8 +6474,15 @@ export default function WorkflowEditor() {
                                         className="form-input" 
                                         name="payment_terms" 
                                         value={formData.payment_terms} 
-                                        onChange={(e) => setFormData(prev => ({ ...prev, payment_terms: e.target.value }))}
-                                        placeholder="e.g. 50% Advance, Balance COD"
+                                        onChange={(e) => {
+                                            const newTerms = e.target.value;
+                                            setFormData(prev => ({ 
+                                                ...prev, 
+                                                payment_terms: newTerms,
+                                                expiry_date: calculateDueDateFromTerms(prev.issue_date, newTerms)
+                                            }));
+                                        }}
+                                        placeholder="e.g. 50% Advance, Balance COD or 45 Days"
                                         style={{ marginTop: '8px', fontSize: '12px' }}
                                     />
                                 )}
@@ -8871,16 +9433,17 @@ export default function WorkflowEditor() {
                     font-family: 'Inter', sans-serif;
                 }
             .editor-header {
-                background: var(--bg-secondary);
-            padding: 16px 40px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border-color);
-            position: sticky;
-            top: 0;
-            z-index: 100;
-                }
+                background: #ffffff;
+                padding: 12px 36px;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                border-bottom: 1px solid var(--border-color);
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+            }
             .icon-btn {
                 background: transparent;
             border: 1px solid var(--border-color);
@@ -9200,31 +9763,36 @@ export default function WorkflowEditor() {
                 }
             .del-btn:hover {opacity: 1; }
 
-            .dropdown {position: relative; }
+            .dropdown { position: relative; }
             .dropdown-content {
                 display: none;
-            position: absolute;
-            background: #fff;
-            min-width: 200px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-            border-radius: 8px;
-            z-index: 100;
-            max-height: 200px;
-            overflow-y: auto;
-            border: 1px solid var(--border-color);
-                }
-            .dropdown:hover .dropdown-content {display: block; }
+                position: absolute;
+                top: 100%;
+                background: #fff;
+                min-width: 220px;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+                border-radius: 8px;
+                z-index: 120;
+                max-height: 420px;
+                overflow-y: auto;
+                border: 1px solid var(--border-color);
+                margin-top: 4px;
+            }
+            .dropdown:hover .dropdown-content { display: block; }
             .dropdown-content button {
                 width: 100%;
-            padding: 10px;
-            text-align: left;
-            background: transparent;
-            border: none;
-            color: var(--text-primary);
-            cursor: pointer;
-            font-size: 0.85rem;
-                }
-            .dropdown-content button:hover {background: #f8fafc; color: var(--accent); }
+                padding: 9px 14px;
+                text-align: left;
+                background: transparent;
+                border: none;
+                color: var(--text-primary);
+                cursor: pointer;
+                font-size: 0.85rem;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .dropdown-content button:hover { background: #f8fafc; color: var(--accent); }
             `}} />
             {/* Hidden Print Content for PDF Generation */}
             <div style={{ position: 'fixed', left: 0, top: 0, zIndex: -9999, pointerEvents: 'none' }}>

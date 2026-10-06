@@ -63,11 +63,62 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
 
     const formatDate = (d) => {
         if (!d) return '-';
+        if (typeof d === 'string' && d.includes('-')) {
+            const datePart = d.split('T')[0];
+            const parts = datePart.split('-');
+            if (parts.length === 3) {
+                const yy = parts[0].slice(-2);
+                const mm = parts[1].padStart(2, '0');
+                const dd = parts[2].padStart(2, '0');
+                return `${dd}/${mm}/${yy}`;
+            }
+        }
         const date = new Date(d);
+        if (isNaN(date.getTime())) return '-';
         const dd = String(date.getDate()).padStart(2, '0');
         const mm = String(date.getMonth() + 1).padStart(2, '0');
         const yy = String(date.getFullYear()).slice(-2);
         return `${dd}/${mm}/${yy}`;
+    };
+
+    const getComputedDueDate = (issueDate, terms, fallbackExpiry) => {
+        if (!issueDate) return fallbackExpiry || '';
+        const t = (terms || '').trim().toLowerCase();
+        let daysToAdd = null;
+
+        if (
+            t === 'cod' ||
+            t.includes('cash on delivery') ||
+            t.includes('immediate') ||
+            t.includes('cash') ||
+            t.includes('advance') ||
+            t.includes('balance cod') ||
+            t.includes('on cod')
+        ) {
+            daysToAdd = 0;
+        } else {
+            const match = t.match(/(\d+)\s*(?:days?|day|d)?/i);
+            if (match) {
+                daysToAdd = parseInt(match[1], 10);
+            }
+        }
+
+        if (daysToAdd !== null) {
+            const datePart = String(issueDate).split('T')[0];
+            const parts = datePart.split('-');
+            if (parts.length === 3) {
+                const year = parseInt(parts[0], 10);
+                const month = parseInt(parts[1], 10) - 1;
+                const day = parseInt(parts[2], 10);
+                const d = new Date(year, month, day);
+                d.setDate(d.getDate() + daysToAdd);
+                const yyyy = d.getFullYear();
+                const mm = String(d.getMonth() + 1).padStart(2, '0');
+                const dd = String(d.getDate()).padStart(2, '0');
+                return `${yyyy}-${mm}-${dd}`;
+            }
+        }
+        return fallbackExpiry || issueDate;
     };
     
     const documentDateFormatted = formatDate(doc.issue_date || new Date());
@@ -284,7 +335,9 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                                     <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, width: '40%', borderRight: styles.border }}>
                                         {isCreditNote ? 'CREDIT DATE' : 'DUE/EXPIRY'}
                                     </td>
-                                    <td style={{ padding: '4px 10px', ...styles.bodyBold }}>{formatDate(doc.expiry_date || doc.issue_date)}</td>
+                                    <td style={{ padding: '4px 10px', ...styles.bodyBold }}>
+                                        {formatDate(getComputedDueDate(doc.issue_date, doc.payment_terms, doc.expiry_date))}
+                                    </td>
                                 </tr>
                             )}
                             {isCreditNote && (
