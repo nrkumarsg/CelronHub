@@ -332,17 +332,6 @@ export default function WorkflowEditor() {
     const [loadingSuiteDocs, setLoadingSuiteDocs] = useState(false);
     const [lastSavedTime, setLastSavedTime] = useState(null);
     const [autoSyncToCounterpart, setAutoSyncToCounterpart] = useState(true);
-
-    const pairedCounterpart = React.useMemo(() => {
-        if (!formData || !suiteDocs || suiteDocs.length === 0) return null;
-        if (formData.document_type === 'Tax Invoice') {
-            return suiteDocs.find(d => d.document_type === 'Delivery Order' && d.id !== id);
-        }
-        if (formData.document_type === 'Delivery Order') {
-            return suiteDocs.find(d => d.document_type === 'Tax Invoice' && d.id !== id);
-        }
-        return null;
-    }, [formData?.document_type, suiteDocs, id]);
     const [showCreateDocMenu, setShowCreateDocMenu] = useState(false);
     const [expenses, setExpenses] = useState([]);
 
@@ -984,6 +973,17 @@ export default function WorkflowEditor() {
         formData?.delivery_verification?.zero_total ||
         formData?.delivery_verification?.is_zero_total
     );
+
+    const pairedCounterpart = React.useMemo(() => {
+        if (!formData || !Array.isArray(suiteDocs) || suiteDocs.length === 0) return null;
+        if (formData.document_type === 'Tax Invoice') {
+            return suiteDocs.find(d => d.document_type === 'Delivery Order' && d.id !== id);
+        }
+        if (formData.document_type === 'Delivery Order') {
+            return suiteDocs.find(d => d.document_type === 'Tax Invoice' && d.id !== id);
+        }
+        return null;
+    }, [formData?.document_type, suiteDocs, id]);
 
     const handleToggleZeroTotal = (checked) => {
         setFormData(prev => ({
