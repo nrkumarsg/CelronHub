@@ -185,21 +185,32 @@ export default function EnquiryPrintPreview() {
             <style dangerouslySetInnerHTML={{
                 __html: `
                 @media print {
-                    body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #fff !important; }
+                    @page { 
+                        margin: 0 !important; 
+                        size: A4 portrait; 
+                    }
+                    body, html { 
+                        margin: 0 !important; 
+                        padding: 0 !important; 
+                        width: 100% !important; 
+                        height: 100% !important; 
+                        background: #fff !important; 
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
                     .print-hide { display: none !important; }
                     .print-paper { 
                         box-shadow: none !important; 
                         margin: 0 !important; 
-                        padding: 0 !important;
+                        padding: 12mm 14mm 12mm 14mm !important;
                         width: 100% !important; 
                         max-width: 100% !important;
-                        min-height: auto !important;
+                        min-height: 297mm !important;
                         border: none !important;
                         border-radius: 0 !important;
-                        background: transparent !important;
+                        background: #ffffff !important;
                         box-sizing: border-box !important;
                     }
-                    @page { margin: 10mm; size: A4 portrait; }
                 }
                 `
             }} />

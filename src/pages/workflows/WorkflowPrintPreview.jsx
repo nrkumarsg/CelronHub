@@ -92,20 +92,21 @@ export default function WorkflowPrintPreview() {
                 };
             }
 
-            // If combo=inv_do and secId wasn't explicitly given in query, find counterpart in database
+            // If combo=inv_do and secId wasn't explicitly given in query, find latest counterpart in database
             if (!secId && isComboInvDo && loadedDoc) {
                 const jobNo = loadedDoc.assigned_job_no || (loadedDoc.is_job ? loadedDoc.document_no : null);
                 if (jobNo) {
                     const counterpartType = loadedDoc.document_type === 'Tax Invoice' ? 'Delivery Order' : 'Tax Invoice';
                     const { supabase } = await import('../../lib/supabase');
-                    const { data: counterpart } = await supabase
+                    const { data: counterparts } = await supabase
                         .from('workflow_documents')
                         .select('id')
                         .or(`assigned_job_no.eq.${jobNo},document_no.eq.${jobNo}`)
                         .eq('document_type', counterpartType)
                         .neq('status', 'Cancelled')
-                        .maybeSingle();
-                    if (counterpart) secId = counterpart.id;
+                        .order('updated_at', { ascending: false })
+                        .limit(1);
+                    if (counterparts && counterparts.length > 0) secId = counterparts[0].id;
                 }
             }
 
@@ -250,6 +251,11 @@ export default function WorkflowPrintPreview() {
 
     return (
         <div style={{ background: '#e2e8f0', minHeight: '100vh', padding: '20px', fontFamily: 'Inter, sans-serif' }}>
+            {/* Screen Notice for Clean Print Setup (Hidden on paper) */}
+            <div className="print-hide" style={{ maxWidth: '210mm', margin: '0 auto 12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', color: '#1e40af', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <span>🖨️ <strong>Zero-Margin Clean Print:</strong> Page margins are preset to 0mm to remove browser headers (Time, Title) and footers (URL link). In Chrome print dialog, uncheck <em>"Headers and footers"</em> for a 100% clean official document.</span>
+            </div>
+
             {/* Screen Actions (Hidden in Print) */}
             <div className="print-hide" style={{ maxWidth: '210mm', margin: '0 auto 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
@@ -426,7 +432,19 @@ export default function WorkflowPrintPreview() {
             <style dangerouslySetInnerHTML={{
                 __html: `
                 @media print {
-                    body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #fff !important; }
+                    @page { 
+                        margin: 0 !important; 
+                        size: A4 portrait; 
+                    }
+                    body, html { 
+                        margin: 0 !important; 
+                        padding: 0 !important; 
+                        width: 100% !important; 
+                        height: 100% !important; 
+                        background: #fff !important; 
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
                     .print-hide { display: none !important; }
                     .page-break-before-always {
                         page-break-before: always !important;
@@ -435,17 +453,16 @@ export default function WorkflowPrintPreview() {
                     .print-paper { 
                         box-shadow: none !important; 
                         margin: 0 !important; 
-                        padding: 0 !important;
+                        padding: 12mm 14mm 12mm 14mm !important;
                         width: 100% !important; 
                         max-width: 100% !important;
-                        min-height: auto !important;
+                        min-height: 297mm !important;
                         border: none !important;
                         border-radius: 0 !important;
-                        background: transparent !important;
+                        background: #ffffff !important;
                         box-sizing: border-box !important;
                         display: block !important;
                     }
-                    @page { margin: 12mm 10mm 15mm 10mm; size: A4 portrait; }
                     table {
                         page-break-inside: auto !important;
                         border-collapse: collapse !important;
@@ -471,15 +488,7 @@ export default function WorkflowPrintPreview() {
                         break-inside: avoid-page !important;
                     }
                     .page-footer {
-                        display: block !important;
-                        position: fixed !important;
-                        bottom: 4mm !important;
-                        right: 10mm !important;
-                        font-size: 8pt !important;
-                        color: #94a3b8 !important;
-                    }
-                    .page-footer::after {
-                        content: "Page " counter(page);
+                        display: none !important;
                     }
                 }
                 `

@@ -20,7 +20,7 @@ import {
     Image, FolderOpen, DollarSign,
     List, TrendingUp, TrendingDown, Percent,
     Truck, RotateCcw, ArrowDownRight, Calendar,
-    Briefcase, LayoutDashboard
+    Briefcase, LayoutDashboard, AlertTriangle
 } from 'lucide-react';
 import GoogleCalendarReminderModal from '../../components/common/GoogleCalendarReminderModal';
 import SearchableSelect from '../../components/common/SearchableSelect';
@@ -244,6 +244,8 @@ export default function WorkflowEditor() {
     const [activeTab, setActiveTab] = useState('items'); // 'items' | 'other'
     const [modal, setModal] = useState({ isOpen: false, type: null });
     const [doLabelModal, setDoLabelModal] = useState({ isOpen: false, doc: null });
+    const [duplicateCleanupModal, setDuplicateCleanupModal] = useState({ isOpen: false, groups: {} });
+    const [cleaningDuplicates, setCleaningDuplicates] = useState(false);
     const [jobMajorCategories, setJobMajorCategories] = useState([]);
     const getJobMajorOptions = () => {
         const dbNames = jobMajorCategories.map(c => c.name);
@@ -2121,6 +2123,59 @@ export default function WorkflowEditor() {
         return `#${idx + 1}`;
     };
 
+    // Helper to find duplicates in suiteDocs grouped by document_type
+    const getDuplicateDocGroups = (docs) => {
+        if (!docs || docs.length === 0) return {};
+        const groups = {};
+        docs.forEach(doc => {
+            if (doc.status === 'Cancelled') return;
+            const docType = doc.document_type;
+            if (!groups[docType]) groups[docType] = [];
+            groups[docType].push(doc);
+        });
+        const duplicates = {};
+        Object.entries(groups).forEach(([docType, list]) => {
+            if (list.length > 1) {
+                // Sort newest updated first
+                list.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+                duplicates[docType] = list;
+            }
+        });
+        return duplicates;
+    };
+
+    const handleCleanDuplicatesApproval = async (groups) => {
+        if (!groups || Object.keys(groups).length === 0) return;
+        setCleaningDuplicates(true);
+        const toastId = toast.loading('Deleting previous duplicate document(s)...');
+        try {
+            let deleteCount = 0;
+            for (const [docType, list] of Object.entries(groups)) {
+                // Keep the first item (latest updated)
+                const toKeep = list[0];
+                const toDelete = list.slice(1);
+                for (const doc of toDelete) {
+                    const { error } = await deleteWorkflowDocument(doc.id);
+                    if (error) {
+                        console.error(`Failed to delete duplicate ${doc.document_no}:`, error);
+                    } else {
+                        deleteCount++;
+                    }
+                }
+            }
+            toast.dismiss(toastId);
+            toast.success(`Successfully removed ${deleteCount} previous duplicate document(s)! Latest documents retained.`);
+            setDuplicateCleanupModal({ isOpen: false, groups: {} });
+            fetchSuiteDocsPanel();
+        } catch (err) {
+            toast.dismiss(toastId);
+            console.error('Error cleaning duplicates:', err);
+            toast.error('Failed to clean duplicates: ' + err.message);
+        } finally {
+            setCleaningDuplicates(false);
+        }
+    };
+
     // ⚡ Simultaneous Edit / Sync between Tax Invoice and Delivery Order
     const handleSyncToCounterpart = async (targetDocOverride = null, silent = false) => {
         const target = targetDocOverride || pairedCounterpart;
@@ -2136,14 +2191,42 @@ export default function WorkflowEditor() {
 
             // Map line items to target document
             const isTargetDO = targetDoc.document_type === 'Delivery Order' || targetDoc.document_type === 'Packing List';
-            const syncedItems = lineItems.map((item, idx) => ({
-                ...item,
-                id: undefined,
-                document_id: targetDoc.id,
-                unit_price: isTargetDO ? 0 : item.unit_price,
-                total_price: isTargetDO ? 0 : item.total_price,
-                sort_order: item.sort_order ?? idx
-            }));
+            const syncedItems = lineItems.map((item, idx) => {
+                const existingTargetItem = (targetDoc.items || [])[idx];
+                let effectiveUnitPrice = item.unit_price;
+                if (isTargetDO) {
+                    effectiveUnitPrice = 0;
+                } else if ((!effectiveUnitPrice || Number(effectiveUnitPrice) === 0) && existingTargetItem && Number(existingTargetItem.unit_price) > 0) {
+                    effectiveUnitPrice = existingTargetItem.unit_price;
+                }
+                const qty = parseFloat(item.quantity) || 0;
+                const price = parseFloat(effectiveUnitPrice) || 0;
+                const amt = Math.round(qty * price * 100) / 100;
+
+                return {
+                    ...item,
+                    id: undefined,
+                    document_id: targetDoc.id,
+                    unit_price: effectiveUnitPrice,
+                    amount: isTargetDO ? 0 : (item.amount || amt),
+                    total_price: isTargetDO ? 0 : (item.total_price || amt),
+                    sort_order: item.sort_order ?? idx
+                };
+            });
+
+            let subtotal = 0;
+            let taxAmount = 0;
+            let totalAmount = 0;
+            if (!isTargetDO) {
+                subtotal = syncedItems.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
+                subtotal = Math.round(subtotal * 100) / 100;
+                taxAmount = syncedItems.reduce((acc, curr) => {
+                    if (curr.is_section || curr.is_note || curr.tax_enabled === false) return acc;
+                    return acc + ((parseFloat(curr.amount) || 0) * ((parseFloat(curr.tax_rate ?? 9) || 0) / 100));
+                }, 0);
+                taxAmount = Math.round(taxAmount * 100) / 100;
+                totalAmount = Math.round((subtotal + taxAmount) * 100) / 100;
+            }
 
             const updatedTargetData = {
                 ...targetDoc,
@@ -2154,6 +2237,10 @@ export default function WorkflowEditor() {
                 customer_ref: formData.customer_ref,
                 subject: formData.subject,
                 currency: formData.currency,
+                exchange_rate: formData.exchange_rate,
+                subtotal: isTargetDO ? targetDoc.subtotal : subtotal,
+                tax_amount: isTargetDO ? targetDoc.tax_amount : taxAmount,
+                total_amount: isTargetDO ? targetDoc.total_amount : totalAmount,
                 items: syncedItems,
                 updated_at: new Date().toISOString()
             };
@@ -3819,16 +3906,23 @@ export default function WorkflowEditor() {
             const prefix = `${docPrefix}${basePrefix}`;
             const nextNo = `${prefix}-${jobNoPart}`;
 
-            // 2. Check if already exists
+            // 2. Check if already exists by document_no or by assigned_job_no + document_type
             const { supabase } = await import('../../lib/supabase');
-            const { data: existingDoc } = await supabase
+            const { data: existingDocs } = await supabase
                 .from('workflow_documents')
-                .select('id')
-                .eq('document_no', nextNo)
-                .maybeSingle();
+                .select('id, document_no, document_type, updated_at')
+                .or(`document_no.eq.${nextNo},and(assigned_job_no.eq.${effectiveJobNo},document_type.eq.${targetType})`)
+                .neq('status', 'Cancelled')
+                .order('updated_at', { ascending: false });
 
+            const existingDoc = existingDocs?.[0];
             if (existingDoc) {
-                if (window.confirm(`${targetType} (${nextNo}) already exists! Do you want to open it instead?`)) {
+                const choice = window.confirm(
+                    `${targetType} (${existingDoc.document_no}) already exists for Job ${effectiveJobNo}!\n\n` +
+                    `Click OK to OPEN and edit the existing document.\n` +
+                    `Click Cancel to abort and prevent creating an unneeded duplicate copy.`
+                );
+                if (choice) {
                     const slug = targetType.toLowerCase().replace(/ /g, '-');
                     if (slug === 'enquiry') {
                         navigate(`/workflows/enquiry/${existingDoc.id}`);
@@ -4023,17 +4117,20 @@ export default function WorkflowEditor() {
         }
 
         setSaving(true);
+        const toastId = toast.loading('Saving and syncing latest Tax Invoice & Delivery Order...');
         try {
-            // Persist current edits first so preview has latest data
-            await handleSave();
+            // 1. Persist current edits first so database has latest data
+            const savedCurrent = await handleSave();
+            const currentDocId = savedCurrent?.id || id || currentIdRef.current;
 
-            // Find both Tax Invoice and Delivery Order for this job
+            // 2. Find both Tax Invoice and Delivery Order for this job ordered by latest updated
             const { supabase } = await import('../../lib/supabase');
             const { data: docs, error: fetchErr } = await supabase
                 .from('workflow_documents')
-                .select('id, document_type, document_no, status')
+                .select('id, document_type, document_no, status, updated_at')
                 .or(`assigned_job_no.eq.${jobNo},document_no.eq.${jobNo}`)
-                .neq('status', 'Cancelled');
+                .neq('status', 'Cancelled')
+                .order('updated_at', { ascending: false });
 
             if (fetchErr) throw fetchErr;
 
@@ -4042,13 +4139,13 @@ export default function WorkflowEditor() {
 
             // Prioritize current document if it is Tax Invoice or Delivery Order
             if (formData.document_type === 'Tax Invoice') {
-                invDoc = { id: id, document_no: formData.document_no };
+                invDoc = { id: currentDocId, document_no: formData.document_no };
             }
             if (formData.document_type === 'Delivery Order') {
-                doDoc = { id: id, document_no: formData.document_no };
+                doDoc = { id: currentDocId, document_no: formData.document_no };
             }
 
-            // If Tax Invoice is missing, auto-generate it from this Job suite
+            // 3. If Tax Invoice is missing, auto-generate it from this Job suite
             if (!invDoc) {
                 const parts = jobNo.split('-');
                 const jobPrefix = parts[0];
@@ -4074,7 +4171,7 @@ export default function WorkflowEditor() {
                 toast.success(`Generated Tax Invoice (${savedInv.document_no})!`);
             }
 
-            // If Delivery Order is missing, auto-generate it from this Job suite
+            // 4. If Delivery Order is missing, auto-generate it from this Job suite
             if (!doDoc) {
                 const parts = jobNo.split('-');
                 const jobPrefix = parts[0];
@@ -4100,8 +4197,8 @@ export default function WorkflowEditor() {
                 toast.success(`Generated Delivery Order (${savedDo.document_no})!`);
             }
 
-            // Ensure counterpart is synced if auto-sync is on
-            if (invDoc && doDoc && autoSyncToCounterpart) {
+            // 5. MANDATORY SYNC: Both Tax Invoice and Delivery Order must be fully synced with latest edits before printing
+            if (invDoc && doDoc) {
                 if (formData.document_type === 'Tax Invoice') {
                     await handleSyncToCounterpart(doDoc, true);
                 } else if (formData.document_type === 'Delivery Order') {
@@ -4109,10 +4206,15 @@ export default function WorkflowEditor() {
                 }
             }
 
+            toast.dismiss(toastId);
+            toast.success('Latest Tax Invoice and Delivery Order saved & synced!');
+
+            // 6. Open continuous print with latest verified IDs
             if (invDoc && doDoc) {
                 window.open(`/workflows/print/${invDoc.id}?secondaryId=${doDoc.id}&combo=inv_do&showSignature=${showSignature}&zeroTotal=${isZeroTotal}`, '_blank');
             }
         } catch (err) {
+            toast.dismiss(toastId);
             console.error('Error opening continuous print:', err);
             toast.error('Failed to open continuous print: ' + err.message);
         } finally {
@@ -7692,7 +7794,64 @@ export default function WorkflowEditor() {
                                         <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginTop: '4px' }}>Use "Create Document" above to add Delivery Orders, Invoices, and more.</div>
                                     </div>
                                 ) : (
-                                    <div style={{ overflowX: 'auto' }}>
+                                    <div style={{ overflowX: 'auto', padding: '16px 20px' }}>
+                                        {/* Duplicate Documents Warning & Cleanup Panel */}
+                                        {(() => {
+                                            const duplicateGroups = getDuplicateDocGroups(suiteDocs);
+                                            const hasDuplicates = Object.keys(duplicateGroups).length > 0;
+                                            if (!hasDuplicates) return null;
+                                            return (
+                                                <div style={{
+                                                    background: '#fffbeb',
+                                                    border: '1.5px solid #f59e0b',
+                                                    borderRadius: '12px',
+                                                    padding: '12px 18px',
+                                                    marginBottom: '16px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'space-between',
+                                                    flexWrap: 'wrap',
+                                                    gap: '12px',
+                                                    boxShadow: '0 2px 8px rgba(245, 158, 11, 0.08)'
+                                                }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                        <div style={{ width: '34px', height: '34px', borderRadius: '10px', background: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
+                                                            <AlertTriangle size={18} />
+                                                        </div>
+                                                        <div>
+                                                            <div style={{ fontWeight: 800, color: '#92400e', fontSize: '0.9rem' }}>
+                                                                Duplicate Documents Detected in Job Suite
+                                                            </div>
+                                                            <div style={{ color: '#b45309', fontSize: '0.78rem', marginTop: '2px' }}>
+                                                                {Object.entries(duplicateGroups).map(([type, list]) => `${list.length}x ${type}s`).join(', ')}. 
+                                                                Keep the latest saved document and delete older duplicate(s) on your approval.
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setDuplicateCleanupModal({ isOpen: true, groups: duplicateGroups })}
+                                                        style={{
+                                                            background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                                                            color: '#fff',
+                                                            border: 'none',
+                                                            borderRadius: '8px',
+                                                            padding: '8px 16px',
+                                                            fontSize: '0.8rem',
+                                                            fontWeight: 700,
+                                                            cursor: 'pointer',
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: '6px',
+                                                            boxShadow: '0 2px 4px rgba(220, 38, 38, 0.25)'
+                                                        }}
+                                                    >
+                                                        <Trash2 size={13} /> Clean Duplicates (Keep Latest)
+                                                    </button>
+                                                </div>
+                                            );
+                                        })()}
+
                                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.87rem' }}>
                                             <thead>
                                                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
@@ -7736,77 +7895,110 @@ export default function WorkflowEditor() {
                                                         </td>
                                                     </tr>
                                                 )}
-                                                {suiteDocs.map((doc) => {
-                                                    const clr = SUITE_DOC_COLORS[doc.document_type] || { bg: '#f8fafc', color: '#475569', border: '#e2e8f0' };
-                                                    const seqLabel = getSuiteDocSequenceLabel(doc, suiteDocs);
-                                                    const isCurrent = doc.id === id;
-                                                    const urlSlug = doc.document_type.toLowerCase().replace(/\s+/g, '-');
-                                                    return (
-                                                        <tr key={doc.id} style={{ borderBottom: '1px solid #f1f5f9', background: isCurrent ? '#f0f9ff' : 'transparent' }} onMouseOver={e => { if (!isCurrent) e.currentTarget.style.background = '#f8fafc'; }} onMouseOut={e => { if (!isCurrent) e.currentTarget.style.background = 'transparent'; }}>
-                                                            <td style={{ padding: '12px 16px' }}><span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700, background: clr.bg, color: clr.color, border: `1px solid ${clr.border}`, whiteSpace: 'nowrap' }}><span style={{ width: '7px', height: '7px', borderRadius: '50%', background: clr.color, flexShrink: 0 }} />{doc.document_type}</span></td>
-                                                            <td style={{ padding: '12px 16px', fontWeight: 800, color: clr.color, fontSize: '0.9rem' }}>{seqLabel}</td>
-                                                            <td style={{ padding: '12px 16px' }}><span style={{ fontWeight: 700, color: '#1e293b' }}>{doc.document_no}</span>{isCurrent && <span style={{ marginLeft: '8px', background: '#dbeafe', color: '#1d4ed8', borderRadius: '6px', padding: '1px 7px', fontSize: '0.7rem', fontWeight: 700 }}>Current</span>}</td>
-                                                            <td style={{ padding: '12px 16px', color: '#64748b' }}>{doc.issue_date ? new Date(doc.issue_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
-                                                            <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, color: '#1e293b' }}>{doc.total_amount != null && doc.total_amount > 0 ? `${doc.currency || 'SGD'} ${Number(doc.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : <span style={{ color: '#94a3b8' }}>—</span>}</td>
-                                                            <td style={{ padding: '12px 16px', textAlign: 'center' }}><span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '0.72rem', fontWeight: 700, background: doc.status === 'Draft' ? '#f1f5f9' : doc.status === 'Paid' ? '#dcfce7' : doc.status === 'Cancelled' ? '#fee2e2' : '#eff6ff', color: doc.status === 'Draft' ? '#64748b' : doc.status === 'Paid' ? '#15803d' : doc.status === 'Cancelled' ? '#b91c1c' : '#1d4ed8' }}>{doc.status || 'Draft'}</span></td>
-                                                            <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                                                                <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                                                                    {(doc.document_type === 'Delivery Order' || doc.document_type === 'Packing List') && (
+                                                {(() => {
+                                                    const duplicateGroups = getDuplicateDocGroups(suiteDocs);
+                                                    return suiteDocs.map((doc) => {
+                                                        const clr = SUITE_DOC_COLORS[doc.document_type] || { bg: '#f8fafc', color: '#475569', border: '#e2e8f0' };
+                                                        const seqLabel = getSuiteDocSequenceLabel(doc, suiteDocs);
+                                                        const isCurrent = doc.id === id;
+                                                        const urlSlug = doc.document_type.toLowerCase().replace(/\s+/g, '-');
+                                                        const dupList = duplicateGroups[doc.document_type];
+                                                        const isDup = dupList && dupList.length > 1;
+                                                        const isNewestInGroup = isDup && dupList[0].id === doc.id;
+
+                                                        return (
+                                                            <tr key={doc.id} style={{ borderBottom: '1px solid #f1f5f9', background: isCurrent ? '#f0f9ff' : (isDup && !isNewestInGroup ? '#fff5f5' : 'transparent') }} onMouseOver={e => { if (!isCurrent) e.currentTarget.style.background = isDup && !isNewestInGroup ? '#fee2e2' : '#f8fafc'; }} onMouseOut={e => { if (!isCurrent) e.currentTarget.style.background = isDup && !isNewestInGroup ? '#fff5f5' : 'transparent'; }}>
+                                                                <td style={{ padding: '12px 16px' }}><span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700, background: clr.bg, color: clr.color, border: `1px solid ${clr.border}`, whiteSpace: 'nowrap' }}><span style={{ width: '7px', height: '7px', borderRadius: '50%', background: clr.color, flexShrink: 0 }} />{doc.document_type}</span></td>
+                                                                <td style={{ padding: '12px 16px', fontWeight: 800, color: clr.color, fontSize: '0.9rem' }}>{seqLabel}</td>
+                                                                <td style={{ padding: '12px 16px' }}>
+                                                                    <span style={{ fontWeight: 700, color: '#1e293b' }}>{doc.document_no}</span>
+                                                                    {isCurrent && <span style={{ marginLeft: '8px', background: '#dbeafe', color: '#1d4ed8', borderRadius: '6px', padding: '1px 7px', fontSize: '0.7rem', fontWeight: 700 }}>Current</span>}
+                                                                    {isDup && isNewestInGroup && <span style={{ marginLeft: '6px', background: '#dcfce7', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', fontWeight: 700 }} title="This is the latest updated version of this document">Latest</span>}
+                                                                    {isDup && !isNewestInGroup && <span style={{ marginLeft: '6px', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', fontWeight: 700 }} title="Older duplicate version. Can be safely deleted to keep only latest">Older Duplicate</span>}
+                                                                </td>
+                                                                <td style={{ padding: '12px 16px', color: '#64748b' }}>{doc.issue_date ? new Date(doc.issue_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
+                                                                <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, color: '#1e293b' }}>{doc.total_amount != null && doc.total_amount > 0 ? `${doc.currency || 'SGD'} ${Number(doc.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : <span style={{ color: '#94a3b8' }}>—</span>}</td>
+                                                                <td style={{ padding: '12px 16px', textAlign: 'center' }}><span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '0.72rem', fontWeight: 700, background: doc.status === 'Draft' ? '#f1f5f9' : doc.status === 'Paid' ? '#dcfce7' : doc.status === 'Cancelled' ? '#fee2e2' : '#eff6ff', color: doc.status === 'Draft' ? '#64748b' : doc.status === 'Paid' ? '#15803d' : doc.status === 'Cancelled' ? '#b91c1c' : '#1d4ed8' }}>{doc.status || 'Draft'}</span></td>
+                                                                <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                                                                    <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                                                        {(doc.document_type === 'Delivery Order' || doc.document_type === 'Packing List') && (
+                                                                            <button 
+                                                                                onClick={() => {
+                                                                                    const fullDoc = { 
+                                                                                        ...doc, 
+                                                                                        items: doc.items || lineItems,
+                                                                                        partners: doc.partners || partners.find(p => p.id === doc.partner_id),
+                                                                                        contacts: doc.contacts || contacts.find(c => c.id === doc.contact_id),
+                                                                                        vessels: doc.vessels || vessels.find(v => v.id === doc.vessel_id),
+                                                                                        work_locations: doc.work_locations || workLocations.find(w => w.id === doc.work_location_id)
+                                                                                    };
+                                                                                    setDoLabelModal({ isOpen: true, doc: fullDoc });
+                                                                                }}
+                                                                                title="Print DO Shipping Label Sticker" 
+                                                                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 9px', borderRadius: '7px', border: '1px solid #a7f3d0', background: '#ecfdf5', color: '#047857', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600 }}
+                                                                            >
+                                                                                <Truck size={13} /> Label
+                                                                            </button>
+                                                                        )}
                                                                         <button 
-                                                                            onClick={() => {
-                                                                                const fullDoc = { 
-                                                                                    ...doc, 
-                                                                                    items: doc.items || lineItems,
-                                                                                    partners: doc.partners || partners.find(p => p.id === doc.partner_id),
-                                                                                    contacts: doc.contacts || contacts.find(c => c.id === doc.contact_id),
-                                                                                    vessels: doc.vessels || vessels.find(v => v.id === doc.vessel_id),
-                                                                                    work_locations: doc.work_locations || workLocations.find(w => w.id === doc.work_location_id)
-                                                                                };
-                                                                                setDoLabelModal({ isOpen: true, doc: fullDoc });
+                                                                            type="button"
+                                                                            onClick={() => window.open(`/workflows/print/${doc.id}`, '_blank')}
+                                                                            title={`View / Print PDF for ${doc.document_no} in new window`}
+                                                                            style={{ 
+                                                                                display: 'inline-flex', 
+                                                                                alignItems: 'center', 
+                                                                                gap: '4px', 
+                                                                                padding: '5px 10px', 
+                                                                                borderRadius: '7px', 
+                                                                                border: '1px solid #cbd5e1', 
+                                                                                background: '#ffffff', 
+                                                                                color: '#4338ca', 
+                                                                                fontSize: '0.78rem', 
+                                                                                fontWeight: 700, 
+                                                                                cursor: 'pointer',
+                                                                                boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                                                                                transition: 'all 0.15s ease'
                                                                             }}
-                                                                            title="Print DO Shipping Label Sticker" 
-                                                                            style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 9px', borderRadius: '7px', border: '1px solid #a7f3d0', background: '#ecfdf5', color: '#047857', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600 }}
+                                                                            onMouseOver={e => { 
+                                                                                e.currentTarget.style.background = '#eef2ff'; 
+                                                                                e.currentTarget.style.borderColor = '#c7d2fe'; 
+                                                                            }}
+                                                                            onMouseOut={e => { 
+                                                                                e.currentTarget.style.background = '#ffffff'; 
+                                                                                e.currentTarget.style.borderColor = '#cbd5e1'; 
+                                                                            }}
                                                                         >
-                                                                            <Truck size={13} /> Label
+                                                                            <Printer size={13} /> PDF
                                                                         </button>
-                                                                    )}
-                                                                    <button 
-                                                                        type="button"
-                                                                        onClick={() => window.open(`/workflows/print/${doc.id}`, '_blank')}
-                                                                        title={`View / Print PDF for ${doc.document_no} in new window`}
-                                                                        style={{ 
-                                                                            display: 'inline-flex', 
-                                                                            alignItems: 'center', 
-                                                                            gap: '4px', 
-                                                                            padding: '5px 10px', 
-                                                                            borderRadius: '7px', 
-                                                                            border: '1px solid #cbd5e1', 
-                                                                            background: '#ffffff', 
-                                                                            color: '#4338ca', 
-                                                                            fontSize: '0.78rem', 
-                                                                            fontWeight: 700, 
-                                                                            cursor: 'pointer',
-                                                                            boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-                                                                            transition: 'all 0.15s ease'
-                                                                        }}
-                                                                        onMouseOver={e => { 
-                                                                            e.currentTarget.style.background = '#eef2ff'; 
-                                                                            e.currentTarget.style.borderColor = '#c7d2fe'; 
-                                                                        }}
-                                                                        onMouseOut={e => { 
-                                                                            e.currentTarget.style.background = '#ffffff'; 
-                                                                            e.currentTarget.style.borderColor = '#cbd5e1'; 
-                                                                        }}
-                                                                    >
-                                                                        <Printer size={13} /> PDF
-                                                                    </button>
-                                                                    {!isCurrent ? (<button onClick={() => navigate(`/workflows/editor/${urlSlug}/${doc.id}`)} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }} onMouseOver={e => { e.currentTarget.style.background = clr.bg; e.currentTarget.style.color = clr.color; e.currentTarget.style.borderColor = clr.border; }} onMouseOut={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.color = '#475569'; e.currentTarget.style.borderColor = '#e2e8f0'; }}><Eye size={13} /> Open</button>) : (<span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', padding: '5px 8px' }}>Viewing</span>)}
-                                                                    <button onClick={() => handleDeleteSuiteDoc(doc)} title={`Delete ${doc.document_type} ${doc.document_no}`} style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 8px', borderRadius: '7px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', fontSize: '0.78rem', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.background = '#fee2e2'} onMouseOut={e => e.currentTarget.style.background = '#fef2f2'}><Trash2 size={13} /></button>
-                                                                </div>
-                                                            </td>
-                                                        </tr>
-                                                    );
-                                                })}
+                                                                        {!isCurrent ? (<button onClick={() => navigate(`/workflows/editor/${urlSlug}/${doc.id}`)} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }} onMouseOver={e => { e.currentTarget.style.background = clr.bg; e.currentTarget.style.color = clr.color; e.currentTarget.style.borderColor = clr.border; }} onMouseOut={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.color = '#475569'; e.currentTarget.style.borderColor = '#e2e8f0'; }}><Eye size={13} /> Open</button>) : (<span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', padding: '5px 8px' }}>Viewing</span>)}
+                                                                        <button 
+                                                                            onClick={() => handleDeleteSuiteDoc(doc)} 
+                                                                            title={isDup && !isNewestInGroup ? `Delete older duplicate copy ${doc.document_no}` : `Delete ${doc.document_type} ${doc.document_no}`} 
+                                                                            style={{ 
+                                                                                display: 'inline-flex', 
+                                                                                alignItems: 'center', 
+                                                                                gap: '4px',
+                                                                                padding: '5px 8px', 
+                                                                                borderRadius: '7px', 
+                                                                                border: '1px solid #fecaca', 
+                                                                                background: isDup && !isNewestInGroup ? '#ef4444' : '#fef2f2', 
+                                                                                color: isDup && !isNewestInGroup ? '#ffffff' : '#b91c1c', 
+                                                                                fontSize: '0.78rem', 
+                                                                                cursor: 'pointer',
+                                                                                fontWeight: isDup && !isNewestInGroup ? 700 : 500
+                                                                            }} 
+                                                                            onMouseOver={e => e.currentTarget.style.background = isDup && !isNewestInGroup ? '#dc2626' : '#fee2e2'} 
+                                                                            onMouseOut={e => e.currentTarget.style.background = isDup && !isNewestInGroup ? '#ef4444' : '#fef2f2'}
+                                                                        >
+                                                                            <Trash2 size={13} />
+                                                                            {isDup && !isNewestInGroup && <span>Delete</span>}
+                                                                        </button>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    });
+                                                })()}
                                             </tbody>
                                         </table>
                                     </div>
@@ -10339,6 +10531,107 @@ export default function WorkflowEditor() {
                         >
                             Done
                         </button>
+                    </div>
+                </div>
+            )}
+            {/* Modal for User Approval to Clean Duplicate Documents */}
+            {duplicateCleanupModal.isOpen && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '20px' }}>
+                    <div style={{ background: '#ffffff', borderRadius: '20px', width: '100%', maxWidth: '620px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                        {/* Header */}
+                        <div style={{ padding: '20px 24px', background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)', borderBottom: '1px solid #fde68a', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+                                    <Trash2 size={20} />
+                                </div>
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#92400e' }}>
+                                        Confirm Duplicate Document Cleanup
+                                    </h3>
+                                    <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: '#b45309' }}>
+                                        Keep latest saved documents and delete previous duplicate copy(s)
+                                    </p>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => setDuplicateCleanupModal({ isOpen: false, groups: {} })}
+                                style={{ background: 'none', border: 'none', color: '#92400e', cursor: 'pointer', padding: '4px' }}
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {/* Body */}
+                        <div style={{ padding: '22px 24px', maxHeight: '420px', overflowY: 'auto' }}>
+                            <p style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '16px', lineHeight: '1.5' }}>
+                                CelronHub detected duplicate documents within Job <strong>{formData.assigned_job_no || formData.document_no}</strong>. Review the documents below. Approving will <strong>keep the newest saved version</strong> and permanently delete the older duplicate(s) from the database:
+                            </p>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                {Object.entries(duplicateCleanupModal.groups || {}).map(([docType, list]) => {
+                                    const toKeep = list[0];
+                                    const toDelete = list.slice(1);
+                                    return (
+                                        <div key={docType} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '14px 16px' }}>
+                                            <div style={{ fontWeight: 800, fontSize: '0.9rem', color: '#1e293b', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                <span>{docType} ({list.length} versions found)</span>
+                                            </div>
+
+                                            {/* Keep */}
+                                            {toKeep && (
+                                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '8px 12px', borderRadius: '8px', marginBottom: '8px' }}>
+                                                    <div>
+                                                        <span style={{ fontWeight: 700, color: '#065f46', fontSize: '0.85rem' }}>{toKeep.document_no}</span>
+                                                        <span style={{ fontSize: '0.75rem', color: '#047857', marginLeft: '8px' }}>
+                                                            Updated: {toKeep.updated_at ? new Date(toKeep.updated_at).toLocaleString() : 'Recent'}
+                                                        </span>
+                                                    </div>
+                                                    <span style={{ background: '#10b981', color: '#fff', fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: '6px' }}>
+                                                        KEEP LATEST
+                                                    </span>
+                                                </div>
+                                            )}
+
+                                            {/* Delete */}
+                                            {toDelete.map(doc => (
+                                                <div key={doc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fef2f2', border: '1px solid #fecaca', padding: '8px 12px', borderRadius: '8px', marginTop: '6px' }}>
+                                                    <div>
+                                                        <span style={{ fontWeight: 700, color: '#991b1b', fontSize: '0.85rem' }}>{doc.document_no}</span>
+                                                        <span style={{ fontSize: '0.75rem', color: '#b91c1c', marginLeft: '8px' }}>
+                                                            Updated: {doc.updated_at ? new Date(doc.updated_at).toLocaleString() : 'Earlier'}
+                                                        </span>
+                                                    </div>
+                                                    <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: '6px' }}>
+                                                        WILL DELETE
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div style={{ padding: '16px 24px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                            <button
+                                type="button"
+                                onClick={() => setDuplicateCleanupModal({ isOpen: false, groups: {} })}
+                                disabled={cleaningDuplicates}
+                                style={{ padding: '10px 18px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', color: '#475569', fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer' }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleCleanDuplicatesApproval(duplicateCleanupModal.groups)}
+                                disabled={cleaningDuplicates}
+                                style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: 'linear-gradient(135deg, #ef4444, #dc2626)', color: '#fff', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 6px rgba(220, 38, 38, 0.3)' }}
+                            >
+                                {cleaningDuplicates ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                                Approve & Delete Previous Copies
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
