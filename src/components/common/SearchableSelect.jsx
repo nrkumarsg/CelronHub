@@ -13,13 +13,14 @@ const SearchableSelect = ({
     name = "searchable_select",
     renderOption = null,
     onAddNew = null,
-    addNewText = "Add New"
+    addNewText = "Add New",
+    fallbackLabel = ""
 }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [isOpen, setIsOpen] = useState(false);
     const dropdownRef = useRef(null);
 
-    const selectedOption = options.find(opt => opt.id === value);
+    const selectedOption = options.find(opt => opt.id === value || (value && opt.id && String(opt.id).toLowerCase() === String(value).toLowerCase()));
     const filteredOptions = options.filter(opt => {
         if (!searchTerm || !searchTerm.trim()) return true;
         const searchStr = (opt.name || opt.label || opt.vessel_name || opt.location_name || '').toLowerCase();
@@ -81,6 +82,10 @@ const SearchableSelect = ({
                     {selectedOption ? (
                         <span style={{ color: '#1e293b', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {selectedOption.name || selectedOption.label || selectedOption.vessel_name || selectedOption.location_name}
+                        </span>
+                    ) : fallbackLabel ? (
+                        <span style={{ color: '#1e293b', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {fallbackLabel}
                         </span>
                     ) : (
                         <span style={{ color: '#94a3b8' }}>{placeholder}</span>

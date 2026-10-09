@@ -873,8 +873,8 @@ export default function WorkflowV2Board() {
             valB = parseFloat(activeType === 'Job' ? b.delivery_verification?.po_value : b.total_amount) || 0;
             return sortDirection === 'desc' ? valB - valA : valA - valB;
         } else if (sortKey === 'customer') {
-            valA = a.delivery_verification?.po_description || a.partners?.name || '';
-            valB = b.delivery_verification?.po_description || b.partners?.name || '';
+            valA = a.partners?.name || a.delivery_verification?.po_description || '';
+            valB = b.partners?.name || b.delivery_verification?.po_description || '';
             return sortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
         }
     });
@@ -1896,7 +1896,7 @@ export default function WorkflowV2Board() {
                                             <td className="font-bold" style={{ color: '#1e3a8a' }}>{doc.assigned_job_no || 'TBD'}</td>
                                             <td>
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                                    <div style={{ fontWeight: 600, color: '#1e3a8a', fontSize: '0.9rem' }}>{doc.delivery_verification?.po_description || doc.partners?.name || 'Walk-in'}</div>
+                                                    <div style={{ fontWeight: 600, color: '#1e3a8a', fontSize: '0.9rem' }}>{doc.partners?.name || (doc.delivery_verification?.po_description && doc.delivery_verification.po_description.length < 80 ? doc.delivery_verification.po_description : null) || 'Walk-in'}</div>
                                                     <div style={{ fontSize: '0.8rem', color: 'var(--accent)', fontWeight: 600 }}>
                                                         {doc.contacts?.name || 'N/A'}
                                                     </div>

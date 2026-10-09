@@ -189,7 +189,8 @@ export default function JobsDashboard() {
             // Prioritize the master "Job" document for header info
             if (doc.document_type === 'Job') {
                 group.masterJob = doc;
-                group.customer = doc.delivery_verification?.po_description || doc.partners?.name || 'Walk-in';
+                const partnerName = doc.partners?.name || (doc.partner_id && partners.find(p => p.id === doc.partner_id)?.name) || (group.partnerId && partners.find(p => p.id === group.partnerId)?.name);
+                group.customer = partnerName || (doc.delivery_verification?.po_description && doc.delivery_verification.po_description.length < 80 ? doc.delivery_verification.po_description : null) || 'Walk-in';
                 group.partnerId = doc.partner_id || group.partnerId;
                 group.vesselLocation = doc.vessels?.vessel_name || doc.work_locations?.location_name || '-';
                 group.description = doc.subject || '-';
@@ -203,8 +204,11 @@ export default function JobsDashboard() {
                 group.jobDescription = doc.delivery_verification?.job_description;
             } else if (!group.masterJob) {
                 // Fallback details if no master Job document is found yet
-                if (doc.delivery_verification?.po_description || doc.partners?.name) {
-                    group.customer = doc.delivery_verification?.po_description || doc.partners.name;
+                const partnerName = doc.partners?.name || (doc.partner_id && partners.find(p => p.id === doc.partner_id)?.name) || (group.partnerId && partners.find(p => p.id === group.partnerId)?.name);
+                if (partnerName) {
+                    group.customer = partnerName;
+                } else if (doc.delivery_verification?.po_description && doc.delivery_verification.po_description.length < 80) {
+                    group.customer = doc.delivery_verification.po_description;
                 }
                 if (doc.partner_id) group.partnerId = doc.partner_id;
                 if (doc.vessels?.vessel_name) group.vesselLocation = doc.vessels.vessel_name;
@@ -755,8 +759,8 @@ export default function JobsDashboard() {
                 const valB = parseFloat(b.delivery_verification?.po_value || b.total_amount) || 0;
                 return tableSortDirection === 'desc' ? valB - valA : valA - valB;
             } else if (tableSortKey === 'customer') {
-                const valA = a.delivery_verification?.po_description || a.partners?.name || '';
-                const valB = b.delivery_verification?.po_description || b.partners?.name || '';
+                const valA = a.partners?.name || partners.find(p => p.id === a.partner_id)?.name || a.delivery_verification?.po_description || '';
+                const valB = b.partners?.name || partners.find(p => p.id === b.partner_id)?.name || b.delivery_verification?.po_description || '';
                 return tableSortDirection === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
             }
             return 0;
@@ -904,7 +908,7 @@ export default function JobsDashboard() {
         } else {
             const jobObj = {
                 jobNo: doc.assigned_job_no || doc.document_no,
-                customer: doc.delivery_verification?.po_description || doc.partners?.name || 'Walk-in',
+                customer: doc.partners?.name || partners.find(p => p.id === doc.partner_id)?.name || (doc.delivery_verification?.po_description && doc.delivery_verification.po_description.length < 80 ? doc.delivery_verification.po_description : null) || 'Walk-in',
                 vesselLocation: doc.vessels?.vessel_name || doc.work_locations?.location_name || '-',
                 driveFolderId: null,
                 masterJob: doc,
@@ -1686,7 +1690,9 @@ export default function JobsDashboard() {
                                         </td>
                                         <td style={{ padding: '6px 10px' }}>
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
-                                                <div style={{ fontWeight: 600, color: '#1e3a8a', fontSize: '0.82rem', lineHeight: '1.25' }}>{doc.delivery_verification?.po_description || doc.partners?.name || 'Walk-in'}</div>
+                                                <div style={{ fontWeight: 600, color: '#1e3a8a', fontSize: '0.82rem', lineHeight: '1.25' }}>
+                                                    {doc.partners?.name || (doc.partner_id && partners.find(p => p.id === doc.partner_id)?.name) || (doc.delivery_verification?.po_description && doc.delivery_verification.po_description.length < 80 ? doc.delivery_verification.po_description : null) || 'Walk-in'}
+                                                </div>
                                                 <div style={{ fontSize: '0.74rem', color: 'var(--accent)', fontWeight: 600, lineHeight: '1.2' }}>
                                                     {doc.contacts?.name || 'N/A'}
                                                 </div>

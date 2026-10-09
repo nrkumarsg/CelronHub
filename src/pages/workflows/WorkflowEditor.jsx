@@ -48,7 +48,7 @@ import {
     fetchSuiteDocuments
 } from '../../lib/workflowV2Service';
 
-import { getPartners, getContacts, getDocumentSettings, getJobMajorCategories, saveJobMajorCategory } from '../../lib/store';
+import { getPartners, getContacts, getContactsByPartner, getDocumentSettings, getJobMajorCategories, saveJobMajorCategory } from '../../lib/store';
 import { getCatalogItems, getAllCatalogItemsForExport } from '../../lib/catalogService';
 import { supabase } from '../../lib/supabase';
 import { getJobExpenses, saveJobExpense, deleteJobExpense } from '../../lib/jobExpenseService';
@@ -1029,32 +1029,82 @@ export default function WorkflowEditor() {
     };
 
     const fetchMasterData = async () => {
-        const [pRes, vRes, wlRes, cRes, sRes, allContacts, jmRes] = await Promise.all([
-            getPartners(profile),
-            supabase.from('vessels').select('*').order('vessel_name'),
-            supabase.from('work_locations').select('*').order('location_name'),
-            getAllCatalogItemsForExport(),
-            getDocumentSettings(profile?.company_id),
-            getContacts(profile),
-            getJobMajorCategories(profile?.company_id)
-        ]);
+        try {
+            const [pRes, vRes, wlRes, cRes, sRes, allContacts, jmRes] = await Promise.allSettled([
+                getPartners(profile).then(res => (res && res.length > 0 ? res : getPartners())),
+                supabase.from('vessels').select('*').order('vessel_name'),
+                supabase.from('work_locations').select('*').order('location_name'),
+                getAllCatalogItemsForExport(),
+                getDocumentSettings(profile?.company_id),
+                getContacts(profile).then(res => (res && res.length > 0 ? res : getContacts())),
+                getJobMajorCategories(profile?.company_id).catch(() => [])
+            ]);
 
-        if (pRes) setPartners(pRes);
-        if (vRes.data) setVessels(vRes.data);
-        if (wlRes.data) setWorkLocations(wlRes.data);
-        if (cRes?.data) setCatalog(cRes.data);
-        if (sRes) {
-            setSettings(sRes);
-            if (sRes.logo_url) toBase64(sRes.logo_url).then(setLogoBase64).catch(console.error);
-            if (sRes.signature_url) toBase64(sRes.signature_url).then(setSignatureBase64).catch(console.error);
-            if (sRes.paynow_url) toBase64(sRes.paynow_url).then(setPaynowBase64).catch(console.error);
+            const pData = pRes.status === 'fulfilled' ? pRes.value : [];
+            const vData = vRes.status === 'fulfilled' && vRes.value?.data ? vRes.value.data : [];
+            const wlData = wlRes.status === 'fulfilled' && wlRes.value?.data ? wlRes.value.data : [];
+            const cData = cRes.status === 'fulfilled' && cRes.value?.data ? cRes.value.data : [];
+            const sData = sRes.status === 'fulfilled' ? sRes.value : null;
+            const contactsData = allContacts.status === 'fulfilled' ? allContacts.value : [];
+            const jmData = jmRes.status === 'fulfilled' ? jmRes.value : [];
+
+            if (pData && pData.length > 0) {
+                setPartners(prev => {
+                    const map = new Map(prev.map(p => [p.id, p]));
+                    pData.forEach(p => map.set(p.id, p));
+                    return Array.from(map.values());
+                });
+            }
+            if (vData && vData.length > 0) setVessels(vData);
+            if (wlData && wlData.length > 0) setWorkLocations(wlData);
+            if (cData && cData.length > 0) setCatalog(cData);
+            if (sData) {
+                setSettings(sData);
+                if (sData.logo_url) toBase64(sData.logo_url).then(setLogoBase64).catch(console.error);
+                if (sData.signature_url) toBase64(sData.signature_url).then(setSignatureBase64).catch(console.error);
+                if (sData.paynow_url) toBase64(sData.paynow_url).then(setPaynowBase64).catch(console.error);
+            }
+            if (contactsData && contactsData.length > 0) {
+                setContacts(prev => {
+                    const map = new Map(prev.map(c => [c.id, c]));
+                    contactsData.forEach(c => map.set(c.id, c));
+                    return Array.from(map.values());
+                });
+            }
+            if (jmData) setJobMajorCategories(jmData);
+
+            try {
+                const { data: staffData } = await supabase.from('staff').select('*').order('full_name');
+                if (staffData) setStaff(staffData);
+            } catch (staffErr) {
+                console.warn('Could not load staff:', staffErr);
+            }
+        } catch (err) {
+            console.error('Error in fetchMasterData:', err);
         }
-        if (allContacts) setContacts(allContacts);
-        if (jmRes) setJobMajorCategories(jmRes);
-        
-        const { data: staffData } = await supabase.from('staff').select('*').order('full_name');
-        if (staffData) setStaff(staffData);
     };
+
+    // Re-trigger master data when auth profile hydrates
+    useEffect(() => {
+        if (profile?.company_id || profile?.role) {
+            fetchMasterData();
+        }
+    }, [profile?.company_id, profile?.role]);
+
+    // Automatically fetch contacts for the selected partner so dropdown is always populated
+    useEffect(() => {
+        if (formData.partner_id) {
+            getContactsByPartner(formData.partner_id).then(partnerContacts => {
+                if (partnerContacts && partnerContacts.length > 0) {
+                    setContacts(prev => {
+                        const map = new Map(prev.map(c => [c.id, c]));
+                        partnerContacts.forEach(c => map.set(c.id, c));
+                        return Array.from(map.values());
+                    });
+                }
+            }).catch(console.warn);
+        }
+    }, [formData.partner_id]);
 
     // Real-time synchronization for Partner / Contact additions & edits made in new window
     useEffect(() => {
@@ -2315,9 +2365,69 @@ export default function WorkflowEditor() {
                     data.delivery_verification?.zero_total || 
                     data.delivery_verification?.is_zero_total
                 );
+
+                // Normalize partners and contacts if returned as array
+                let docPartner = Array.isArray(data.partners) ? data.partners[0] : data.partners;
+                let docContact = Array.isArray(data.contacts) ? data.contacts[0] : data.contacts;
+
+                // If partner_id is present but docPartner isn't populated, fetch it directly
+                if (data.partner_id && (!docPartner || !docPartner.id)) {
+                    try {
+                        const { data: pFound } = await supabase.from('partners').select('*').eq('id', data.partner_id).maybeSingle();
+                        if (pFound) docPartner = pFound;
+                    } catch (e) {
+                        console.warn('Could not direct-fetch partner for doc:', e);
+                    }
+                }
+
+                // If contact_id is present but docContact isn't populated, fetch it directly
+                if (data.contact_id && (!docContact || !docContact.id)) {
+                    try {
+                        const { data: cFound } = await supabase.from('contacts').select('*').eq('id', data.contact_id).maybeSingle();
+                        if (cFound) docContact = cFound;
+                    } catch (e) {
+                        console.warn('Could not direct-fetch contact for doc:', e);
+                    }
+                }
+
+                // If partner_id is present, also fetch all contacts for this partner!
+                if (data.partner_id) {
+                    try {
+                        const pContacts = await getContactsByPartner(data.partner_id);
+                        if (pContacts && pContacts.length > 0) {
+                            setContacts(prev => {
+                                const map = new Map(prev.map(c => [c.id, c]));
+                                pContacts.forEach(c => map.set(c.id, c));
+                                if (docContact) map.set(docContact.id, docContact);
+                                return Array.from(map.values());
+                            });
+                        }
+                    } catch (e) {
+                        console.warn('Could not load contacts by partner for doc:', e);
+                    }
+                }
+
+                if (docPartner) {
+                    setPartners(prev => {
+                        const map = new Map(prev.map(p => [p.id, p]));
+                        map.set(docPartner.id, docPartner);
+                        return Array.from(map.values());
+                    });
+                }
+
+                if (docContact) {
+                    setContacts(prev => {
+                        const map = new Map(prev.map(c => [c.id, c]));
+                        map.set(docContact.id, docContact);
+                        return Array.from(map.values());
+                    });
+                }
+
                 setFormData(prev => ({ 
                     ...prev, 
                     ...data,
+                    partners: docPartner || prev.partners,
+                    contacts: docContact || prev.contacts,
                     zero_total: loadedZeroTotal,
                     is_zero_total: loadedZeroTotal,
                     delivery_verification: {
@@ -5934,6 +6044,15 @@ export default function WorkflowEditor() {
                                                 const filtered = partners.filter(p => formData.document_type !== 'Purchase Order' || (p.types && p.types.includes('Supplier')) || p.category === 'Supplier');
                                                 const unique = [];
                                                 const seen = new Set();
+
+                                                // Ensure loaded partner is included in options if partner_id is set
+                                                const docPartner = formData.partners && (Array.isArray(formData.partners) ? formData.partners[0] : formData.partners);
+                                                if (formData.partner_id && docPartner && (docPartner.id === formData.partner_id || !filtered.some(p => p.id === formData.partner_id))) {
+                                                    const partnerObj = { ...docPartner, id: formData.partner_id };
+                                                    unique.push(partnerObj);
+                                                    seen.add((partnerObj.name || '').trim().toLowerCase());
+                                                }
+
                                                 filtered.forEach(p => {
                                                     const key = (p.name || '').trim().toLowerCase();
                                                     if (key && !seen.has(key)) {
@@ -5944,6 +6063,7 @@ export default function WorkflowEditor() {
                                                 return unique;
                                             })()}
                                             value={formData.partner_id}
+                                            fallbackLabel={formData.partners?.name || (Array.isArray(formData.partners) ? formData.partners[0]?.name : '') || ''}
                                             onChange={handleHeaderChange}
                                             name="partner_id"
                                             placeholder={`Choose ${formData.document_type === 'Purchase Order' ? 'supplier' : 'partner'}...`}
@@ -5990,20 +6110,32 @@ export default function WorkflowEditor() {
                                             <option value="">Choose contact...</option>
                                             <option value="ADD_NEW" style={{ fontWeight: 700, color: 'var(--accent)' }}>+ Add New Contact</option>
                                             {(() => {
-                                                const selectedPartner = partners.find(p => p.id === formData.partner_id);
+                                                const docPartner = formData.partners && (Array.isArray(formData.partners) ? formData.partners[0] : formData.partners);
+                                                const selectedPartner = partners.find(p => p.id === formData.partner_id) || docPartner;
                                                 const selectedPartnerName = selectedPartner?.name;
-                                                return contacts
+
+                                                const docContact = formData.contacts && (Array.isArray(formData.contacts) ? formData.contacts[0] : formData.contacts);
+                                                const contactPool = [...contacts];
+                                                if (docContact && !contactPool.some(c => c.id === docContact.id)) {
+                                                    contactPool.unshift(docContact);
+                                                }
+
+                                                return contactPool
                                                     .filter(c => {
                                                         if (!formData.partner_id) return false;
-                                                        if (c.partnerId === formData.partner_id) return true;
+                                                        // Always keep the currently selected contact so it is never dropped from the select dropdown
+                                                        if (formData.contact_id && c.id === formData.contact_id) return true;
+                                                        const cPartnerId = c.partnerId || c.partner_id;
+                                                        if (cPartnerId === formData.partner_id) return true;
                                                         if (selectedPartnerName) {
-                                                            const contactPartner = partners.find(p => p.id === c.partnerId);
+                                                            const contactPartner = partners.find(p => p.id === cPartnerId);
                                                             return contactPartner && contactPartner.name && contactPartner.name.trim().toLowerCase() === selectedPartnerName.trim().toLowerCase();
                                                         }
                                                         return false;
                                                     })
                                                     .map(c => {
-                                                        const pName = partners.find(p => p.id === c.partnerId)?.name;
+                                                        const cPartnerId = c.partnerId || c.partner_id;
+                                                        const pName = partners.find(p => p.id === cPartnerId)?.name || (cPartnerId === formData.partner_id ? selectedPartnerName : '');
                                                         return <option key={c.id} value={c.id}>{c.name} {pName ? `(${pName})` : ''}</option>;
                                                     });
                                             })()}
