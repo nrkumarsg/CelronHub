@@ -1039,15 +1039,30 @@ tr:hover {
 }
 
 @media print {
-  body {
-    background: white !important;
-    color: black !important;
+  body, html, #root, .app-container, .main-layout, .main-content, .workflow-print-preview-root {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    display: block !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
   }
 
   .sidebar,
   .top-header,
+  .app-header,
+  .floating-control-hub,
   .hide-on-print,
   .no-print,
+  .print-hide,
   .btn,
   .search-bar,
   .pagination-container {
@@ -1058,12 +1073,16 @@ tr:hover {
     display: block !important;
     margin-left: 0 !important;
     width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible !important;
   }
 
   .main-content {
     margin: 0 !important;
     padding: 0 !important;
     width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible !important;
   }
 
   .glass-panel {

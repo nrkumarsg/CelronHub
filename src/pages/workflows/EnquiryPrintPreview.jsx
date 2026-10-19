@@ -135,11 +135,15 @@ export default function EnquiryPrintPreview() {
     const handleDownload = () => {
         const element = document.getElementById('print-paper-content');
         const opt = {
-            margin: 10,
+            margin: [8, 0, 12, 0],
             filename: `RFQ_${doc.document_no || 'Draft'}.pdf`,
             image: { type: 'jpeg', quality: 0.98 },
             html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, logging: false },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+            pagebreak: { 
+                mode: ['css', 'legacy'],
+                avoid: ['tr', '.print-row', '.page-break-avoid', 'thead']
+            }
         };
         html2pdf().set(opt).from(element).save();
     };
@@ -148,7 +152,7 @@ export default function EnquiryPrintPreview() {
     if (!doc) return <div className="text-center py-20 text-red-500">Enquiry not found</div>;
 
     return (
-        <div style={{ background: '#e2e8f0', minHeight: '100vh', padding: '20px', fontFamily: 'Inter, sans-serif' }}>
+        <div className="workflow-print-preview-root" style={{ fontFamily: 'Inter, sans-serif' }}>
             <div className="print-hide" style={{ maxWidth: '210mm', margin: '0 auto 20px', display: 'flex', justifyContent: 'space-between' }}>
                 <button
                     onClick={handleBack}
@@ -175,41 +179,90 @@ export default function EnquiryPrintPreview() {
             <div id="print-paper-content">
                 <WorkflowDocumentLayout 
                     doc={doc} 
-                    settings={settings}
-                    logoBase64={logoBase64}
-                    signatureBase64={signatureBase64}
-                    paynowBase64={paynowBase64}
+                    settings={settings} 
+                    logoBase64={logoBase64} 
+                    signatureBase64={signatureBase64} 
+                    paynowBase64={paynowBase64} 
                 />
             </div>
 
             <style dangerouslySetInnerHTML={{
                 __html: `
+                @media screen {
+                    .workflow-print-preview-root {
+                        background: #e2e8f0;
+                        min-height: 100vh;
+                        padding: 20px;
+                    }
+                }
                 @media print {
                     @page { 
                         margin: 0 !important; 
                         size: A4 portrait; 
                     }
-                    body, html { 
+                    *, *::before, *::after {
+                        box-sizing: border-box !important;
+                    }
+                    html, body, #root, .app-container, .main-layout, .main-content, .workflow-print-preview-root, #print-paper-content { 
                         margin: 0 !important; 
                         padding: 0 !important; 
                         width: 100% !important; 
-                        height: 100% !important; 
-                        background: #fff !important; 
+                        max-width: 100% !important;
+                        height: auto !important; 
+                        min-height: 0 !important; 
+                        background: #ffffff !important; 
+                        background-color: #ffffff !important;
+                        box-shadow: none !important;
+                        border: none !important;
+                        display: block !important;
+                        overflow: visible !important;
                         -webkit-print-color-adjust: exact !important;
                         print-color-adjust: exact !important;
                     }
-                    .print-hide { display: none !important; }
+                    .print-hide, .page-footer, .floating-control-hub, .sidebar, .top-header { display: none !important; }
                     .print-paper { 
                         box-shadow: none !important; 
-                        margin: 0 !important; 
-                        padding: 12mm 14mm 12mm 14mm !important;
+                        margin: 0 auto !important; 
+                        padding: 6mm 8mm 6mm 8mm !important;
                         width: 100% !important; 
                         max-width: 100% !important;
-                        min-height: 297mm !important;
+                        min-height: 0 !important;
+                        height: auto !important;
                         border: none !important;
                         border-radius: 0 !important;
                         background: #ffffff !important;
                         box-sizing: border-box !important;
+                        display: block !important;
+                    }
+                    .items-table-container {
+                        border-radius: 0 !important;
+                        page-break-inside: auto !important;
+                        break-inside: auto !important;
+                    }
+                    table {
+                        page-break-inside: auto !important;
+                        break-inside: auto !important;
+                        border-collapse: collapse !important;
+                    }
+                    tr, .print-row {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                        break-inside: avoid-page !important;
+                    }
+                    td, th {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    thead {
+                        display: table-header-group !important;
+                    }
+                    tfoot {
+                        display: table-footer-group !important;
+                    }
+                    .page-break-avoid {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                        break-inside: avoid-page !important;
                     }
                 }
                 `

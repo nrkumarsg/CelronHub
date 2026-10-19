@@ -121,7 +121,7 @@ export const generateSleekPDF = async (documentData, settings, action = 'downloa
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
         pagebreak: { 
-            mode: ['avoid-all', 'css', 'legacy'],
+            mode: ['css', 'legacy'],
             avoid: ['tr', '.print-row', '.page-break-avoid', 'thead']
         }
     };

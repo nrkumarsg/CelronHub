@@ -77,6 +77,7 @@ export default function FloatingControlHub({ jobId }) {
     return (
         <div
             ref={hubRef}
+            className="floating-control-hub hide-on-print"
             style={{
                 position: 'fixed',
                 left: `${position.x}px`,

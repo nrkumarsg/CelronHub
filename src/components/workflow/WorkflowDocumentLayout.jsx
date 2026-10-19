@@ -216,40 +216,68 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
 
     return (
         <div className="print-paper" style={{
-            background: '#fff', width: '100%', maxWidth: '210mm', minHeight: '255mm',
+            background: '#fff', width: '100%', maxWidth: '210mm',
             margin: '0 auto', position: 'relative', boxSizing: 'border-box',
-            padding: '24px 30px', display: 'block',
+            display: 'block',
             fontFamily: 'Inter, system-ui, sans-serif'
         }}>
             <style dangerouslySetInnerHTML={{ __html: `
-                table {
-                    border-collapse: collapse !important;
-                    page-break-inside: auto !important;
+                @media screen {
+                    .print-paper {
+                        min-height: 255mm;
+                        padding: 24px 30px;
+                        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+                    }
                 }
-                thead {
-                    display: table-header-group !important;
-                }
-                tfoot {
-                    display: table-footer-group !important;
-                }
-                tr, .print-row {
-                    page-break-inside: avoid !important;
-                    break-inside: avoid !important;
-                    break-inside: avoid-page !important;
-                }
-                td, th {
-                    page-break-inside: avoid !important;
-                    break-inside: avoid !important;
-                }
-                .page-break-avoid {
-                    page-break-inside: avoid !important;
-                    break-inside: avoid !important;
-                    break-inside: avoid-page !important;
+                @media print {
+                    .print-paper {
+                        background: #ffffff !important;
+                        margin: 0 auto !important;
+                        border: none !important;
+                        border-radius: 0 !important;
+                        box-shadow: none !important;
+                        min-height: 0 !important;
+                        height: auto !important;
+                        padding: 6mm 8mm 6mm 8mm !important;
+                        box-sizing: border-box !important;
+                        width: 100% !important;
+                        max-width: 100% !important;
+                    }
+                    .items-table-container {
+                        border-radius: 0 !important;
+                        page-break-inside: auto !important;
+                        break-inside: auto !important;
+                    }
+                    table {
+                        border-collapse: collapse !important;
+                        page-break-inside: auto !important;
+                        break-inside: auto !important;
+                    }
+                    thead {
+                        display: table-header-group !important;
+                    }
+                    tfoot {
+                        display: table-footer-group !important;
+                    }
+                    tr, .print-row {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                        break-inside: avoid-page !important;
+                    }
+                    td, th {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    .page-break-avoid {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                        break-inside: avoid-page !important;
+                    }
                 }
             `}} />
             {/* Company Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
-                <img src={logoBase64 || companyLogo} alt="Logo" style={{ maxHeight: '80px', maxWidth: '250px', objectFit: 'contain' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
+                <img src={logoBase64 || companyLogo} alt="Logo" style={{ maxHeight: '72px', maxWidth: '240px', objectFit: 'contain' }} />
                 <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '18px', fontWeight: 900 }}>
                         <span style={{ color: '#ef4444' }}>{companyName.split(' ')[0]}</span> <span style={{ color: '#000000' }}>{companyName.split(' ').slice(1).join(' ')}</span>
@@ -267,18 +295,18 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
             {/* Document Title Banner */}
             <div style={{ 
                 display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', 
-                borderBottom: '2px solid #1e3a8a', paddingBottom: '8px', marginBottom: '20px' 
+                borderBottom: '2px solid #1e3a8a', paddingBottom: '4px', marginBottom: '10px' 
             }}>
                 <div style={{ ...styles.h3, width: '30%' }}>{docNoLabel}: {doc.document_no}</div>
-                <h1 style={{ ...styles.h1, textAlign: 'center', width: '40%', margin: 0 }}>
+                <h1 style={{ ...styles.h1, textAlign: 'center', width: '40%', margin: 0, fontSize: '22px' }}>
                     {isJob ? 'JOB DETAIL' : (isORA ? 'ORDER ACKNOWLEDGMENT' : (isPayment ? 'OFFICIAL RECEIPT' : doc.document_type?.toUpperCase()))}
                 </h1>
                 <div style={{ ...styles.h3, width: '30%', textAlign: 'right' }}>{isPayment ? 'RECEIPT DATE' : 'DATE'}: {documentDateFormatted}</div>
             </div>
 
             {/* Recipient & Metadata Grid (Balanced) */}
-            <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', alignItems: 'stretch' }}>
-                <div style={{ flex: 1, border: styles.border, borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', gap: '16px', marginBottom: '10px', alignItems: 'stretch' }}>
+                <div style={{ flex: 1, border: styles.border, borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column' }}>
                     <div style={{ ...styles.h3, marginBottom: '4px' }}>{isPayment ? 'RECEIVED FROM:' : 'TO:'}</div>
                     {hasVessel ? (
                         <>
@@ -307,7 +335,7 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                             <div style={{ color: '#1e3a8a', fontSize: '9px', marginTop: '2px' }}>{doc.partners.weblink}</div>
                         )}
                     </div>
-                    <div style={{ borderTop: '1px solid #e2e8f0', marginTop: '8px', paddingTop: '8px' }}>
+                    <div style={{ borderTop: '1px solid #e2e8f0', marginTop: '6px', paddingTop: '6px' }}>
                         <div style={styles.bodyBold}>ATTN: {doc.contacts?.name || doc.partners?.contact_person || 'N/A'}</div>
                         {(doc.contacts?.handphone || doc.contacts?.email) && (
                             <div style={{ ...styles.small, marginTop: '2px' }}>
@@ -317,8 +345,8 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                         )}
                     </div>
                     {isPayment && (
-                        <div style={{ marginTop: '12px', padding: '8px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-                            <div style={{ ...styles.h4, color: '#1e3a8a', fontSize: '10px', marginBottom: '4px' }}>PAYMENT INFO</div>
+                        <div style={{ marginTop: '8px', padding: '6px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px' }}>
+                            <div style={{ ...styles.h4, color: '#1e3a8a', fontSize: '10px', marginBottom: '2px' }}>PAYMENT INFO</div>
                             <div style={{ ...styles.small, display: 'flex', justifyContent: 'space-between' }}>
                                 <span>MODE: <strong>{(doc.payment_method || 'N/A').toUpperCase()}</strong></span>
                                 <span>REF: <strong>{(doc.payment_ref || '-').toUpperCase()}</strong></span>
@@ -327,53 +355,53 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                     )}
                 </div>
 
-                <div style={{ flex: 1, border: styles.border, borderRadius: '10px', overflow: 'hidden' }}>
+                <div style={{ flex: 1, border: styles.border, borderRadius: '8px', overflow: 'hidden' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', height: '100%' }}>
                         <tbody>
                             {!isDeliveryDoc && (
                                 <tr style={{ borderBottom: styles.border }}>
-                                    <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, width: '40%', borderRight: styles.border }}>
+                                    <td style={{ padding: '3px 8px', background: '#f8fafc', ...styles.h3, width: '40%', borderRight: styles.border }}>
                                         {isCreditNote ? 'CREDIT DATE' : 'DUE/EXPIRY'}
                                     </td>
-                                    <td style={{ padding: '4px 10px', ...styles.bodyBold }}>
+                                    <td style={{ padding: '3px 8px', ...styles.bodyBold }}>
                                         {formatDate(getComputedDueDate(doc.issue_date, doc.payment_terms, doc.expiry_date))}
                                     </td>
                                 </tr>
                             )}
                             {isCreditNote && (
                                 <tr style={{ borderBottom: styles.border }}>
-                                    <td style={{ padding: '4px 10px', background: '#fff1f2', ...styles.h3, color: '#b91c1c', borderRight: styles.border }}>REF INVOICE NO</td>
-                                    <td style={{ padding: '4px 10px', ...styles.bodyBold, color: '#b91c1c' }}>
+                                    <td style={{ padding: '3px 8px', background: '#fff1f2', ...styles.h3, color: '#b91c1c', borderRight: styles.border }}>REF INVOICE NO</td>
+                                    <td style={{ padding: '3px 8px', ...styles.bodyBold, color: '#b91c1c' }}>
                                         {doc.original_invoice_no || doc.customer_ref || 'N/A'}
                                     </td>
                                 </tr>
                             )}
                             <tr style={{ borderBottom: styles.border }}>
-                                <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>{vesselLabel}</td>
-                                <td style={{ padding: '4px 10px', ...styles.bodyBold }}>{vesselValue}</td>
+                                <td style={{ padding: '3px 8px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>{vesselLabel}</td>
+                                <td style={{ padding: '3px 8px', ...styles.bodyBold }}>{vesselValue}</td>
                             </tr>
                             {doc.payment_terms && !isCreditNote && (
                                 <tr style={{ borderBottom: styles.border }}>
-                                    <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>PAYMENT TERMS</td>
-                                    <td style={{ padding: '4px 10px', ...styles.bodyBold, color: '#1e3a8a' }}>{doc.payment_terms.toUpperCase()}</td>
+                                    <td style={{ padding: '3px 8px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>PAYMENT TERMS</td>
+                                    <td style={{ padding: '3px 8px', ...styles.bodyBold, color: '#1e3a8a' }}>{doc.payment_terms.toUpperCase()}</td>
                                 </tr>
                             )}
                             {doc.customer_ref && !isCreditNote && (
                                 <tr style={{ borderBottom: styles.border }}>
-                                    <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>REFERENCE</td>
-                                    <td style={{ padding: '4px 10px', ...styles.bodyBold }}>{doc.customer_ref}</td>
+                                    <td style={{ padding: '3px 8px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>REFERENCE</td>
+                                    <td style={{ padding: '3px 8px', ...styles.bodyBold }}>{doc.customer_ref}</td>
                                 </tr>
                             )}
                             <tr style={{ borderBottom: styles.border }}>
-                                <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>JOB NO</td>
-                                <td style={{ padding: '4px 10px', ...styles.bodyBold, color: '#10b981' }}>{doc.assigned_job_no || 'N/A'}</td>
+                                <td style={{ padding: '3px 8px', background: '#f8fafc', ...styles.h3, borderRight: styles.border }}>JOB NO</td>
+                                <td style={{ padding: '3px 8px', ...styles.bodyBold, color: '#10b981' }}>{doc.assigned_job_no || 'N/A'}</td>
                             </tr>
                             <tr>
-                                <td style={{ padding: '4px 10px', background: '#f8fafc', ...styles.h3, borderRight: styles.border, verticalAlign: 'top' }}>SALESPERSON</td>
-                                <td style={{ padding: '4px 10px', ...styles.bodyBold }}>
+                                <td style={{ padding: '3px 8px', background: '#f8fafc', ...styles.h3, borderRight: styles.border, verticalAlign: 'top' }}>SALESPERSON</td>
+                                <td style={{ padding: '3px 8px', ...styles.bodyBold }}>
                                     {effectiveSalesperson.toUpperCase()}<br/>
                                     <span style={{ fontWeight: 600 }}>{effectivePhone}</span>
-                                    <span style={{ fontWeight: 400, fontSize: '9px', color: '#64748b', marginLeft: '10px' }}>| {effectiveEmail.toLowerCase()}</span>
+                                    <span style={{ fontWeight: 400, fontSize: '9px', color: '#64748b', marginLeft: '8px' }}>| {effectiveEmail.toLowerCase()}</span>
                                 </td>
                             </tr>
                         </tbody>
@@ -382,22 +410,22 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
             </div>
 
             {/* Subject Area */}
-            <div style={{ marginBottom: '20px', textAlign: 'center' }}>
-                {doc.subject && <div style={styles.h2}>SUBJECT: <span style={{ textDecoration: 'underline' }}>{doc.subject}</span></div>}
+            <div style={{ marginBottom: '8px', textAlign: 'center' }}>
+                {doc.subject && <div style={{ ...styles.h2, fontSize: '14px' }}>SUBJECT: <span style={{ textDecoration: 'underline' }}>{doc.subject}</span></div>}
             </div>
 
             {/* Items Table */}
-            <div className="items-table-container" style={{ border: styles.border, borderRadius: '8px', overflow: 'visible', marginBottom: '15px' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <div className="items-table-container" style={{ border: styles.border, borderRadius: '8px', overflow: 'visible', marginBottom: '8px', pageBreakInside: 'auto', breakInside: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', pageBreakInside: 'auto', breakInside: 'auto' }}>
                     <thead style={{ display: 'table-header-group' }}>
                         <tr style={{ ...styles.tableHeader, pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                            <th style={{ padding: '8px 10px', ...styles.h4, width: '6%', borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>S/N</th>
-                            <th style={{ padding: '8px 10px', ...styles.h4, width: '49%', borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>DESCRIPTION</th>
-                            <th style={{ padding: '8px 10px', ...styles.h4, width: '15%', borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>QTY</th>
+                            <th style={{ padding: '5px 8px', ...styles.h4, width: '6%', borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>S/N</th>
+                            <th style={{ padding: '5px 8px', ...styles.h4, width: '49%', borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>DESCRIPTION</th>
+                            <th style={{ padding: '5px 8px', ...styles.h4, width: '15%', borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>QTY</th>
                             {!isDeliveryDoc && !isEnquiry && (
                                 <>
-                                    <th style={{ padding: '8px 10px', ...styles.h4, width: '15%', borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>UNIT PRICE</th>
-                                    <th style={{ padding: '8px 10px', ...styles.h4, width: '15%', textAlign: 'right', pageBreakInside: 'avoid', breakInside: 'avoid' }}>AMOUNT ({doc.currency || 'SGD'})</th>
+                                    <th style={{ padding: '5px 8px', ...styles.h4, width: '15%', borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>UNIT PRICE</th>
+                                    <th style={{ padding: '5px 8px', ...styles.h4, width: '15%', textAlign: 'right', pageBreakInside: 'avoid', breakInside: 'avoid' }}>AMOUNT ({doc.currency || 'SGD'})</th>
                                 </>
                             )}
                         </tr>
@@ -407,30 +435,30 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                             if (item.is_section) {
                                 return (
                                     <tr key={idx} className="print-row" style={{ background: '#f8fafc', borderBottom: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                                        <td colSpan={(!isDeliveryDoc && !isEnquiry) ? 5 : 3} style={{ padding: '8px 10px', ...styles.bodyBold, color: '#1e3a8a', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{item.description?.toUpperCase()}</td>
+                                        <td colSpan={(!isDeliveryDoc && !isEnquiry) ? 5 : 3} style={{ padding: '5px 8px', ...styles.bodyBold, color: '#1e3a8a', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{item.description?.toUpperCase()}</td>
                                     </tr>
                                 );
                             }
                             if (item.is_note) {
                                 return (
                                     <tr key={idx} className="print-row" style={{ borderBottom: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                                        <td colSpan={(!isDeliveryDoc && !isEnquiry) ? 5 : 3} style={{ padding: '8px 10px', ...styles.small, fontStyle: 'italic', whiteSpace: 'pre-wrap', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{item.description}</td>
+                                        <td colSpan={(!isDeliveryDoc && !isEnquiry) ? 5 : 3} style={{ padding: '5px 8px', ...styles.small, fontStyle: 'italic', whiteSpace: 'pre-wrap', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{item.description}</td>
                                     </tr>
                                 );
                             }
                             itemCounter++;
                             return (
                                 <tr key={idx} className="print-row" style={{ borderBottom: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                                    <td style={{ padding: '8px 10px', ...styles.small, borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{itemCounter}</td>
-                                    <td style={{ padding: '8px 10px', ...styles.body, borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                                    <td style={{ padding: '5px 8px', ...styles.small, borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{itemCounter}</td>
+                                    <td style={{ padding: '5px 8px', ...styles.body, borderRight: styles.border, pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                                         <div style={{ fontWeight: 800, whiteSpace: 'pre-wrap' }}>{item.description}</div>
                                         {item.details && <div style={{ ...styles.small, marginTop: '2px', whiteSpace: 'pre-wrap' }}>{item.details}</div>}
                                     </td>
-                                    <td style={{ padding: '8px 10px', ...styles.bodyBold, borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{item.quantity} {item.uom || 'PC(S)'}</td>
+                                    <td style={{ padding: '5px 8px', ...styles.bodyBold, borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{item.quantity} {item.uom || 'PC(S)'}</td>
                                     {!isDeliveryDoc && !isEnquiry && (
                                         <>
-                                            <td style={{ padding: '8px 10px', ...styles.body, borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{(parseFloat(item.unit_price) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                                            <td style={{ padding: '8px 10px', ...styles.bodyBold, textAlign: 'right', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{(parseFloat(item.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                            <td style={{ padding: '5px 8px', ...styles.body, borderRight: styles.border, textAlign: 'center', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{(parseFloat(item.unit_price) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                            <td style={{ padding: '5px 8px', ...styles.bodyBold, textAlign: 'right', pageBreakInside: 'avoid', breakInside: 'avoid' }}>{(parseFloat(item.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                                         </>
                                     )}
                                 </tr>
@@ -441,36 +469,36 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
             </div>
 
             {/* Footer Section */}
-            <div className="page-break-avoid" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+            <div className="footer-section">
                 
                 {/* Totals Section - Separate Rounded Box */}
-                <div className="page-break-avoid" style={{ width: '100%', marginBottom: '15px', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                <div className="page-break-avoid" style={{ width: '100%', marginBottom: '8px', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                     {!isDeliveryDoc && !isEnquiry && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <div style={{ display: 'flex', border: styles.border, borderRadius: '10px', background: '#f8fafc', alignItems: 'stretch', width: '100%', overflow: 'hidden' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ display: 'flex', border: styles.border, borderRadius: '8px', background: '#f8fafc', alignItems: 'stretch', width: '100%', overflow: 'hidden' }}>
                                 {/* Tax/Subtotal info - Stacked Vertically */}
-                                <div style={{ padding: '6px 20px', display: 'flex', flexDirection: 'column', gap: '2px', justifyContent: 'center', width: '55%', borderRight: '1px solid #ffffff' }}>
+                                <div style={{ padding: '5px 16px', display: 'flex', flexDirection: 'column', gap: '2px', justifyContent: 'center', width: '55%', borderRight: '1px solid #ffffff' }}>
                                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                        <span style={{ ...styles.h4, minWidth: '120px' }}>UNTAXED AMOUNT:</span>
+                                        <span style={{ ...styles.h4, minWidth: '110px' }}>UNTAXED AMOUNT:</span>
                                         <span style={styles.bodyBold}>{isZeroTotal ? '0.00' : (doc.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                     </div>
                                     {!isZeroTotal && doc.discount_amount > 0 && (
                                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                            <span style={{ ...styles.h4, minWidth: '120px', color: '#ef4444' }}>
+                                            <span style={{ ...styles.h4, minWidth: '110px', color: '#ef4444' }}>
                                                 DISCOUNT {parseFloat(doc.discount_percent) > 0 ? `(${doc.discount_percent}%)` : ''}:
                                             </span>
                                             <span style={{ ...styles.bodyBold, color: '#ef4444' }}>- {(doc.discount_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                         </div>
                                     )}
                                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                        <span style={{ ...styles.h4, minWidth: '120px' }}>GST (9%):</span>
+                                        <span style={{ ...styles.h4, minWidth: '110px' }}>GST (9%):</span>
                                         <span style={styles.bodyBold}>{isZeroTotal ? '0.00' : (doc.tax_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                     </div>
                                 </div>
                                 
                                 {/* Final Total (Dark Theme) */}
-                                <div style={{ background: '#0f172a', color: '#ffffff', padding: '6px 25px', display: 'flex', alignItems: 'center', width: '45%', justifyContent: 'space-between' }}>
-                                    <span style={{ ...styles.h3, color: '#ffffff', margin: 0 }}>
+                                <div style={{ background: '#0f172a', color: '#ffffff', padding: '5px 20px', display: 'flex', alignItems: 'center', width: '45%', justifyContent: 'space-between' }}>
+                                    <span style={{ ...styles.h3, color: '#ffffff', margin: 0, fontSize: '12px' }}>
                                         {isCreditNote ? 'TOTAL CREDITED' : 'TOTAL'} ({doc.currency || 'SGD'})
                                     </span>
                                     <span style={{ fontSize: '15px', fontWeight: 900, color: '#ffffff' }}>{isZeroTotal ? '0.00' : (doc.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -480,15 +508,15 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                             {/* Amount in Words */}
                             {!isZeroTotal && !isQuotation && (
                                 <div style={{ 
-                                    padding: '4px 15px', 
+                                    padding: '2px 10px', 
                                     ...styles.small,
                                     color: '#000000',
                                     fontSize: '9px',
                                     textTransform: 'uppercase',
                                     display: 'flex',
-                                    gap: '8px'
+                                    gap: '6px'
                                 }}>
-                                    <span>AMOUNT IN WORDS:</span>
+                                    <span style={{ fontWeight: 700 }}>AMOUNT IN WORDS:</span>
                                     <span>{amountToWords(doc.total_amount, doc.currency)}</span>
                                 </div>
                             )}
@@ -498,78 +526,82 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
 
                 {/* Terms & Conditions (Prioritized for Quotations) */}
                 {isQuotation && doc.terms_conditions && doc.terms_conditions.trim() !== '' && doc.terms_conditions !== '<p><br></p>' && (
-                    <div style={{ 
+                    <div className="page-break-avoid" style={{ 
                         ...styles.small, 
                         background: '#f8fafc', 
-                        padding: '10px 15px', 
+                        padding: '8px 12px', 
                         border: styles.border, 
-                        borderRadius: '10px', 
-                        marginBottom: '15px', 
-                        width: '100%' 
+                        borderRadius: '8px', 
+                        marginBottom: '8px', 
+                        width: '100%',
+                        pageBreakInside: 'avoid',
+                        breakInside: 'avoid'
                     }}>
-                        <div style={{ ...styles.h4, marginBottom: '6px', borderBottom: '1px solid #e2e8f0' }}>TERMS & CONDITIONS:</div>
+                        <div style={{ ...styles.h4, marginBottom: '4px', borderBottom: '1px solid #e2e8f0' }}>TERMS & CONDITIONS:</div>
                         <div 
                             style={{ paddingLeft: '5px', wordBreak: 'break-word', overflowWrap: 'break-word' }} 
-                            dangerouslySetInnerHTML={{ __html: doc.terms_conditions.replace(/<ul>/g, '<ul style="padding-left: 20px; margin: 0;">') }} 
+                            dangerouslySetInnerHTML={{ __html: doc.terms_conditions.replace(/<ul>/g, '<ul style="padding-left: 18px; margin: 0;">') }} 
                         />
                     </div>
                 )}
 
                 {/* Notes & Comments - Special 50/50 layout for Delivery Order & Packing List */}
                 {isDeliveryDoc ? (
-                    <div style={{ 
+                    <div className="page-break-avoid" style={{ 
                         ...styles.small, 
                         background: '#f8fafc', 
-                        padding: '10px 15px', 
+                        padding: '8px 12px', 
                         border: styles.border, 
-                        borderRadius: '10px', 
-                        marginBottom: '15px', 
+                        borderRadius: '8px', 
+                        marginBottom: '8px', 
                         width: '100%',
-                        boxSizing: 'border-box'
+                        boxSizing: 'border-box',
+                        pageBreakInside: 'avoid',
+                        breakInside: 'avoid'
                     }}>
-                        <div style={{ display: 'flex', gap: '20px', alignItems: 'stretch' }}>
+                        <div style={{ display: 'flex', gap: '16px', alignItems: 'stretch' }}>
                             {/* Left 50%: Package Details */}
-                            <div style={{ flex: 1, borderRight: '1px solid #cbd5e1', paddingRight: '15px' }}>
-                                <div style={{ ...styles.h4, marginBottom: '6px', borderBottom: '1px solid #e2e8f0', paddingBottom: '2px' }}>
+                            <div style={{ flex: 1, borderRight: '1px solid #cbd5e1', paddingRight: '12px' }}>
+                                <div style={{ ...styles.h4, marginBottom: '4px', borderBottom: '1px solid #e2e8f0', paddingBottom: '2px' }}>
                                     PACKAGE DETAILS:
                                 </div>
                                 <div 
-                                    style={{ paddingLeft: '2px', wordBreak: 'break-word', overflowWrap: 'break-word', fontSize: '10.5px', lineHeight: '1.4' }} 
+                                    style={{ paddingLeft: '2px', wordBreak: 'break-word', overflowWrap: 'break-word', fontSize: '9.5px', lineHeight: '1.3' }} 
                                     dangerouslySetInnerHTML={{ 
                                         __html: notesToDisplay
                                             .replace(/<p><strong>Package Details<\/strong><\/p>/gi, '')
-                                            .replace(/<ul>/g, '<ul style="padding-left: 18px; margin: 0;">') 
+                                            .replace(/<ul>/g, '<ul style="padding-left: 14px; margin: 0;">') 
                                     }} 
                                 />
                             </div>
 
                             {/* Right 50%: Delivery & Dispatch Details */}
-                            <div style={{ flex: 1, paddingLeft: '5px', display: 'flex', flexDirection: 'column' }}>
-                                <div style={{ ...styles.h4, marginBottom: '6px', borderBottom: '1px solid #e2e8f0', paddingBottom: '2px', color: '#1e3a8a' }}>
+                            <div style={{ flex: 1, paddingLeft: '4px', display: 'flex', flexDirection: 'column' }}>
+                                <div style={{ ...styles.h4, marginBottom: '4px', borderBottom: '1px solid #e2e8f0', paddingBottom: '2px', color: '#1e3a8a' }}>
                                     DELIVERY DETAILS & INSTRUCTIONS:
                                 </div>
                                 
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '10.5px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '9.5px' }}>
                                     <div>
-                                        <span style={{ fontWeight: 800, color: '#475569', fontSize: '9px', textTransform: 'uppercase', display: 'block' }}>Delivery Address / Destination:</span>
-                                        <div style={{ fontWeight: 700, color: '#0f172a', whiteSpace: 'pre-wrap', marginTop: '1px', fontSize: '10.5px', lineHeight: '1.3' }}>
+                                        <span style={{ fontWeight: 800, color: '#475569', fontSize: '8.5px', textTransform: 'uppercase', display: 'block' }}>Delivery Address / Destination:</span>
+                                        <div style={{ fontWeight: 700, color: '#0f172a', whiteSpace: 'pre-wrap', marginTop: '1px', fontSize: '9.5px', lineHeight: '1.25' }}>
                                             {doc.delivery_verification?.delivery_address || (hasLocation ? locationName : (doc.partners?.address || 'To be advised upon dispatch'))}
                                         </div>
                                     </div>
 
                                     {(doc.delivery_verification?.delivery_pic || doc.contacts?.name || doc.contacts?.handphone) && (
-                                        <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: '4px' }}>
-                                            <span style={{ fontWeight: 800, color: '#475569', fontSize: '9px', textTransform: 'uppercase', display: 'block' }}>Person In Charge (PIC) / Contact:</span>
-                                            <div style={{ fontWeight: 700, color: '#0f172a', whiteSpace: 'pre-wrap', marginTop: '1px', fontSize: '10.5px', lineHeight: '1.3' }}>
+                                        <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: '3px' }}>
+                                            <span style={{ fontWeight: 800, color: '#475569', fontSize: '8.5px', textTransform: 'uppercase', display: 'block' }}>Person In Charge (PIC) / Contact:</span>
+                                            <div style={{ fontWeight: 700, color: '#0f172a', whiteSpace: 'pre-wrap', marginTop: '1px', fontSize: '9.5px', lineHeight: '1.25' }}>
                                                 {doc.delivery_verification?.delivery_pic || `${doc.contacts?.name || ''} ${doc.contacts?.handphone ? `(${doc.contacts.handphone})` : ''} ${doc.contacts?.email ? `| ${doc.contacts.email}` : ''}`.trim()}
                                             </div>
                                         </div>
                                     )}
 
                                     {hasVessel && (
-                                        <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: '4px' }}>
-                                            <span style={{ fontWeight: 800, color: '#475569', fontSize: '9px', textTransform: 'uppercase', display: 'block' }}>Vessel / Service Location:</span>
-                                            <div style={{ fontWeight: 700, color: '#1e3a8a', marginTop: '1px', fontSize: '10px' }}>
+                                        <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: '3px' }}>
+                                            <span style={{ fontWeight: 800, color: '#475569', fontSize: '8.5px', textTransform: 'uppercase', display: 'block' }}>Vessel / Service Location:</span>
+                                            <div style={{ fontWeight: 700, color: '#1e3a8a', marginTop: '1px', fontSize: '9.5px' }}>
                                                 {vesselValue}
                                             </div>
                                         </div>
@@ -581,19 +613,21 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                 ) : (
                     /* Notes & Comments - Hide for Quotations, Show for others if they have content */
                     notesToDisplay && !isQuotation && notesToDisplay.trim() !== '' && notesToDisplay !== '<p><br></p>' && (
-                        <div style={{ 
+                        <div className="page-break-avoid" style={{ 
                             ...styles.small, 
                             background: '#f8fafc', 
-                            padding: '10px 15px', 
+                            padding: '8px 12px', 
                             border: styles.border, 
-                            borderRadius: '10px', 
-                            marginBottom: '15px', 
-                            width: '100%' 
+                            borderRadius: '8px', 
+                            marginBottom: '8px', 
+                            width: '100%',
+                            pageBreakInside: 'avoid',
+                            breakInside: 'avoid'
                         }}>
-                            <div style={{ ...styles.h4, marginBottom: '6px', borderBottom: '1px solid #e2e8f0' }}>NOTES & COMMENTS:</div>
+                            <div style={{ ...styles.h4, marginBottom: '4px', borderBottom: '1px solid #e2e8f0' }}>NOTES & COMMENTS:</div>
                             <div 
-                                style={{ paddingLeft: '5px', wordBreak: 'break-word', overflowWrap: 'break-word' }} 
-                                dangerouslySetInnerHTML={{ __html: notesToDisplay.replace(/<ul>/g, '<ul style="padding-left: 20px; margin: 0;">') }} 
+                                style={{ paddingLeft: '5px', wordBreak: 'break-word', overflowWrap: 'break-word', fontSize: '9.5px', lineHeight: '1.3' }} 
+                                dangerouslySetInnerHTML={{ __html: notesToDisplay.replace(/<ul>/g, '<ul style="padding-left: 18px; margin: 0;">') }} 
                             />
                         </div>
                     )
@@ -601,40 +635,42 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
 
                 {/* Terms & Conditions (Standard position for other docs) - HIDE FOR FINANCIALS AND DELIVERY DOCS */}
                 {!isQuotation && !isFinancial && !isDeliveryDoc && doc.terms_conditions && doc.terms_conditions.trim() !== '' && doc.terms_conditions !== '<p><br></p>' && (
-                    <div style={{ 
+                    <div className="page-break-avoid" style={{ 
                         ...styles.small, 
                         background: '#f8fafc', 
-                        padding: '10px 15px', 
+                        padding: '8px 12px', 
                         border: styles.border, 
-                        borderRadius: '10px', 
-                        marginBottom: '20px', 
-                        width: '100%' 
+                        borderRadius: '8px', 
+                        marginBottom: '8px', 
+                        width: '100%',
+                        pageBreakInside: 'avoid',
+                        breakInside: 'avoid'
                     }}>
-                        <div style={{ ...styles.h4, marginBottom: '6px', borderBottom: '1px solid #e2e8f0' }}>TERMS & CONDITIONS:</div>
+                        <div style={{ ...styles.h4, marginBottom: '4px', borderBottom: '1px solid #e2e8f0' }}>TERMS & CONDITIONS:</div>
                         <div 
-                            style={{ paddingLeft: '5px', wordBreak: 'break-word', overflowWrap: 'break-word' }} 
-                            dangerouslySetInnerHTML={{ __html: doc.terms_conditions.replace(/<ul>/g, '<ul style="padding-left: 20px; margin: 0;">') }} 
+                            style={{ paddingLeft: '5px', wordBreak: 'break-word', overflowWrap: 'break-word', fontSize: '9.5px', lineHeight: '1.3' }} 
+                            dangerouslySetInnerHTML={{ __html: doc.terms_conditions.replace(/<ul>/g, '<ul style="padding-left: 18px; margin: 0;">') }} 
                         />
                     </div>
                 )}
 
                 {/* Spacer between content and signatures */}
-                <div style={{ height: '15px' }}></div>
+                <div style={{ height: '4px' }}></div>
 
                 {/* Signatures */}
-                <div className="page-break-avoid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '15px', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                <div className="page-break-avoid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '8px', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                     <div style={{ textAlign: 'center' }}>
                         <div style={{ 
                             border: styles.border, 
-                            borderRadius: '10px', 
-                            height: '100px', 
+                            borderRadius: '8px', 
+                            height: '84px', 
                             display: 'flex', 
                             flexDirection: 'column',
                             justifyContent: 'space-between',
                             overflow: 'hidden'
                         }}>
                             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                {showSignature && signatureBase64 && <img src={signatureBase64} alt="Signature" style={{ maxHeight: '60px' }} />}
+                                {showSignature && signatureBase64 && <img src={signatureBase64} alt="Signature" style={{ maxHeight: '52px' }} />}
                             </div>
                             <div style={{ background: '#f8fafc', borderTop: '1px solid #e2e8f0', padding: '2px 0' }}>
                                 <div style={{ ...styles.bodyBold, fontSize: '8px' }}>AUTHORIZED SIGNATURE</div>
@@ -647,22 +683,22 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                         {isFinancial ? (
                             <div style={{ 
                                 border: styles.border, 
-                                borderRadius: '10px', 
-                                height: '100px', 
+                                borderRadius: '8px', 
+                                height: '84px', 
                                 display: 'flex', 
                                 overflow: 'hidden',
                                 background: '#f8fafc'
                             }}>
-                                <div style={{ width: '80px', padding: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff', borderRight: '1px solid #e2e8f0' }}>
+                                <div style={{ width: '70px', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff', borderRight: '1px solid #e2e8f0' }}>
                                     {paynowBase64 ? (
                                         <img src={paynowBase64} alt="PayNow QR" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
                                     ) : (
                                         <div style={{ fontSize: '7px', color: '#94a3b8' }}>SCAN TO PAY</div>
                                     )}
                                 </div>
-                                <div style={{ flex: 1, padding: '10px', textAlign: 'left', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                                    <div style={{ ...styles.h4, fontSize: '8px', color: '#1e3a8a', marginBottom: '4px' }}>BANK ACCOUNT DETAILS</div>
-                                    <div style={{ ...styles.small, fontSize: '8px', whiteSpace: 'pre-wrap', color: '#1e293b', lineHeight: '1.2' }}>
+                                <div style={{ flex: 1, padding: '6px 8px', textAlign: 'left', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ ...styles.h4, fontSize: '8px', color: '#1e3a8a', marginBottom: '2px' }}>BANK ACCOUNT DETAILS</div>
+                                    <div style={{ ...styles.small, fontSize: '7.5px', whiteSpace: 'pre-wrap', color: '#1e293b', lineHeight: '1.2' }}>
                                         {cleanBankDetails || 'Please contact us for bank details.'}
                                     </div>
                                 </div>
@@ -670,15 +706,15 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
                         ) : !doc.document_type?.includes('QUOTATION') && (
                             <div style={{ 
                                 border: styles.border, 
-                                borderRadius: '10px', 
-                                height: '100px', 
+                                borderRadius: '8px', 
+                                height: '84px', 
                                 display: 'flex', 
                                 flexDirection: 'column',
                                 justifyContent: 'space-between',
                                 overflow: 'hidden'
                             }}>
-                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 10px' }}>
-                                    <div style={{ ...styles.small, fontSize: '7px', color: '#94a3b8', fontStyle: 'italic' }}>
+                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px' }}>
+                                    <div style={{ ...styles.small, fontSize: '7.5px', color: '#94a3b8', fontStyle: 'italic' }}>
                                         {isDeliveryDoc ? 'RECEIVED IN GOOD ORDER' : isORA ? 'WE ACKNOWLEDGE YOUR ORDER' : 'WE AGREE TO SUPPLY AS PER THIS QUOTE'}
                                     </div>
                                 </div>
@@ -693,21 +729,21 @@ const WorkflowDocumentLayout = ({ doc, settings, logoBase64, signatureBase64, pa
 
                 {/* Attachments / Second Page Provision */}
                 {doc.attachments && doc.attachments.length > 0 && (
-                    <div style={{ pageBreakBefore: 'always', paddingTop: '20px' }}>
-                        <div style={{ ...styles.h3, borderBottom: '2px solid #1e3a8a', paddingBottom: '8px', marginBottom: '20px' }}>ATTACHMENT - 1: TECHNICAL PHOTOS / DATASHEETS</div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                    <div style={{ pageBreakBefore: 'always', paddingTop: '16px' }}>
+                        <div style={{ ...styles.h3, borderBottom: '2px solid #1e3a8a', paddingBottom: '6px', marginBottom: '14px' }}>ATTACHMENT - 1: TECHNICAL PHOTOS / DATASHEETS</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                             {doc.attachments.map((img, idx) => (
-                                <div key={idx} style={{ border: styles.border, borderRadius: '12px', padding: '10px', background: '#fff' }}>
-                                    <img src={img} alt={`Attachment ${idx + 1}`} style={{ width: '100%', height: 'auto', borderRadius: '8px' }} />
-                                    <div style={{ ...styles.small, marginTop: '8px', textAlign: 'center', color: '#64748b' }}>Technical Image {idx + 1}</div>
+                                <div key={idx} style={{ border: styles.border, borderRadius: '8px', padding: '8px', background: '#fff' }}>
+                                    <img src={img} alt={`Attachment ${idx + 1}`} style={{ width: '100%', height: 'auto', borderRadius: '6px' }} />
+                                    <div style={{ ...styles.small, marginTop: '6px', textAlign: 'center', color: '#64748b' }}>Technical Image {idx + 1}</div>
                                 </div>
                             ))}
                         </div>
                     </div>
                 )}
 
-                <div style={{ textAlign: 'center', borderTop: '1px solid #1e3a8a', paddingTop: '10px', marginTop: '20px' }}>
-                    <div style={{ ...styles.h2, letterSpacing: '2px' }}>WWW.CELRON.NET</div>
+                <div className="page-break-avoid" style={{ textAlign: 'center', borderTop: '1px solid #1e3a8a', paddingTop: '4px', marginTop: '6px', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                    <div style={{ ...styles.h2, fontSize: '13px', letterSpacing: '2px' }}>WWW.CELRON.NET</div>
                 </div>
             </div>
         </div>

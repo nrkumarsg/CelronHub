@@ -196,7 +196,7 @@ export default function WorkflowPrintPreview() {
             html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, logging: false, backgroundColor: '#ffffff' },
             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
             pagebreak: { 
-                mode: ['avoid-all', 'css', 'legacy'],
+                mode: ['css', 'legacy'],
                 avoid: ['tr', '.print-row', '.page-break-avoid', 'thead'],
                 before: '.page-break-before-always'
             }
@@ -250,7 +250,7 @@ export default function WorkflowPrintPreview() {
     const secondarySavedStr = secondaryDoc ? formatLastSaved(secondaryDoc.updated_at || secondaryDoc.created_at) : null;
 
     return (
-        <div style={{ background: '#e2e8f0', minHeight: '100vh', padding: '20px', fontFamily: 'Inter, sans-serif' }}>
+        <div className="workflow-print-preview-root" style={{ fontFamily: 'Inter, sans-serif' }}>
             {/* Screen Notice for Clean Print Setup (Hidden on paper) */}
             <div className="print-hide" style={{ maxWidth: '210mm', margin: '0 auto 12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', color: '#1e40af', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                 <span>🖨️ <strong>Zero-Margin Clean Print:</strong> Page margins are preset to 0mm to remove browser headers (Time, Title) and footers (URL link). In Chrome print dialog, uncheck <em>"Headers and footers"</em> for a 100% clean official document.</span>
@@ -345,7 +345,7 @@ export default function WorkflowPrintPreview() {
                                 html2canvas: { scale: 2, useCORS: true, allowTaint: false, scrollX: 0, scrollY: 0, logging: false, backgroundColor: '#ffffff' },
                                 jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
                                 pagebreak: { 
-                                    mode: ['avoid-all', 'css', 'legacy'],
+                                    mode: ['css', 'legacy'],
                                     avoid: ['tr', '.print-row', '.page-break-avoid', 'thead'],
                                     before: '.page-break-before-always'
                                 }
@@ -416,7 +416,6 @@ export default function WorkflowPrintPreview() {
                         </div>
                     </>
                 )}
-                <div className="page-footer"></div>
             </div>
 
             {/* DO Shipping Label Modal */}
@@ -431,40 +430,74 @@ export default function WorkflowPrintPreview() {
 
             <style dangerouslySetInnerHTML={{
                 __html: `
+                @media screen {
+                    .workflow-print-preview-root {
+                        background: #e2e8f0;
+                        min-height: 100vh;
+                        padding: 20px;
+                    }
+                }
                 @media print {
                     @page { 
                         margin: 0 !important; 
                         size: A4 portrait; 
                     }
-                    body, html { 
+                    *, *::before, *::after {
+                        box-sizing: border-box !important;
+                    }
+                    html, body, #root, .app-container, .main-layout, .main-content, .workflow-print-preview-root, #print-paper-content { 
                         margin: 0 !important; 
                         padding: 0 !important; 
                         width: 100% !important; 
-                        height: 100% !important; 
-                        background: #fff !important; 
+                        max-width: 100% !important;
+                        height: auto !important; 
+                        min-height: 0 !important; 
+                        background: #ffffff !important; 
+                        background-color: #ffffff !important;
+                        box-shadow: none !important;
+                        border: none !important;
+                        display: block !important;
+                        overflow: visible !important;
                         -webkit-print-color-adjust: exact !important;
                         print-color-adjust: exact !important;
                     }
-                    .print-hide { display: none !important; }
+                    .print-hide, .page-footer, .floating-control-hub, .sidebar, .top-header { 
+                        display: none !important; 
+                    }
                     .page-break-before-always {
                         page-break-before: always !important;
                         break-before: page !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                        height: auto !important;
+                        min-height: 0 !important;
+                        background: #ffffff !important;
+                        display: block !important;
                     }
                     .print-paper { 
                         box-shadow: none !important; 
-                        margin: 0 !important; 
-                        padding: 12mm 14mm 12mm 14mm !important;
+                        margin: 0 auto !important; 
+                        padding: 6mm 8mm 6mm 8mm !important;
                         width: 100% !important; 
                         max-width: 100% !important;
-                        min-height: 297mm !important;
+                        min-height: 0 !important;
+                        height: auto !important;
                         border: none !important;
                         border-radius: 0 !important;
                         background: #ffffff !important;
                         box-sizing: border-box !important;
                         display: block !important;
+                        page-break-after: auto !important;
+                        break-after: auto !important;
+                    }
+                    .items-table-container {
+                        border-radius: 0 !important;
+                        page-break-inside: auto !important;
+                        break-inside: auto !important;
                     }
                     table {
                         page-break-inside: auto !important;
+                        break-inside: auto !important;
                         border-collapse: collapse !important;
                     }
                     tr, .print-row {
@@ -486,9 +519,6 @@ export default function WorkflowPrintPreview() {
                         page-break-inside: avoid !important;
                         break-inside: avoid !important;
                         break-inside: avoid-page !important;
-                    }
-                    .page-footer {
-                        display: none !important;
                     }
                 }
                 `
