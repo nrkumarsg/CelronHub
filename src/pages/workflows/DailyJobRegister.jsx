@@ -4,14 +4,16 @@ import {
     Clock, Plus, Search, RefreshCw, Calendar, DollarSign, 
     ExternalLink, Eye, Trash2, Tag, Ship, Building2, 
     FileText, CheckCircle2, AlertCircle, Sparkles, Filter, 
-    ChevronDown, ChevronUp, History, Kanban, LayoutDashboard, X
+    ChevronDown, ChevronUp, History, Kanban, LayoutDashboard, X,
+    Copy, Loader2
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
     getWorkflowDocuments, 
     deleteWorkflowDocument, 
-    getWorkflowDocumentsByJob 
+    getWorkflowDocumentsByJob,
+    duplicateWorkflowDocument
 } from '../../lib/workflowV2Service';
 import { openGoogleCalendarWeb, createGoogleCalendarApiEvent } from '../../lib/googleCalendarService';
 import { isTokenValid } from '../../lib/googleAuthService';
@@ -49,6 +51,8 @@ export default function DailyJobRegister() {
 
     // Inline Form State (NO MODAL BACKDROP)
     const [activeFormJob, setActiveFormJob] = useState(null); // null = closed, {} = new, { ...job } = edit
+    const [copiedJobNo, setCopiedJobNo] = useState(null);
+    const [duplicatingJobId, setDuplicatingJobId] = useState(null);
     const formRef = useRef(null);
 
     const loadJobs = async () => {
@@ -346,6 +350,53 @@ export default function DailyJobRegister() {
             toast.error('Failed to delete: ' + (err.message || 'Error'));
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleCopyJobNo = async (jobNo) => {
+        if (!jobNo) return;
+        try {
+            await navigator.clipboard.writeText(jobNo);
+            setCopiedJobNo(jobNo);
+            setTimeout(() => setCopiedJobNo(null), 2000);
+            toast.success(`Copied Job No: ${jobNo}`);
+        } catch (err) {
+            try {
+                const textArea = document.createElement('textarea');
+                textArea.value = jobNo;
+                textArea.style.position = 'fixed';
+                textArea.style.opacity = '0';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                setCopiedJobNo(jobNo);
+                setTimeout(() => setCopiedJobNo(null), 2000);
+                toast.success(`Copied Job No: ${jobNo}`);
+            } catch (fbErr) {
+                console.error('Copy failed:', fbErr);
+                toast.error('Failed to copy to clipboard');
+            }
+        }
+    };
+
+    const handleDuplicateJob = async (job) => {
+        if (!job?.id) return;
+        if (!window.confirm(`Duplicate Job "${job.jobNo}"?\n\nA brand new job will be created with cloned details.`)) return;
+
+        setDuplicatingJobId(job.id);
+        const toastId = toast.loading(`Duplicating Job ${job.jobNo}...`);
+        try {
+            const { data: newDoc, error } = await duplicateWorkflowDocument(job.id);
+            if (error) throw error;
+            toast.success(`Created duplicate Job ${newDoc.document_no || ''}!`, { id: toastId });
+            await loadJobs();
+        } catch (err) {
+            console.error('Failed to duplicate job:', err);
+            toast.error('Failed to duplicate job: ' + (err.message || 'Unknown error'), { id: toastId });
+        } finally {
+            setDuplicatingJobId(null);
         }
     };
 
@@ -883,15 +934,39 @@ export default function DailyJobRegister() {
                                             {/* Job No & Date (Enlarged Date Size) */}
                                             <td style={{ padding: '12px 16px' }}>
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                                    <span style={{
-                                                        fontFamily: 'monospace',
-                                                        fontWeight: 900,
-                                                        fontSize: '0.96rem',
-                                                        color: '#0f172a',
-                                                        letterSpacing: '0.02em'
-                                                    }}>
-                                                        {job.jobNo}
-                                                    </span>
+                                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                                        <span style={{
+                                                            fontFamily: 'monospace',
+                                                            fontWeight: 900,
+                                                            fontSize: '0.96rem',
+                                                            color: '#0f172a',
+                                                            letterSpacing: '0.02em'
+                                                        }}>
+                                                            {job.jobNo}
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleCopyJobNo(job.jobNo);
+                                                            }}
+                                                            title={`Copy Job No ${job.jobNo} to clipboard`}
+                                                            style={{
+                                                                background: copiedJobNo === job.jobNo ? '#dcfce7' : '#f1f5f9',
+                                                                border: copiedJobNo === job.jobNo ? '1px solid #86efac' : '1px solid #e2e8f0',
+                                                                color: copiedJobNo === job.jobNo ? '#15803d' : '#64748b',
+                                                                borderRadius: '5px',
+                                                                padding: '2px 5px',
+                                                                cursor: 'pointer',
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                transition: 'all 0.15s ease'
+                                                            }}
+                                                        >
+                                                            {copiedJobNo === job.jobNo ? <CheckCircle2 size={12} color="#15803d" /> : <Copy size={12} />}
+                                                        </button>
+                                                    </div>
                                                     <span style={{
                                                         fontSize: '0.86rem',
                                                         fontWeight: 800,
@@ -1061,6 +1136,27 @@ export default function DailyJobRegister() {
                                                         title="Open in Workflow Editor"
                                                     >
                                                         <Eye size={13} />
+                                                    </button>
+
+                                                    {/* Duplicate / Copy Job */}
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDuplicateJob(job);
+                                                        }}
+                                                        disabled={duplicatingJobId === job.id}
+                                                        className="btn btn-sm btn-secondary"
+                                                        style={{ 
+                                                            padding: '4px 8px', 
+                                                            color: '#4338ca', 
+                                                            borderColor: '#c7d2fe', 
+                                                            background: '#eef2ff',
+                                                            cursor: duplicatingJobId === job.id ? 'not-allowed' : 'pointer'
+                                                        }}
+                                                        title={`Duplicate / Copy Job ${job.jobNo}`}
+                                                    >
+                                                        {duplicatingJobId === job.id ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}
                                                     </button>
 
                                                     {/* Delete */}

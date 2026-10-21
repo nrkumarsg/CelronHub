@@ -740,9 +740,14 @@ export const saveWorkflowDocument = async (docData, lineItems) => {
         };
     }
 
+    // Ensure company_id has a reliable fallback
+    if (!sanitizedHeader.company_id) {
+        sanitizedHeader.company_id = headerData.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe';
+    }
+
     // Clean UUID fields (ensure null if empty/invalid)
     const uuidFields = [
-        'company_id', 'partner_id', 'contact_id', 'vessel_id', 'work_location_id',
+        'partner_id', 'contact_id', 'vessel_id', 'work_location_id',
         'customer_po_by_id', 'original_document_id', 'enquiry_id', 'job_id'
     ];
     uuidFields.forEach(f => {
@@ -779,7 +784,7 @@ export const saveWorkflowDocument = async (docData, lineItems) => {
                 .from('workflow_documents')
                 .select('document_no')
                 .eq('id', headerData.id)
-                .single();
+                .maybeSingle();
             if (existingDoc) {
                 oldJobNo = existingDoc.document_no;
             }
@@ -799,7 +804,7 @@ export const saveWorkflowDocument = async (docData, lineItems) => {
             .from('workflow_documents')
             .insert([sanitizedHeader])
             .select()
-            .single();
+            .maybeSingle();
 
         // If duplicate key error occurs, re-generate number and retry once
         if (insertRes.error && (insertRes.error.code === '23505' || insertRes.error.message?.includes('workflow_documents_document_no_key'))) {
@@ -819,19 +824,75 @@ export const saveWorkflowDocument = async (docData, lineItems) => {
                 .from('workflow_documents')
                 .insert([sanitizedHeader])
                 .select()
-                .single();
+                .maybeSingle();
         }
 
         if (insertRes.error) throw insertRes.error;
         savedDoc = insertRes.data;
+
+        if (!savedDoc) {
+            const { data: fetchedNew } = await supabase
+                .from('workflow_documents')
+                .select()
+                .eq('document_no', sanitizedHeader.document_no)
+                .maybeSingle();
+            savedDoc = fetchedNew;
+        }
     } else {
-        const { data, error } = await supabase
+        let { data, error } = await supabase
             .from('workflow_documents')
             .update(sanitizedHeader)
             .eq('id', headerData.id)
             .select()
-            .single();
+            .maybeSingle();
         if (error) throw error;
+
+        // If update returned 0 rows (e.g. record not yet in DB or company_id filter issue), attempt upsert / doc_no match
+        if (!data) {
+            console.warn(`No workflow_document row updated for id: ${headerData.id}. Attempting upsert...`);
+            const upsertRes = await supabase
+                .from('workflow_documents')
+                .upsert([sanitizedHeader], { onConflict: 'id' })
+                .select()
+                .maybeSingle();
+
+            if (upsertRes.error) {
+                // If onConflict 'id' failed, check if document_no exists
+                const { data: byDocNo } = await supabase
+                    .from('workflow_documents')
+                    .select()
+                    .eq('document_no', sanitizedHeader.document_no)
+                    .maybeSingle();
+
+                if (byDocNo) {
+                    const retryUpdate = await supabase
+                        .from('workflow_documents')
+                        .update(sanitizedHeader)
+                        .eq('id', byDocNo.id)
+                        .select()
+                        .maybeSingle();
+                    data = retryUpdate.data || byDocNo;
+                } else {
+                    throw upsertRes.error;
+                }
+            } else {
+                data = upsertRes.data;
+            }
+        }
+
+        if (!data) {
+            const { data: finalFetch } = await supabase
+                .from('workflow_documents')
+                .select()
+                .or(`id.eq.${headerData.id},document_no.eq.${sanitizedHeader.document_no}`)
+                .maybeSingle();
+            data = finalFetch;
+        }
+
+        if (!data) {
+            throw new Error(`Document save failed: Record ${headerData.id} (${sanitizedHeader.document_no}) could not be updated or persisted.`);
+        }
+
         savedDoc = data;
 
         if (oldJobNo && oldJobNo !== savedDoc.document_no) {

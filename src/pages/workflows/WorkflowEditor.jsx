@@ -234,7 +234,7 @@ export default function WorkflowEditor() {
     const linkedJobId = searchParams.get('job_id');
     const sourceId = searchParams.get('source_id');
 
-    const { profile } = useAuth();
+    const { profile, activeCompanyId } = useAuth();
     const canAdmin = ['admin', 'finance', 'superadmin'].includes(profile?.role);
     const isNew = id === 'new';
 
@@ -246,6 +246,8 @@ export default function WorkflowEditor() {
     const [doLabelModal, setDoLabelModal] = useState({ isOpen: false, doc: null });
     const [duplicateCleanupModal, setDuplicateCleanupModal] = useState({ isOpen: false, groups: {} });
     const [cleaningDuplicates, setCleaningDuplicates] = useState(false);
+    const [duplicatingSuiteDocId, setDuplicatingSuiteDocId] = useState(null);
+    const [copiedDocId, setCopiedDocId] = useState(null);
     const [jobMajorCategories, setJobMajorCategories] = useState([]);
     const getJobMajorOptions = () => {
         const dbNames = jobMajorCategories.map(c => c.name);
@@ -1349,7 +1351,7 @@ export default function WorkflowEditor() {
                             .from('customer_enquiries')
                             .select('id, enquiry_no, gdrive_folder_id')
                             .eq('id', formData.enquiry_id)
-                            .single();
+                            .maybeSingle();
                         
                         if (enqData && enqData.gdrive_folder_id) {
                             console.log(`[Consolidation] Moving Enquiry folder ${enqData.enquiry_no} (${enqData.gdrive_folder_id}) into Job folder (${folderId})...`);
@@ -2116,6 +2118,62 @@ export default function WorkflowEditor() {
         }
     };
 
+    const handleCopyText = async (text, idKey = null, label = 'Document Number') => {
+        if (!text) return;
+        try {
+            await navigator.clipboard.writeText(text);
+            if (idKey) {
+                setCopiedDocId(idKey);
+                setTimeout(() => setCopiedDocId(null), 2000);
+            }
+            toast.success(`Copied ${label}: ${text}`);
+        } catch (err) {
+            try {
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                textArea.style.position = 'fixed';
+                textArea.style.opacity = '0';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                if (idKey) {
+                    setCopiedDocId(idKey);
+                    setTimeout(() => setCopiedDocId(null), 2000);
+                }
+                toast.success(`Copied ${label}: ${text}`);
+            } catch (fbErr) {
+                console.error('Failed to copy to clipboard:', fbErr);
+                toast.error('Could not copy to clipboard');
+            }
+        }
+    };
+
+    const handleDuplicateSuiteDoc = async (doc) => {
+        if (!doc?.id) return;
+        if (!window.confirm(
+            `Duplicate "${doc.document_type} — ${doc.document_no}"?\n\nA new copy will be created within this Job Suite with a newly assigned number and all line items intact.`
+        )) return;
+
+        setDuplicatingSuiteDocId(doc.id);
+        const toastId = toast.loading(`Duplicating ${doc.document_type} ${doc.document_no}...`);
+        try {
+            const effectiveJobNo = formData.assigned_job_no || (formData.document_type === 'Job' ? formData.document_no : '');
+            const { data: newDoc, error } = await duplicateWorkflowDocument(doc.id, {
+                assigned_job_no: effectiveJobNo || doc.assigned_job_no || null
+            });
+            if (error) throw error;
+            toast.success(`Created duplicate: ${newDoc.document_type} (${newDoc.document_no})`, { id: toastId });
+            await fetchSuiteDocsPanel();
+        } catch (err) {
+            console.error('Duplicate suite doc failed:', err);
+            toast.error('Duplicate failed: ' + (err.message || 'Unknown error'), { id: toastId });
+        } finally {
+            setDuplicatingSuiteDocId(null);
+        }
+    };
+
     // Returns "Invoice #2", "DO #1" etc. for a given doc within suiteDocs
     const getSuiteDocSequenceLabel = (doc, allDocs) => {
         const sameType = allDocs.filter(d => d.document_type === doc.document_type);
@@ -2609,7 +2667,7 @@ export default function WorkflowEditor() {
                         .from('customer_enquiries')
                         .select('id, enquiry_no, customer_name, subject, status, issue_date')
                         .eq('id', data.enquiry_id)
-                        .single();
+                        .maybeSingle();
                     if (enq) setLinkedEnquiry(enq);
                 }
             } else {
@@ -2674,7 +2732,7 @@ export default function WorkflowEditor() {
             }
 
             if (sourceEnquiryId) {
-                const { data: enq } = await supabase.from('customer_enquiries').select('*').eq('id', sourceEnquiryId).single();
+                const { data: enq } = await supabase.from('customer_enquiries').select('*').eq('id', sourceEnquiryId).maybeSingle();
                 if (enq) {
                     const effectiveJobNo = docTypeUpper === 'JOB' ? null : (jobNoParam || null);
                     const newNo = await generateDocNumber(profile.company_id, targetDocType, false, null, effectiveJobNo);
@@ -3496,10 +3554,12 @@ export default function WorkflowEditor() {
 
             const computedExpiry = calculateDueDateFromTerms(formData.issue_date, formData.payment_terms) || formData.expiry_date || formData.issue_date;
 
+            const effectiveCompanyId = profile?.company_id || activeCompanyId || formData.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe';
+
             const dataToSave = { 
                 ...formData, 
                 expiry_date: computedExpiry,
-                company_id: profile.company_id,
+                company_id: effectiveCompanyId,
                 zero_total: isZeroTotal,
                 is_zero_total: isZeroTotal,
                 delivery_verification: {
@@ -3603,7 +3663,7 @@ export default function WorkflowEditor() {
                             .from('customer_enquiries')
                             .select('id, enquiry_no, customer_name, gdrive_folder_id, partners:customer_id(name)')
                             .eq('id', data.enquiry_id)
-                            .single();
+                            .maybeSingle();
 
                         if (!enqData) {
                             console.warn('[EnquiryPDF] Enquiry not found for ID:', data.enquiry_id);
@@ -3707,6 +3767,37 @@ export default function WorkflowEditor() {
         } catch (err) {
             console.error(err);
             alert('Failed to create revision');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDuplicateCurrentDoc = async () => {
+        if (isNew) {
+            toast.error('Please save this document first before duplicating.');
+            return;
+        }
+        const docName = formData.document_type || 'Document';
+        const docNo = formData.document_no || '';
+        if (!window.confirm(
+            `Duplicate "${docName} ${docNo}"?\n\nA new draft copy will be created with all line items, rates, and customer details cloned under a new document number.`
+        )) return;
+
+        setSaving(true);
+        const toastId = toast.loading(`Duplicating ${docNo || docName}...`);
+        try {
+            const activeId = id || currentIdRef.current;
+            const targetJobNo = formData.assigned_job_no || (formData.is_job ? null : (formData.document_no || null));
+            const { data: newDoc, error } = await duplicateWorkflowDocument(activeId, {
+                assigned_job_no: targetJobNo
+            });
+            if (error) throw error;
+            toast.success(`Successfully duplicated! New document ${newDoc.document_no} created.`, { id: toastId });
+            const urlSlug = (newDoc.document_type || type).toLowerCase().replace(/\s+/g, '-');
+            navigate(`/workflows/editor/${urlSlug}/${newDoc.id}`);
+        } catch (err) {
+            console.error('Failed to duplicate document:', err);
+            toast.error('Failed to duplicate document: ' + (err.message || 'Unknown error'), { id: toastId });
         } finally {
             setSaving(false);
         }
@@ -4940,6 +5031,34 @@ export default function WorkflowEditor() {
                                         title="Click to edit document number"
                                     />
                                     <Pencil size={12} style={{ color: '#94a3b8', pointerEvents: 'none', opacity: 0.5 }} />
+                                    {formData.document_no && (
+                                        <button
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleCopyText(formData.document_no, 'current-doc-header', `${formData.document_type || 'Doc'} No`);
+                                            }}
+                                            title={`Copy ${formData.document_no} to clipboard`}
+                                            style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '3px',
+                                                marginLeft: '6px',
+                                                padding: '2px 7px',
+                                                borderRadius: '5px',
+                                                border: copiedDocId === 'current-doc-header' ? '1px solid #86efac' : '1px solid #e2e8f0',
+                                                background: copiedDocId === 'current-doc-header' ? '#dcfce7' : '#f8fafc',
+                                                color: copiedDocId === 'current-doc-header' ? '#15803d' : '#64748b',
+                                                fontSize: '0.72rem',
+                                                fontWeight: 600,
+                                                cursor: 'pointer',
+                                                transition: 'all 0.15s ease'
+                                            }}
+                                        >
+                                            {copiedDocId === 'current-doc-header' ? <CheckCircle2 size={12} color="#15803d" /> : <Copy size={12} />}
+                                            <span>{copiedDocId === 'current-doc-header' ? 'Copied' : 'Copy'}</span>
+                                        </button>
+                                    )}
                                 </div>
                                 {(formData.is_job || formData.assigned_job_no) && (
                                     <button
@@ -5428,6 +5547,33 @@ export default function WorkflowEditor() {
                                 title="Create New Revision (e.g. Rev A)"
                             >
                                 <FileText size={15} color="#64748b" /> <span>Revision</span>
+                            </button>
+                        )}
+
+                        {/* Duplicate / Copy Current Document */}
+                        {!isNew && (
+                            <button 
+                                type="button"
+                                className="btn-vibrant-secondary" 
+                                onClick={handleDuplicateCurrentDoc} 
+                                disabled={saving}
+                                style={{ 
+                                    border: '1px solid #c7d2fe', 
+                                    background: '#eef2ff', 
+                                    color: '#4338ca',
+                                    padding: '6px 11px', 
+                                    fontSize: '0.8rem', 
+                                    fontWeight: 600,
+                                    borderRadius: '7px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px',
+                                    cursor: saving ? 'not-allowed' : 'pointer',
+                                    transition: 'all 0.15s ease'
+                                }}
+                                title="Duplicate this Document (Creates a fresh copy with all items and details)"
+                            >
+                                <Copy size={14} color="#4338ca" /> <span>Duplicate</span>
                             </button>
                         )}
 
@@ -7869,7 +8015,33 @@ export default function WorkflowEditor() {
                                                     <tr style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
                                                         <td style={{ padding: '12px 16px' }}><span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700, background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', whiteSpace: 'nowrap' }}><span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#b45309', flexShrink: 0 }} />Customer Enquiry</span></td>
                                                         <td style={{ padding: '12px 16px', fontWeight: 800, color: '#b45309', fontSize: '0.9rem' }}>#0</td>
-                                                        <td style={{ padding: '12px 16px' }}><span style={{ fontWeight: 700, color: '#1e293b' }}>{linkedEnquiry.enquiry_no}</span></td>
+                                                        <td style={{ padding: '12px 16px' }}>
+                                                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                                                <span style={{ fontWeight: 700, color: '#1e293b' }}>{linkedEnquiry.enquiry_no}</span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleCopyText(linkedEnquiry.enquiry_no, 'enquiry-' + linkedEnquiry.id, 'Enquiry No');
+                                                                    }}
+                                                                    title={`Copy ${linkedEnquiry.enquiry_no} to clipboard`}
+                                                                    style={{
+                                                                        background: copiedDocId === 'enquiry-' + linkedEnquiry.id ? '#dcfce7' : '#f1f5f9',
+                                                                        border: copiedDocId === 'enquiry-' + linkedEnquiry.id ? '1px solid #86efac' : '1px solid #e2e8f0',
+                                                                        color: copiedDocId === 'enquiry-' + linkedEnquiry.id ? '#15803d' : '#64748b',
+                                                                        borderRadius: '5px',
+                                                                        padding: '2px 5px',
+                                                                        cursor: 'pointer',
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'center',
+                                                                        transition: 'all 0.15s ease'
+                                                                    }}
+                                                                >
+                                                                    {copiedDocId === 'enquiry-' + linkedEnquiry.id ? <CheckCircle2 size={12} color="#15803d" /> : <Copy size={12} />}
+                                                                </button>
+                                                            </div>
+                                                        </td>
                                                         <td style={{ padding: '12px 16px', color: '#64748b' }}>{linkedEnquiry.issue_date ? new Date(linkedEnquiry.issue_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
                                                         <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, color: '#94a3b8' }}>—</td>
                                                         <td style={{ padding: '12px 16px', textAlign: 'center' }}><span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '0.72rem', fontWeight: 700, background: '#fef3c7', color: '#b45309' }}>{linkedEnquiry.status || 'Active'}</span></td>
@@ -7911,10 +8083,34 @@ export default function WorkflowEditor() {
                                                                 <td style={{ padding: '12px 16px' }}><span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700, background: clr.bg, color: clr.color, border: `1px solid ${clr.border}`, whiteSpace: 'nowrap' }}><span style={{ width: '7px', height: '7px', borderRadius: '50%', background: clr.color, flexShrink: 0 }} />{doc.document_type}</span></td>
                                                                 <td style={{ padding: '12px 16px', fontWeight: 800, color: clr.color, fontSize: '0.9rem' }}>{seqLabel}</td>
                                                                 <td style={{ padding: '12px 16px' }}>
-                                                                    <span style={{ fontWeight: 700, color: '#1e293b' }}>{doc.document_no}</span>
-                                                                    {isCurrent && <span style={{ marginLeft: '8px', background: '#dbeafe', color: '#1d4ed8', borderRadius: '6px', padding: '1px 7px', fontSize: '0.7rem', fontWeight: 700 }}>Current</span>}
-                                                                    {isDup && isNewestInGroup && <span style={{ marginLeft: '6px', background: '#dcfce7', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', fontWeight: 700 }} title="This is the latest updated version of this document">Latest</span>}
-                                                                    {isDup && !isNewestInGroup && <span style={{ marginLeft: '6px', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', fontWeight: 700 }} title="Older duplicate version. Can be safely deleted to keep only latest">Older Duplicate</span>}
+                                                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                                                        <span style={{ fontWeight: 700, color: '#1e293b' }}>{doc.document_no}</span>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                handleCopyText(doc.document_no, doc.id, `${doc.document_type} No`);
+                                                                            }}
+                                                                            title={`Copy ${doc.document_no} to clipboard`}
+                                                                            style={{
+                                                                                background: copiedDocId === doc.id ? '#dcfce7' : '#f1f5f9',
+                                                                                border: copiedDocId === doc.id ? '1px solid #86efac' : '1px solid #e2e8f0',
+                                                                                color: copiedDocId === doc.id ? '#15803d' : '#64748b',
+                                                                                borderRadius: '5px',
+                                                                                padding: '2px 5px',
+                                                                                cursor: 'pointer',
+                                                                                display: 'inline-flex',
+                                                                                alignItems: 'center',
+                                                                                justifyContent: 'center',
+                                                                                transition: 'all 0.15s ease'
+                                                                            }}
+                                                                        >
+                                                                            {copiedDocId === doc.id ? <CheckCircle2 size={12} color="#15803d" /> : <Copy size={12} />}
+                                                                        </button>
+                                                                        {isCurrent && <span style={{ marginLeft: '4px', background: '#dbeafe', color: '#1d4ed8', borderRadius: '6px', padding: '1px 7px', fontSize: '0.7rem', fontWeight: 700 }}>Current</span>}
+                                                                        {isDup && isNewestInGroup && <span style={{ marginLeft: '4px', background: '#dcfce7', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', fontWeight: 700 }} title="This is the latest updated version of this document">Latest</span>}
+                                                                        {isDup && !isNewestInGroup && <span style={{ marginLeft: '4px', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: '4px', padding: '1px 6px', fontSize: '0.68rem', fontWeight: 700 }} title="Older duplicate version. Can be safely deleted to keep only latest">Older Duplicate</span>}
+                                                                    </div>
                                                                 </td>
                                                                 <td style={{ padding: '12px 16px', color: '#64748b' }}>{doc.issue_date ? new Date(doc.issue_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
                                                                 <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, color: '#1e293b' }}>{doc.total_amount != null && doc.total_amount > 0 ? `${doc.currency || 'SGD'} ${Number(doc.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : <span style={{ color: '#94a3b8' }}>—</span>}</td>
@@ -7969,6 +8165,41 @@ export default function WorkflowEditor() {
                                                                             }}
                                                                         >
                                                                             <Printer size={13} /> PDF
+                                                                        </button>
+                                                                        <button 
+                                                                            type="button"
+                                                                            onClick={() => handleDuplicateSuiteDoc(doc)}
+                                                                            disabled={duplicatingSuiteDocId === doc.id}
+                                                                            title={`Duplicate / Copy ${doc.document_type} ${doc.document_no}`}
+                                                                            style={{ 
+                                                                                display: 'inline-flex', 
+                                                                                alignItems: 'center', 
+                                                                                gap: '4px', 
+                                                                                padding: '5px 10px', 
+                                                                                borderRadius: '7px', 
+                                                                                border: '1px solid #c7d2fe', 
+                                                                                background: '#eef2ff', 
+                                                                                color: '#4338ca', 
+                                                                                fontSize: '0.78rem', 
+                                                                                fontWeight: 700, 
+                                                                                cursor: duplicatingSuiteDocId === doc.id ? 'not-allowed' : 'pointer',
+                                                                                boxShadow: '0 1px 2px rgba(67, 56, 202, 0.05)',
+                                                                                transition: 'all 0.15s ease'
+                                                                            }}
+                                                                            onMouseOver={e => { 
+                                                                                if (duplicatingSuiteDocId !== doc.id) {
+                                                                                    e.currentTarget.style.background = '#e0e7ff'; 
+                                                                                    e.currentTarget.style.borderColor = '#a5b4fc'; 
+                                                                                }
+                                                                            }}
+                                                                            onMouseOut={e => { 
+                                                                                if (duplicatingSuiteDocId !== doc.id) {
+                                                                                    e.currentTarget.style.background = '#eef2ff'; 
+                                                                                    e.currentTarget.style.borderColor = '#c7d2fe'; 
+                                                                                }
+                                                                            }}
+                                                                        >
+                                                                            {duplicatingSuiteDocId === doc.id ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />} Copy
                                                                         </button>
                                                                         {!isCurrent ? (<button onClick={() => navigate(`/workflows/editor/${urlSlug}/${doc.id}`)} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '7px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }} onMouseOver={e => { e.currentTarget.style.background = clr.bg; e.currentTarget.style.color = clr.color; e.currentTarget.style.borderColor = clr.border; }} onMouseOut={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.color = '#475569'; e.currentTarget.style.borderColor = '#e2e8f0'; }}><Eye size={13} /> Open</button>) : (<span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', padding: '5px 8px' }}>Viewing</span>)}
                                                                         <button 
