@@ -409,13 +409,13 @@ Prepared with Claude & CelronHub GST Reporting Engine.`;
                     supplier_id: supplier?.id || null,
                     supplier_name: row.Supplier || row.Partner || null,
                     invoice_no: row['Invoice No'] || row['Doc No'] || '',
-                    job_no: row['Job No'] || null,
-                    description: row.Description || row.Type || 'Imported Expense',
+                    // Only columns proven by BillsPortal's insert (job_no / category are not in the live table)
+                    description: [row.Description || row.Type || 'Imported Expense', row['Job No'] ? `Job ${row['Job No']}` : '']
+                        .filter(Boolean).join(' - '),
                     amount: num(row.Subtotal || row.Amount),
                     gst_rate: 9,
                     gst_amount: num(row.GST || row.Tax),
-                    grand_total: num(row.Total || row.Amount),
-                    category: 'Imported'
+                    grand_total: num(row.Total || row.Amount)
                 };
             });
 
@@ -428,7 +428,7 @@ Prepared with Claude & CelronHub GST Reporting Engine.`;
             fetchGstData();
         } catch (err) {
             console.error('Import error:', err);
-            alert('Failed to import CSV. Check console for details.');
+            alert(`Failed to import CSV: ${err?.message || err}${err?.details ? ' – ' + err.details : ''}`);
         } finally {
             setLoading(false);
         }
