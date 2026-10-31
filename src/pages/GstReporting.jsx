@@ -13,6 +13,7 @@ import { getPartners, uploadFile, getDocumentSettings } from '../lib/store';
 import { Modal, QuickExpenseAdd } from '../components/workflow/QuickAddForms';
 import { saveJobExpense } from '../lib/jobExpenseService';
 import GstF5Form from '../components/workflow/GstF5Form';
+import Papa from 'papaparse';
 
 export default function GstReporting() {
     const { profile } = useAuth();
@@ -363,33 +364,21 @@ Prepared with Claude & CelronHub GST Reporting Engine.`;
         const file = e.target.files[0];
         if (!file) return;
 
-        const reader = new FileReader();
-        reader.onload = (evt) => {
-            const content = evt.target.result;
-            const lines = content.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
-            // Quote-aware split so values like "RME-5597, 5642" stay in one column
-            const splitCsv = (line) => {
-                const out = []; let cur = ''; let q = false;
-                for (let i = 0; i < line.length; i++) {
-                    const ch = line[i];
-                    if (ch === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
-                    else if (ch === ',' && !q) { out.push(cur); cur = ''; }
-                    else cur += ch;
+        Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            complete: (results) => {
+                if (results.data && results.data.length > 0) {
+                    setImportData(results.data);
+                } else {
+                    alert('No records found in CSV file.');
                 }
-                out.push(cur);
-                return out.map(v => v.trim());
-            };
-            const headers = splitCsv(lines[0]);
-            
-            const parsed = lines.slice(1).map(line => {
-                const values = splitCsv(line);
-                const obj = {};
-                headers.forEach((h, i) => obj[h] = values[i]);
-                return obj;
-            });
-            setImportData(parsed);
-        };
-        reader.readAsText(file);
+            },
+            error: (err) => {
+                console.error('CSV parse error:', err);
+                alert('Failed to parse CSV file: ' + err.message);
+            }
+        });
     };
 
     const processImport = async () => {
@@ -397,35 +386,62 @@ Prepared with Claude & CelronHub GST Reporting Engine.`;
         setLoading(true);
         try {
             const toInsert = importData.map(row => {
-                // Heuristic mapping for job_expenses
-                // Expected headers: Date, Supplier, Invoice No, Job No, Subtotal, GST, Total
-                const supplier = partners.find(p => p.name.toLowerCase() === (row.Supplier || row.Partner || '').toLowerCase());
+                const rawSupplier = (row['Supplier'] || row['Supplier Name'] || row['Partner'] || row['supplier'] || 'Unknown').trim();
+                const matchedPartner = partners?.find(p => 
+                    p.name?.toLowerCase().trim() === rawSupplier.toLowerCase() ||
+                    (p.registration_no && rawSupplier.toLowerCase().includes(p.registration_no.toLowerCase()))
+                );
+
+                const cleanNum = (val) => {
+                    if (!val) return 0;
+                    const cleaned = String(val).replace(/[^0-9.-]+/g, '');
+                    return parseFloat(cleaned) || 0;
+                };
+
+                const subtotal = cleanNum(row['Subtotal'] || row['Amount'] || row['subtotal']);
+                const gst = cleanNum(row['GST'] || row['Tax'] || row['gst']);
+                const total = cleanNum(row['Total'] || row['Grand Total'] || row['total']) || (subtotal + gst);
                 
-                const num = (v) => { const n = parseFloat(String(v ?? '').replace(/,/g, '')); return isNaN(n) ? 0 : n; };
-                // Columns match job_expenses as used by BillsPortal (amount, not unit_price/quantity)
+                const docNo = (row['Doc No'] || row['Invoice No'] || row['DocNo'] || row['doc_no'] || '').trim();
+                const jobNo = (row['Job No'] || row['JobNo'] || row['job_no'] || '').trim();
+                const matchedJobId = jobNo && jobMap ? jobMap[jobNo] : null;
+
+                // Match exact columns of job_expenses table in Supabase
                 return {
-                    company_id: profile.company_id,
-                    invoice_date: row.Date || new Date().toISOString().split('T')[0],
-                    supplier_id: supplier?.id || null,
-                    supplier_name: row.Supplier || row.Partner || null,
-                    invoice_no: row['Invoice No'] || row['Doc No'] || '',
-                    // Only columns proven by BillsPortal's insert (job_no / category are not in the live table)
-                    description: [row.Description || row.Type || 'Imported Expense', row['Job No'] ? `Job ${row['Job No']}` : '']
-                        .filter(Boolean).join(' - '),
-                    amount: num(row.Subtotal || row.Amount),
-                    gst_rate: 9,
-                    gst_amount: num(row.GST || row.Tax),
-                    grand_total: num(row.Total || row.Amount)
+                    company_id: profile?.company_id,
+                    invoice_date: row['Date'] || row['Invoice Date'] || new Date().toISOString().split('T')[0],
+                    supplier_id: matchedPartner?.id || null,
+                    supplier_name: rawSupplier,
+                    invoice_no: docNo,
+                    job_id: matchedJobId || null,
+                    description: [
+                        row['Description'] || row['Type'] || `Purchase Bill - ${docNo || rawSupplier}`,
+                        jobNo ? `Job ${jobNo}` : ''
+                    ].filter(Boolean).join(' - ').trim(),
+                    amount: subtotal,
+                    gst_rate: subtotal > 0 && gst > 0 ? Math.round((gst / subtotal) * 100) : 9,
+                    gst_amount: gst,
+                    grand_total: total,
+                    status: 'Paid'
                 };
             });
 
-            const { error } = await supabase.from('job_expenses').insert(toInsert);
-            if (error) throw error;
+            // Batch insert in chunks of 50 to ensure reliable network transfer
+            const chunkSize = 50;
+            for (let i = 0; i < toInsert.length; i += chunkSize) {
+                const chunk = toInsert.slice(i, i + chunkSize);
+                const { error } = await supabase.from('job_expenses').insert(chunk);
+                if (error) {
+                    console.error('Supabase insert error:', error);
+                    throw new Error(error.message + (error.details ? ` (${error.details})` : ''));
+                }
+            }
             
-            alert(`Imported ${toInsert.length} records successfully.`);
+            alert(`Imported ${toInsert.length} purchase records successfully.`);
             setIsImportModalOpen(false);
             setImportData([]);
-            fetchGstData();
+            setActiveTab('purchases');
+            await fetchGstData();
         } catch (err) {
             console.error('Import error:', err);
             alert(`Failed to import CSV: ${err?.message || err}${err?.details ? ' – ' + err.details : ''}`);
