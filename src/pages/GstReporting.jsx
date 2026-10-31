@@ -366,11 +366,23 @@ Prepared with Claude & CelronHub GST Reporting Engine.`;
         const reader = new FileReader();
         reader.onload = (evt) => {
             const content = evt.target.result;
-            const lines = content.split('\n').filter(l => l.trim());
-            const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+            const lines = content.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
+            // Quote-aware split so values like "RME-5597, 5642" stay in one column
+            const splitCsv = (line) => {
+                const out = []; let cur = ''; let q = false;
+                for (let i = 0; i < line.length; i++) {
+                    const ch = line[i];
+                    if (ch === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
+                    else if (ch === ',' && !q) { out.push(cur); cur = ''; }
+                    else cur += ch;
+                }
+                out.push(cur);
+                return out.map(v => v.trim());
+            };
+            const headers = splitCsv(lines[0]);
             
             const parsed = lines.slice(1).map(line => {
-                const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
+                const values = splitCsv(line);
                 const obj = {};
                 headers.forEach((h, i) => obj[h] = values[i]);
                 return obj;
@@ -389,18 +401,20 @@ Prepared with Claude & CelronHub GST Reporting Engine.`;
                 // Expected headers: Date, Supplier, Invoice No, Job No, Subtotal, GST, Total
                 const supplier = partners.find(p => p.name.toLowerCase() === (row.Supplier || row.Partner || '').toLowerCase());
                 
+                const num = (v) => { const n = parseFloat(String(v ?? '').replace(/,/g, '')); return isNaN(n) ? 0 : n; };
+                // Columns match job_expenses as used by BillsPortal (amount, not unit_price/quantity)
                 return {
                     company_id: profile.company_id,
                     invoice_date: row.Date || new Date().toISOString().split('T')[0],
                     supplier_id: supplier?.id || null,
+                    supplier_name: row.Supplier || row.Partner || null,
                     invoice_no: row['Invoice No'] || row['Doc No'] || '',
-                    job_no: row['Job No'] || '',
-                    description: row.Description || 'Imported Expense',
-                    unit_price: parseFloat(row.Subtotal || row.Amount || 0),
-                    quantity: 1,
+                    job_no: row['Job No'] || null,
+                    description: row.Description || row.Type || 'Imported Expense',
+                    amount: num(row.Subtotal || row.Amount),
                     gst_rate: 9,
-                    gst_amount: parseFloat(row.GST || row.Tax || 0),
-                    grand_total: parseFloat(row.Total || row.Amount || 0),
+                    gst_amount: num(row.GST || row.Tax),
+                    grand_total: num(row.Total || row.Amount),
                     category: 'Imported'
                 };
             });
