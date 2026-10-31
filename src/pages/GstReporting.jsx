@@ -7,7 +7,7 @@ import {
     ArrowUpRight, ArrowDownLeft, Receipt, 
     FileText, Search, ChevronRight, Briefcase,
     Plus, Upload, ExternalLink, X, FileCheck, Check, Loader2, Info,
-    ArrowLeft
+    ArrowLeft, Folder, Link as LinkIcon, Copy, AlertCircle, FileSpreadsheet, Eye
 } from 'lucide-react';
 import { getPartners, uploadFile, getDocumentSettings } from '../lib/store';
 import { Modal, QuickExpenseAdd } from '../components/workflow/QuickAddForms';
@@ -39,6 +39,12 @@ export default function GstReporting() {
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
     const [importData, setImportData] = useState([]);
 
+    // Google Drive Workout & Audit Reference state
+    const [gdriveUrl, setGdriveUrl] = useState('');
+    const [isDriveModalOpen, setIsDriveModalOpen] = useState(false);
+    const [tempDriveUrl, setTempDriveUrl] = useState('');
+    const [copiedClaudeSummary, setCopiedClaudeSummary] = useState(false);
+
     useEffect(() => {
         if (profile?.company_id) {
             fetchGstData();
@@ -46,6 +52,36 @@ export default function GstReporting() {
             fetchSettings();
         }
     }, [profile?.company_id, selectedYear, selectedQuarter]);
+
+    // Load saved Google Drive link for this year & quarter
+    useEffect(() => {
+        const companyKey = profile?.company_id || 'celron';
+        const storageKey = `gst_gdrive_folder_${companyKey}_${selectedYear}_Q${selectedQuarter}`;
+        const saved = localStorage.getItem(storageKey) || '';
+        setGdriveUrl(saved);
+        setTempDriveUrl(saved);
+    }, [profile?.company_id, selectedYear, selectedQuarter]);
+
+    const handleSaveDriveLink = (url) => {
+        const companyKey = profile?.company_id || 'celron';
+        const storageKey = `gst_gdrive_folder_${companyKey}_${selectedYear}_Q${selectedQuarter}`;
+        const cleanUrl = url.trim();
+        localStorage.setItem(storageKey, cleanUrl);
+        setGdriveUrl(cleanUrl);
+        setIsDriveModalOpen(false);
+    };
+
+    const handleOpenDriveFolder = () => {
+        if (!gdriveUrl) {
+            setIsDriveModalOpen(true);
+            return;
+        }
+        let url = gdriveUrl.trim();
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            url = `https://drive.google.com/drive/folders/${url}`;
+        }
+        window.open(url, '_blank', 'noopener,noreferrer');
+    };
 
     const fetchSettings = async () => {
         const data = await getDocumentSettings(profile.company_id);
@@ -235,6 +271,59 @@ export default function GstReporting() {
         dueDate: getDueDate(selectedYear, selectedQuarter)
     };
 
+    const generateClaudeSummaryText = () => {
+        return `=====================================================
+CEL-RON ENTERPRISES PTE LTD
+GST RETURN WORKOUT & AUDIT SUMMARY (IRAS FORM F5)
+=====================================================
+Period Covered: ${irasPeriodData.start} to ${irasPeriodData.end}
+Year: ${selectedYear} | Quarter: Q${selectedQuarter}
+GST Reg No (UEN): ${settings?.gst_uen || '201436227C'}
+IRAS Due Date: ${irasPeriodData.dueDate}
+
+--- SUPPLIES (SALES RECONCILIATION) ---
+[Box 1] Total value of standard-rated supplies: SGD ${box1.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+[Box 2] Total value of zero-rated supplies:     SGD ${box2.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+[Box 3] Total value of exempt supplies:         SGD ${box3.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+[Box 4] Total value of (1) + (2) + (3):         SGD ${box4.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+Total Sales Transactions: ${salesDocs.length}
+
+--- PURCHASES (INPUT TAX RECONCILIATION) ---
+[Box 5] Total value of taxable purchases:       SGD ${box5.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+Total Purchase Transactions: ${purchaseDocs.length}
+
+--- TAXES TO BE PAID / CLAIMED ---
+[Box 6] Output tax due:                         SGD ${box6.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+[Box 7] Less: Input tax and refunds claimed:    SGD ${box7.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+[Box 8] Equals: Net GST to be paid to IRAS:     SGD ${box8.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+
+--- ATTACHED WORKOUT FILES IN GOOGLE DRIVE ---
+1. GST Sales CSV: GST_sales_${selectedYear}_Q${selectedQuarter}.csv
+2. Bank Statements (DBS/OCBC/UOB): Reconciled against total inflows.
+3. Supplier Bills & Taxable Purchases.
+4. Claude Workout & Audit Details Notes.
+Google Drive Link: ${gdriveUrl || '(Google Drive link can be attached directly in CelronHub)'}
+Prepared with Claude & CelronHub GST Reporting Engine.`;
+    };
+
+    const handleCopyClaudeSummary = () => {
+        const text = generateClaudeSummaryText();
+        navigator.clipboard.writeText(text);
+        setCopiedClaudeSummary(true);
+        setTimeout(() => setCopiedClaudeSummary(false), 2500);
+    };
+
+    const handleDownloadClaudeSummary = () => {
+        const text = generateClaudeSummaryText();
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `Claude_GST_Workout_${selectedYear}_Q${selectedQuarter}.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
     const handleBillUpload = async (file) => {
         try {
             const url = await uploadFile('company_assets', 'vouchers', file, { maxWidth: 1200 });
@@ -333,7 +422,7 @@ export default function GstReporting() {
 
     return (
         <div className="animate-fade-in">
-            <header className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+            <header className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                     <button 
                         onClick={() => navigate('/accounts/bills')} 
@@ -363,7 +452,29 @@ export default function GstReporting() {
                         </p>
                     </div>
                 </div>
-                <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button 
+                        className="btn" 
+                        onClick={() => setIsDriveModalOpen(true)}
+                        style={{
+                            background: gdriveUrl ? '#ecfdf5' : '#f8fafc',
+                            border: `1px solid ${gdriveUrl ? '#a7f3d0' : '#cbd5e1'}`,
+                            color: gdriveUrl ? '#065f46' : '#334155',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '8px 14px',
+                            borderRadius: '10px',
+                            cursor: 'pointer',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                        }}
+                        title={gdriveUrl ? "Open Google Drive Workout & Reference Folder" : "Link Google Drive Workout Folder"}
+                    >
+                        <Folder size={18} color={gdriveUrl ? '#059669' : '#64748b'} />
+                        <span>{gdriveUrl ? 'GDrive Workout' : 'Link GDrive Workout'}</span>
+                        {gdriveUrl && <ExternalLink size={14} color="#059669" />}
+                    </button>
                     <button className="btn btn-secondary" onClick={() => setIsImportModalOpen(true)}>
                         <Upload size={18} /> Import CSV
                     </button>
@@ -378,56 +489,266 @@ export default function GstReporting() {
                 </div>
             </header>
 
-            {/* Quick Summary Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '24px', marginBottom: '32px' }}>
+            {/* Google Drive Audit Reference Banner */}
+            <div style={{ 
+                background: '#ffffff', 
+                border: '1px solid #e2e8f0', 
+                borderRadius: '14px', 
+                padding: '14px 20px', 
+                marginBottom: '28px', 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '14px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <div style={{ 
+                        background: gdriveUrl ? '#ecfdf5' : '#f8fafc', 
+                        padding: '10px', 
+                        borderRadius: '12px', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        border: `1px solid ${gdriveUrl ? '#a7f3d0' : '#e2e8f0'}`
+                    }}>
+                        <Folder size={22} color={gdriveUrl ? '#059669' : '#64748b'} />
+                    </div>
+                    <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#1e293b' }}>
+                                Google Drive Workout & Audit Reference ({selectedYear} Q{selectedQuarter})
+                            </h4>
+                            {gdriveUrl ? (
+                                <span style={{ background: '#dcfce7', color: '#15803d', fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '12px' }}>
+                                    ✓ Linked
+                                </span>
+                            ) : (
+                                <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '12px' }}>
+                                    Not Linked
+                                </span>
+                            )}
+                        </div>
+                        <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: '#64748b' }}>
+                            {gdriveUrl 
+                                ? `Folder reference connected for Q${selectedQuarter}. Click to open or update attached workout files.` 
+                                : 'Store your bank statements, CSV workouts, and Claude calculations in Google Drive for full IRAS audit compliance.'}
+                        </p>
+                    </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    {gdriveUrl && (
+                        <button 
+                            onClick={handleOpenDriveFolder} 
+                            className="btn btn-secondary"
+                            style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px', color: '#059669', borderColor: '#a7f3d0', background: '#ecfdf5', fontWeight: 600 }}
+                        >
+                            <ExternalLink size={15} /> Open Drive Folder
+                        </button>
+                    )}
+                    <button 
+                        onClick={() => setIsDriveModalOpen(true)} 
+                        className="btn btn-secondary"
+                        style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                        <LinkIcon size={15} /> {gdriveUrl ? 'Manage Reference' : 'Link Google Drive Folder'}
+                    </button>
+                </div>
+            </div>
+
+            {/* Quick Summary Cards with Key Breakdown Highlights */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px', marginBottom: '32px' }}>
+                
+                {/* 1. OUTPUT GST (SALES) CARD */}
                 <div className={`glass-panel ${activeTab === 'sales' ? 'active-card' : ''}`} 
                     onClick={() => setActiveTab('sales')}
-                    style={{ background: '#f0f9ff', border: '1px solid #bae6fd', cursor: 'pointer', transition: 'all 0.2s', boxShadow: activeTab === 'sales' ? '0 8px 30px rgba(2, 132, 199, 0.15)' : 'none' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                            <p style={{ color: '#0369a1', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Output GST (Sales)</p>
-                            <h2 style={{ fontSize: '1.8rem', fontWeight: 800, color: '#0c4a6e', margin: 0 }}>SGD {outputGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
-                            <p style={{ fontSize: '0.8rem', color: '#0ea5e9', marginTop: '4px' }}>{salesDocs.length} Transactions</p>
+                    style={{ 
+                        background: '#f0f9ff', 
+                        border: '1px solid #bae6fd', 
+                        cursor: 'pointer', 
+                        transition: 'all 0.2s', 
+                        boxShadow: activeTab === 'sales' ? '0 8px 30px rgba(2, 132, 199, 0.18)' : '0 1px 3px rgba(0,0,0,0.05)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between'
+                    }}>
+                    <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <div>
+                                <p style={{ color: '#0369a1', fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '6px' }}>
+                                    Output GST (Sales)
+                                </p>
+                                <h2 style={{ fontSize: '1.9rem', fontWeight: 800, color: '#0c4a6e', margin: 0 }}>
+                                    SGD {outputGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </h2>
+                                <p style={{ fontSize: '0.8rem', color: '#0284c7', marginTop: '4px', fontWeight: 500 }}>
+                                    Output Tax Due (Box 6) • {salesDocs.length} Transactions
+                                </p>
+                            </div>
+                            <div style={{ background: '#e0f2fe', padding: '10px', borderRadius: '12px' }}>
+                                <ArrowUpRight size={24} color="#0284c7" />
+                            </div>
                         </div>
-                        <div style={{ background: '#e0f2fe', padding: '10px', borderRadius: '12px' }}>
-                            <ArrowUpRight size={24} color="#0284c7" />
+
+                        {/* Highlighted Key Amounts Breakdown */}
+                        <div style={{ marginTop: '16px', background: '#ffffff', borderRadius: '12px', padding: '12px 14px', border: '1px solid #e0f2fe', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                                <span style={{ color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ background: '#0284c7', color: '#fff', fontSize: '10px', fontWeight: 800, padding: '2px 6px', borderRadius: '4px' }}>Box 1</span>
+                                    Standard-rated supplies:
+                                </span>
+                                <strong style={{ color: '#0c4a6e', fontSize: '0.92rem' }}>
+                                    SGD {box1.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </strong>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                                <span style={{ color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ background: '#0d9488', color: '#fff', fontSize: '10px', fontWeight: 800, padding: '2px 6px', borderRadius: '4px' }}>Box 2</span>
+                                    Zero-rated supplies:
+                                </span>
+                                <strong style={{ color: '#0f766e', fontSize: '0.92rem' }}>
+                                    SGD {box2.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </strong>
+                            </div>
+
+                            <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '8px', marginTop: '2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.86rem' }}>
+                                <span style={{ color: '#1e293b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ background: '#ca8a04', color: '#fff', fontSize: '10px', fontWeight: 800, padding: '2px 6px', borderRadius: '4px' }}>Box 4</span>
+                                    Total supplies value:
+                                </span>
+                                <strong style={{ color: '#854d0e', fontSize: '0.96rem', fontWeight: 800 }}>
+                                    SGD {box4.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </strong>
+                            </div>
                         </div>
                     </div>
                 </div>
 
+                {/* 2. INPUT GST (PURCHASES) CARD */}
                 <div className={`glass-panel ${activeTab === 'purchases' ? 'active-card' : ''}`} 
                     onClick={() => setActiveTab('purchases')}
-                    style={{ background: '#fff7ed', border: '1px solid #fed7aa', cursor: 'pointer', transition: 'all 0.2s', boxShadow: activeTab === 'purchases' ? '0 8px 30px rgba(234, 88, 12, 0.15)' : 'none' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                            <p style={{ color: '#9a3412', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Input GST (Purchases)</p>
-                            <h2 style={{ fontSize: '1.8rem', fontWeight: 800, color: '#7c2d12', margin: 0 }}>SGD {inputGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
-                            <p style={{ fontSize: '0.8rem', color: '#f97316', marginTop: '4px' }}>{purchaseDocs.length} Transactions</p>
+                    style={{ 
+                        background: '#fff7ed', 
+                        border: '1px solid #fed7aa', 
+                        cursor: 'pointer', 
+                        transition: 'all 0.2s', 
+                        boxShadow: activeTab === 'purchases' ? '0 8px 30px rgba(234, 88, 12, 0.18)' : '0 1px 3px rgba(0,0,0,0.05)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between'
+                    }}>
+                    <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <div>
+                                <p style={{ color: '#9a3412', fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '6px' }}>
+                                    Input GST (Purchases)
+                                </p>
+                                <h2 style={{ fontSize: '1.9rem', fontWeight: 800, color: '#7c2d12', margin: 0 }}>
+                                    SGD {inputGst.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </h2>
+                                <p style={{ fontSize: '0.8rem', color: '#ea580c', marginTop: '4px', fontWeight: 500 }}>
+                                    Input Tax Claimed (Box 7) • {purchaseDocs.length} Transactions
+                                </p>
+                            </div>
+                            <div style={{ background: '#ffedd5', padding: '10px', borderRadius: '12px' }}>
+                                <ArrowDownLeft size={24} color="#ea580c" />
+                            </div>
                         </div>
-                        <div style={{ background: '#ffedd5', padding: '10px', borderRadius: '12px' }}>
-                            <ArrowDownLeft size={24} color="#ea580c" />
+
+                        {/* Highlighted Key Amounts Breakdown */}
+                        <div style={{ marginTop: '16px', background: '#ffffff', borderRadius: '12px', padding: '12px 14px', border: '1px solid #fed7aa', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                                <span style={{ color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ background: '#ea580c', color: '#fff', fontSize: '10px', fontWeight: 800, padding: '2px 6px', borderRadius: '4px' }}>Box 5</span>
+                                    Taxable purchases value:
+                                </span>
+                                <strong style={{ color: '#7c2d12', fontSize: '0.92rem' }}>
+                                    SGD {box5.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </strong>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                                <span style={{ color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ background: '#d97706', color: '#fff', fontSize: '10px', fontWeight: 800, padding: '2px 6px', borderRadius: '4px' }}>Box 7</span>
+                                    Input tax claimed:
+                                </span>
+                                <strong style={{ color: '#9a3412', fontSize: '0.92rem' }}>
+                                    SGD {box7.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </strong>
+                            </div>
+
+                            <div style={{ borderTop: '1px dashed #fed7aa', paddingTop: '8px', marginTop: '2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.82rem' }}>
+                                <span style={{ color: box5 === 0 ? '#b45309' : '#15803d', fontWeight: 500 }}>
+                                    {box5 === 0 ? '⚠️ No taxable purchases recorded' : 'All eligible input taxes logged'}
+                                </span>
+                                <span style={{ color: '#ea580c', fontWeight: 700 }}>
+                                    {box5 === 0 ? '+ Add Bills' : `${purchaseDocs.length} bills`}
+                                </span>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <div className="glass-panel" style={{ 
-                    background: netPayable >= 0 ? '#f0fdf4' : '#fef2f2', 
-                    border: `1px solid ${netPayable >= 0 ? '#bbf7d0' : '#fecaca'}` 
-                }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                            <p style={{ color: netPayable >= 0 ? '#15803d' : '#991b1b', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>
-                                {netPayable >= 0 ? 'Net GST Payable' : 'GST Claimable'}
-                            </p>
-                            <h2 style={{ fontSize: '1.8rem', fontWeight: 800, color: netPayable >= 0 ? '#14532d' : '#7f1d1d', margin: 0 }}>
-                                SGD {Math.abs(netPayable).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </h2>
-                            <p style={{ fontSize: '0.8rem', color: netPayable >= 0 ? '#22c55e' : '#ef4444', marginTop: '4px' }}>
-                                Estimated IRAS Filing
-                            </p>
+                {/* 3. NET GST PAYABLE CARD */}
+                <div className={`glass-panel ${activeTab === 'filing' ? 'active-card' : ''}`}
+                    onClick={() => setActiveTab('filing')}
+                    style={{ 
+                        background: netPayable >= 0 ? '#f0fdf4' : '#fef2f2', 
+                        border: `1px solid ${netPayable >= 0 ? '#bbf7d0' : '#fecaca'}`,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        boxShadow: activeTab === 'filing' ? '0 8px 30px rgba(22, 163, 74, 0.18)' : '0 1px 3px rgba(0,0,0,0.05)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between'
+                    }}>
+                    <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <div>
+                                <p style={{ color: netPayable >= 0 ? '#15803d' : '#991b1b', fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '6px' }}>
+                                    {netPayable >= 0 ? 'Net GST Payable' : 'GST Claimable'}
+                                </p>
+                                <h2 style={{ fontSize: '1.9rem', fontWeight: 800, color: netPayable >= 0 ? '#14532d' : '#7f1d1d', margin: 0 }}>
+                                    SGD {Math.abs(netPayable).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </h2>
+                                <p style={{ fontSize: '0.8rem', color: netPayable >= 0 ? '#16a34a' : '#ef4444', marginTop: '4px', fontWeight: 500 }}>
+                                    Net GST to be paid to IRAS (Box 8)
+                                </p>
+                            </div>
+                            <div style={{ background: netPayable >= 0 ? '#dcfce7' : '#fee2e2', padding: '10px', borderRadius: '12px' }}>
+                                <Calculator size={24} color={netPayable >= 0 ? '#16a34a' : '#dc2626'} />
+                            </div>
                         </div>
-                        <div style={{ background: netPayable >= 0 ? '#dcfce7' : '#fee2e2', padding: '10px', borderRadius: '12px' }}>
-                            <Calculator size={24} color={netPayable >= 0 ? '#16a34a' : '#dc2626'} />
+
+                        {/* Status and Action */}
+                        <div style={{ marginTop: '16px', background: '#ffffff', borderRadius: '12px', padding: '12px 14px', border: `1px solid ${netPayable >= 0 ? '#dcfce7' : '#fee2e2'}`, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                                <span style={{ color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <Calendar size={14} color="#64748b" />
+                                    IRAS Due Date:
+                                </span>
+                                <strong style={{ color: '#15803d', fontSize: '0.88rem' }}>
+                                    {irasPeriodData.dueDate}
+                                </strong>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                                <span style={{ color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <FileText size={14} color="#64748b" />
+                                    IRAS Return Form:
+                                </span>
+                                <strong style={{ color: '#0369a1', fontSize: '0.88rem' }}>
+                                    Form F5 Ready
+                                </strong>
+                            </div>
+
+                            <div style={{ borderTop: '1px dashed #bbf7d0', paddingTop: '8px', marginTop: '2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.82rem' }}>
+                                <span style={{ color: '#16a34a', fontWeight: 600 }}>Click to review IRAS Form F5</span>
+                                <ChevronRight size={16} color="#16a34a" />
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -612,6 +933,129 @@ export default function GstReporting() {
                         <button className="btn btn-secondary" onClick={() => { setIsImportModalOpen(false); setImportData([]); }}>Cancel</button>
                         <button className="btn btn-primary" onClick={processImport} disabled={loading || importData.length === 0}>
                             {loading ? <Loader2 className="animate-spin" /> : <FileCheck size={18} />} Import {importData.length} Records
+                        </button>
+                    </div>
+                </div>
+            </Modal>
+
+            {/* Google Drive Workout & Audit Reference Modal */}
+            <Modal 
+                isOpen={isDriveModalOpen} 
+                onClose={() => setIsDriveModalOpen(false)} 
+                title={`Google Drive Workout & Audit Reference (${selectedYear} Q${selectedQuarter})`} 
+                icon={Folder}
+            >
+                <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    {/* Link Setup Box */}
+                    <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: '#1e293b', marginBottom: '8px' }}>
+                            Google Drive Folder URL or Folder ID
+                        </label>
+                        <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0 0 10px 0' }}>
+                            Paste the shareable link of your Google Drive folder for <strong>{selectedYear} Q{selectedQuarter}</strong> (e.g. <code>https://drive.google.com/drive/folders/...</code>).
+                        </p>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <input 
+                                type="text" 
+                                value={tempDriveUrl} 
+                                onChange={(e) => setTempDriveUrl(e.target.value)}
+                                placeholder="https://drive.google.com/drive/folders/..." 
+                                style={{
+                                    flex: 1,
+                                    padding: '10px 14px',
+                                    borderRadius: '8px',
+                                    border: '1px solid #cbd5e1',
+                                    fontSize: '0.88rem'
+                                }}
+                            />
+                            <button 
+                                className="btn btn-primary"
+                                onClick={() => handleSaveDriveLink(tempDriveUrl)}
+                                style={{ whiteSpace: 'nowrap' }}
+                            >
+                                Save Link
+                            </button>
+                        </div>
+
+                        {gdriveUrl && (
+                            <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '10px', borderTop: '1px solid #e2e8f0' }}>
+                                <span style={{ fontSize: '0.8rem', color: '#059669', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <Check size={14} /> Currently linked and ready
+                                </span>
+                                <button 
+                                    onClick={handleOpenDriveFolder}
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.8rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px', color: '#0284c7' }}
+                                >
+                                    <ExternalLink size={14} /> Open in Google Drive
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Claude Workout Detail & IRAS Reconciliation Export */}
+                    <div style={{ background: '#f0f9ff', padding: '16px', borderRadius: '12px', border: '1px solid #bae6fd' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                            <div>
+                                <h4 style={{ margin: 0, fontSize: '0.92rem', fontWeight: 700, color: '#0c4a6e', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <FileText size={16} color="#0284c7" /> Claude Workout Detail & Reconciliation Note
+                                </h4>
+                                <p style={{ margin: '3px 0 0 0', fontSize: '0.8rem', color: '#0369a1' }}>
+                                    Standard rates, zero rates, taxable purchases & net tax breakdown ready for audit folder.
+                                </p>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button 
+                                    onClick={handleCopyClaudeSummary}
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.8rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px', background: '#fff' }}
+                                >
+                                    {copiedClaudeSummary ? <Check size={14} color="#16a34a" /> : <Copy size={14} />}
+                                    {copiedClaudeSummary ? 'Copied!' : 'Copy Summary'}
+                                </button>
+                                <button 
+                                    onClick={handleDownloadClaudeSummary}
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.8rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px', background: '#fff' }}
+                                >
+                                    <Download size={14} /> Download .txt
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Preview of workout summary */}
+                        <div style={{ background: '#ffffff', borderRadius: '8px', padding: '12px', border: '1px solid #bae6fd', maxHeight: '160px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '0.78rem', color: '#334155', whiteSpace: 'pre-wrap' }}>
+                            {generateClaudeSummaryText()}
+                        </div>
+                    </div>
+
+                    {/* Folder Checklist for Audit Compliance */}
+                    <div style={{ background: '#ffffff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                        <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', fontWeight: 700, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <FileSpreadsheet size={16} color="#059669" /> Recommended Workout Files to Store in this Drive Folder
+                        </h4>
+                        <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '0.82rem', color: '#475569', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <li>
+                                <strong>GST Sales Listing CSV:</strong> <code>GST_sales_{selectedYear}_Q{selectedQuarter}.csv</code> (exported above)
+                            </li>
+                            <li>
+                                <strong>Company Bank Statements:</strong> <code>CEL-RON ACCT 0549047473_SGD_...</code> (XLS / PDF)
+                            </li>
+                            <li>
+                                <strong>Bank Reconciliation History:</strong> <code>NR.KUMAR ...</code> & <code>Anitha ...</code> statements
+                            </li>
+                            <li>
+                                <strong>Claude Workout Breakdown:</strong> <code>Claude_GST_Workout_{selectedYear}_Q{selectedQuarter}.txt</code> (downloaded above)
+                            </li>
+                            <li>
+                                <strong>IRAS Form F5 Submission Receipt:</strong> Acknowledgement PDF once submitted via CorpPass
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                        <button className="btn btn-secondary" onClick={() => setIsDriveModalOpen(false)}>
+                            Close
                         </button>
                     </div>
                 </div>
