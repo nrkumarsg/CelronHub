@@ -337,6 +337,7 @@ export default function WorkflowEditor() {
     const [lastSavedTime, setLastSavedTime] = useState(null);
     const [autoSyncToCounterpart, setAutoSyncToCounterpart] = useState(true);
     const [showCreateDocMenu, setShowCreateDocMenu] = useState(false);
+    const [openDropdownMenu, setOpenDropdownMenu] = useState(null); // 'suite' | 'print' | 'reverse' | 'goToJob' | null
     const [expenses, setExpenses] = useState([]);
 
     const [loadingExpenses, setLoadingExpenses] = useState(false);
@@ -942,7 +943,7 @@ export default function WorkflowEditor() {
     const [modalItemDetails, setModalItemDetails] = useState('');
     const [showDetailsModal, setShowDetailsModal] = useState(false);
 
-    // Close line item autocomplete dropdown when clicking outside
+    // Close line item autocomplete dropdown and header dropdown menus when clicking outside
     useEffect(() => {
         const handleClickOutside = (e) => {
             if (activeSuggestRow !== null) {
@@ -951,10 +952,16 @@ export default function WorkflowEditor() {
                     setActiveSuggestRow(null);
                 }
             }
+            if (openDropdownMenu !== null) {
+                const isInsideDropdown = e.target.closest('.dropdown');
+                if (!isInsideDropdown) {
+                    setOpenDropdownMenu(null);
+                }
+            }
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [activeSuggestRow]);
+    }, [activeSuggestRow, openDropdownMenu]);
 
 
 
@@ -5129,10 +5136,14 @@ export default function WorkflowEditor() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         {/* + Suite Dropdown (Visible for Jobs and any Job-linked documents) */}
                         {!isNew && (formData.is_job || formData.assigned_job_no || formData.document_type === 'Job' || (suiteDocs && suiteDocs.length > 0)) && (
-                            <div className="dropdown" style={{ position: 'relative' }}>
+                            <div className={`dropdown ${openDropdownMenu === 'suite' ? 'open' : ''}`} style={{ position: 'relative' }}>
                                 <button 
                                     type="button"
                                     className="btn-vibrant" 
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenDropdownMenu(prev => prev === 'suite' ? null : 'suite');
+                                    }}
                                     style={{ 
                                         background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)', 
                                         color: '#fff', 
@@ -5149,9 +5160,9 @@ export default function WorkflowEditor() {
                                     }}
                                     title="Generate Associated Job Suite Documents"
                                 >
-                                    <Plus size={16} /> <span>+ Suite</span> <ChevronDown size={14} />
+                                    <Plus size={16} /> <span>+ Suite</span> <ChevronDown size={14} style={{ transform: openDropdownMenu === 'suite' ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
                                 </button>
-                                <div className="dropdown-content" style={{ right: 0, minWidth: '240px', maxHeight: '420px', zIndex: 120 }}>
+                                <div className="dropdown-content" style={{ right: 0, minWidth: '240px', maxHeight: '420px', zIndex: 120 }} onClick={() => setOpenDropdownMenu(null)}>
                                     <div style={{ padding: '6px 12px', fontSize: '0.72rem', fontWeight: 700, color: '#6b21a8', background: '#f5f3ff', borderBottom: '1px solid #ede9fe', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                         Add to Job Suite
                                     </div>
@@ -5177,9 +5188,14 @@ export default function WorkflowEditor() {
 
                         {/* Print Dropdown */}
                         {(formData.is_job || formData.assigned_job_no) ? (
-                            <div className="dropdown" style={{ position: 'relative' }}>
+                            <div className={`dropdown ${openDropdownMenu === 'print' ? 'open' : ''}`} style={{ position: 'relative' }}>
                                 <button 
+                                    type="button"
                                     className="btn-vibrant-secondary" 
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenDropdownMenu(prev => prev === 'print' ? null : 'print');
+                                    }}
                                     style={{ 
                                         border: '1px solid #cbd5e1', 
                                         background: '#ffffff', 
@@ -5190,13 +5206,14 @@ export default function WorkflowEditor() {
                                         alignItems: 'center', 
                                         gap: '6px',
                                         borderRadius: '8px',
-                                        color: '#334155'
+                                        color: '#334155',
+                                        cursor: 'pointer'
                                     }} 
                                     title="Print PDF Options"
                                 >
-                                    <Printer size={16} /> <span>Print</span> <ChevronDown size={13} />
+                                    <Printer size={16} /> <span>Print</span> <ChevronDown size={13} style={{ transform: openDropdownMenu === 'print' ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
                                 </button>
-                                <div className="dropdown-content" style={{ right: 0, minWidth: '220px', zIndex: 120 }}>
+                                <div className="dropdown-content" style={{ right: 0, minWidth: '220px', zIndex: 120 }} onClick={() => setOpenDropdownMenu(null)}>
                                     <button type="button" onClick={handlePrint} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                         <Printer size={14} /> Print {formData.document_type || 'Document'}
                                     </button>
@@ -5638,9 +5655,14 @@ export default function WorkflowEditor() {
                             (formData.is_job || formData.document_type === 'Job') ||
                             formData.document_type === 'Payment Received'
                         ) && (
-                            <div className="dropdown" style={{ position: 'relative' }}>
+                            <div className={`dropdown ${openDropdownMenu === 'reverse' ? 'open' : ''}`} style={{ position: 'relative' }}>
                                 <button 
+                                    type="button"
                                     className="btn-vibrant-secondary" 
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenDropdownMenu(prev => prev === 'reverse' ? null : 'reverse');
+                                    }}
                                     style={{ 
                                         background: '#64748b', 
                                         color: '#fff', 
@@ -5651,13 +5673,14 @@ export default function WorkflowEditor() {
                                         borderRadius: '7px',
                                         display: 'inline-flex',
                                         alignItems: 'center',
-                                        gap: '5px'
+                                        gap: '5px',
+                                        cursor: 'pointer'
                                     }}
                                     title="Reverse or Revert Document Status"
                                 >
-                                    <RefreshCw size={14} /> <span>Reverse</span> <ChevronDown size={13} />
+                                    <RefreshCw size={14} /> <span>Reverse</span> <ChevronDown size={13} style={{ transform: openDropdownMenu === 'reverse' ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
                                 </button>
-                                <div className="dropdown-content" style={{ right: 0, minWidth: '220px', zIndex: 120 }}>
+                                <div className="dropdown-content" style={{ right: 0, minWidth: '220px', zIndex: 120 }} onClick={() => setOpenDropdownMenu(null)}>
                                     {formData.document_type === 'Quotation' && (
                                         <button onClick={handleRevertQuotationToEnquiry}>Revert Quotation to Enquiry</button>
                                     )}
@@ -10345,6 +10368,14 @@ export default function WorkflowEditor() {
             .del-btn:hover {opacity: 1; }
 
             .dropdown { position: relative; }
+            .dropdown::after {
+                content: '';
+                position: absolute;
+                top: 100%;
+                left: 0;
+                right: 0;
+                height: 10px;
+            }
             .dropdown-content {
                 display: none;
                 position: absolute;
@@ -10359,7 +10390,8 @@ export default function WorkflowEditor() {
                 border: 1px solid var(--border-color);
                 margin-top: 4px;
             }
-            .dropdown:hover .dropdown-content { display: block; }
+            .dropdown:hover .dropdown-content,
+            .dropdown.open .dropdown-content { display: block; }
             .dropdown-content button {
                 width: 100%;
                 padding: 9px 14px;
