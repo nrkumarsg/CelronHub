@@ -4215,6 +4215,8 @@ export default function WorkflowEditor() {
             alert('Please Save the document first to preview and print.');
             return;
         }
+        // Open print window synchronously on user gesture to prevent browser popup blockers
+        const printWin = window.open('about:blank', '_blank');
         setSaving(true);
         try {
             await handleSave();
@@ -4223,7 +4225,12 @@ export default function WorkflowEditor() {
         } finally {
             setSaving(false);
         }
-        window.open(`/workflows/print/${id}?showSignature=${showSignature}&zeroTotal=${isZeroTotal}`, '_blank');
+        const targetUrl = `/workflows/print/${id}?showSignature=${showSignature}&zeroTotal=${isZeroTotal}`;
+        if (printWin && !printWin.closed) {
+            printWin.location.href = targetUrl;
+        } else {
+            navigate(targetUrl);
+        }
     };
 
     const handlePrintInvAndDo = async () => {
@@ -4232,10 +4239,16 @@ export default function WorkflowEditor() {
             return;
         }
 
-        const jobNo = formData.assigned_job_no || (formData.is_job ? formData.document_no : null);
+        const jobNo = formData.assigned_job_no || ((formData.is_job || formData.document_type === 'Job') ? formData.document_no : null);
         if (!jobNo) {
             toast.error('No Job Number assigned to this document.');
             return;
+        }
+
+        // Open print window synchronously on user click to prevent browser popup blocker after async saves
+        const printWin = window.open('about:blank', '_blank');
+        if (printWin) {
+            printWin.document.write('<div style="font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;color:#334155;font-weight:600;">Preparing latest Tax Invoice & Delivery Order for printing...</div>');
         }
 
         setSaving(true);
@@ -4280,6 +4293,7 @@ export default function WorkflowEditor() {
                     id: undefined,
                     document_type: 'Tax Invoice',
                     document_no: nextInvNo,
+                    assigned_job_no: jobNo,
                     status: 'Draft',
                     issue_date: new Date().toISOString().split('T')[0],
                     is_job: true,
@@ -4306,6 +4320,7 @@ export default function WorkflowEditor() {
                     id: undefined,
                     document_type: 'Delivery Order',
                     document_no: nextDoNo,
+                    assigned_job_no: jobNo,
                     status: 'Draft',
                     issue_date: new Date().toISOString().split('T')[0],
                     is_job: true,
@@ -4336,9 +4351,19 @@ export default function WorkflowEditor() {
 
             // 6. Open continuous print with latest verified IDs
             if (invDoc && doDoc) {
-                window.open(`/workflows/print/${invDoc.id}?secondaryId=${doDoc.id}&combo=inv_do&showSignature=${showSignature}&zeroTotal=${isZeroTotal}`, '_blank');
+                const printUrl = `/workflows/print/${invDoc.id}?secondaryId=${doDoc.id}&combo=inv_do&showSignature=${showSignature}&zeroTotal=${isZeroTotal}`;
+                if (printWin && !printWin.closed) {
+                    printWin.location.href = printUrl;
+                } else {
+                    navigate(printUrl);
+                }
+            } else if (printWin && !printWin.closed) {
+                printWin.close();
             }
         } catch (err) {
+            if (printWin && !printWin.closed) {
+                printWin.close();
+            }
             toast.dismiss(toastId);
             console.error('Error opening continuous print:', err);
             toast.error('Failed to open continuous print: ' + err.message);
