@@ -2273,17 +2273,29 @@ export default function WorkflowEditor() {
             });
 
             let subtotal = 0;
+            let discAmt = 0;
             let taxAmount = 0;
             let totalAmount = 0;
             if (!isTargetDO) {
                 subtotal = syncedItems.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
                 subtotal = Math.round(subtotal * 100) / 100;
+                if (discountType === 'percent') {
+                    const dPct = parseFloat(formData.discount_percent) || 0;
+                    discAmt = Math.round(subtotal * (dPct / 100) * 100) / 100;
+                } else {
+                    discAmt = Math.round((parseFloat(formData.discount_amount) || 0) * 100) / 100;
+                }
+                const discountedSub = subtotal - discAmt;
                 taxAmount = syncedItems.reduce((acc, curr) => {
                     if (curr.is_section || curr.is_note || curr.tax_enabled === false) return acc;
-                    return acc + ((parseFloat(curr.amount) || 0) * ((parseFloat(curr.tax_rate ?? 9) || 0) / 100));
+                    const tRate = parseFloat(curr.tax_rate ?? 9) || 0;
+                    const itemAmount = parseFloat(curr.amount) || 0;
+                    const itemWeight = subtotal > 0 ? itemAmount / subtotal : 0;
+                    const itemDiscountedAmount = itemAmount - (discAmt * itemWeight);
+                    return acc + (itemDiscountedAmount * (tRate / 100));
                 }, 0);
                 taxAmount = Math.round(taxAmount * 100) / 100;
-                totalAmount = Math.round((subtotal + taxAmount) * 100) / 100;
+                totalAmount = Math.round((discountedSub + taxAmount) * 100) / 100;
             }
 
             const updatedTargetData = {
@@ -2296,6 +2308,8 @@ export default function WorkflowEditor() {
                 subject: formData.subject,
                 currency: formData.currency,
                 exchange_rate: formData.exchange_rate,
+                discount_percent: isTargetDO ? targetDoc.discount_percent : formData.discount_percent,
+                discount_amount: isTargetDO ? targetDoc.discount_amount : discAmt,
                 subtotal: isTargetDO ? targetDoc.subtotal : subtotal,
                 tax_amount: isTargetDO ? targetDoc.tax_amount : taxAmount,
                 total_amount: isTargetDO ? targetDoc.total_amount : totalAmount,
@@ -3739,6 +3753,16 @@ export default function WorkflowEditor() {
                 if (autoSyncToCounterpart && pairedCounterpart) {
                     await handleSyncToCounterpart(pairedCounterpart, true);
                     toast.success(`Saved & synced with ${pairedCounterpart.document_no}!`);
+                } else if (autoSyncToCounterpart && formData.document_type === 'Job') {
+                    const invInSuite = (suiteDocs || []).find(d => d.document_type === 'Tax Invoice' && d.status !== 'Cancelled');
+                    const doInSuite = (suiteDocs || []).find(d => d.document_type === 'Delivery Order' && d.status !== 'Cancelled');
+                    if (invInSuite) await handleSyncToCounterpart(invInSuite, true);
+                    if (doInSuite) await handleSyncToCounterpart(doInSuite, true);
+                    if (invInSuite || doInSuite) {
+                        toast.success('Job saved & synced with Suite INV / DO!');
+                    } else {
+                        toast.success('Saved successfully');
+                    }
                 } else {
                     toast.success('Saved successfully');
                 }
@@ -4294,6 +4318,9 @@ export default function WorkflowEditor() {
                     await handleSyncToCounterpart(doDoc, true);
                 } else if (formData.document_type === 'Delivery Order') {
                     await handleSyncToCounterpart(invDoc, true);
+                } else if (formData.document_type === 'Job' || formData.is_job) {
+                    await handleSyncToCounterpart(invDoc, true);
+                    await handleSyncToCounterpart(doDoc, true);
                 }
             }
 
@@ -5977,10 +6004,9 @@ export default function WorkflowEditor() {
                                         refInvoiceId = formData.original_document_id;
                                     }
                                 } else {
-                                    // If viewing Tax Invoice, it is formData.total_amount
-                                    // If viewing Job/Enquiry/Quote, look for Tax Invoice in workflowDocs or fall back to formData.total_amount
+                                    // If viewing Tax Invoice or Job, use formData.total_amount directly so live edits reflect immediately
                                     const invDoc = (workflowDocs || []).find(d => d.document_type === 'Tax Invoice');
-                                    if (formData.document_type === 'Tax Invoice' || resolveDocType(type) === 'Tax Invoice') {
+                                    if (formData.document_type === 'Tax Invoice' || resolveDocType(type) === 'Tax Invoice' || formData.document_type === 'Job' || resolveDocType(type) === 'Job') {
                                         totalRevenue = parseFloat(formData.total_amount) || 0;
                                     } else if (invDoc) {
                                         totalRevenue = parseFloat(invDoc.total_amount) || 0;
