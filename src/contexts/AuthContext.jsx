@@ -4,6 +4,7 @@ import { getProfile } from '../lib/userService';
 import { getMyCompanies, getAllCompanies } from '../lib/companyService';
 import { getDocumentSettings } from '../lib/store';
 import { logUserActivity } from '../lib/auditService';
+import { refreshCompanyGoogleToken } from '../lib/googleAuthService';
 
 const AuthContext = createContext({});
 
@@ -27,6 +28,47 @@ export const AuthProvider = ({ children }) => {
             sessionStorage.setItem('session_company_initialized', 'true');
         }
     }, []);
+
+    // Automatically hydrate & keep the company-wide permanent Google Drive token fresh on load and every 45 minutes
+    useEffect(() => {
+        if (!user || !activeCompanyId) return;
+
+        let cancelled = false;
+        const hydrateDriveToken = async () => {
+            if (cancelled) return;
+            await refreshCompanyGoogleToken(activeCompanyId, false);
+        };
+
+        hydrateDriveToken();
+
+        // Silently renew access token every 45 minutes (before Google's 60-minute expiry)
+        const intervalId = setInterval(() => {
+            if (!cancelled) {
+                refreshCompanyGoogleToken(activeCompanyId, false);
+            }
+        }, 45 * 60 * 1000);
+
+        // Also re-check when returning to the window/tab after idle/sleep
+        const handleVisibilityOrFocus = () => {
+            if (document.visibilityState === 'visible') {
+                const expiry = localStorage.getItem('google_token_expiry');
+                const expMs = expiry ? new Date(expiry).getTime() : 0;
+                if (!localStorage.getItem('google_access_token') || expMs - Date.now() < 10 * 60 * 1000) {
+                    refreshCompanyGoogleToken(activeCompanyId, false);
+                }
+            }
+        };
+
+        window.addEventListener('focus', handleVisibilityOrFocus);
+        document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+        return () => {
+            cancelled = true;
+            clearInterval(intervalId);
+            window.removeEventListener('focus', handleVisibilityOrFocus);
+            document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+        };
+    }, [user?.id, activeCompanyId]);
 
     const defaultDemoProfile = (user) => {
         const email = user?.email || 'demo@celron.ae';

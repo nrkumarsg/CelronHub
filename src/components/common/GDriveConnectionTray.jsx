@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { HardDrive, CheckCircle2, AlertCircle, RefreshCw, LogOut, Link2, GripVertical, ChevronRight, ChevronLeft } from 'lucide-react';
-import { validateToken, connectGoogleAPI, getStoredToken } from '../../lib/googleAuthService';
+import { validateToken, connectGoogleAPI, getStoredToken, refreshCompanyGoogleToken } from '../../lib/googleAuthService';
 import { getCommunicationAccounts } from '../../lib/communicationService';
 
 const GDriveConnectionTray = ({ variant = 'floating' }) => {
@@ -19,8 +19,24 @@ const GDriveConnectionTray = ({ variant = 'floating' }) => {
     const [rel, setRel] = useState(null);
     const trayRef = useRef(null);
 
-    const checkConnection = async () => {
-        const token = getStoredToken();
+    const { activeCompanyId } = useAuth();
+
+    const checkConnection = async (forceBackendRefresh = false) => {
+        let token = getStoredToken();
+
+        // If no local token or forced refresh, silently pull a fresh company token from the server
+        if (!token || forceBackendRefresh) {
+            const refreshed = await refreshCompanyGoogleToken(activeCompanyId, forceBackendRefresh);
+            if (refreshed?.access_token) {
+                token = refreshed.access_token;
+                if (refreshed.google_email || refreshed.google_name) {
+                    setUserInfo({ email: refreshed.google_email, name: refreshed.google_name });
+                    setStatus('connected');
+                    return;
+                }
+            }
+        }
+
         if (!token) {
             setStatus('disconnected');
             setUserInfo(null);
@@ -38,9 +54,18 @@ const GDriveConnectionTray = ({ variant = 'floating' }) => {
                     const data = await res.json();
                     setUserInfo(data);
                     setStatus('connected');
-                } else {
-                    setStatus('disconnected');
+                    return;
                 }
+            }
+
+            // Local token was expired/invalid -> silently try server refresh once
+            const refreshed = await refreshCompanyGoogleToken(activeCompanyId, true);
+            if (refreshed?.access_token) {
+                setUserInfo({
+                    email: refreshed.google_email || localStorage.getItem('google_connected_email') || '',
+                    name: refreshed.google_name || localStorage.getItem('google_connected_name') || 'Connected'
+                });
+                setStatus('connected');
             } else {
                 setStatus('disconnected');
             }
@@ -52,9 +77,25 @@ const GDriveConnectionTray = ({ variant = 'floating' }) => {
 
     useEffect(() => {
         checkConnection();
-        const interval = setInterval(checkConnection, 5 * 60 * 1000);
-        return () => clearInterval(interval);
-    }, []);
+        const interval = setInterval(() => checkConnection(false), 5 * 60 * 1000);
+        const onTokenUpdated = (e) => {
+            const detail = e?.detail || {};
+            if (detail.access_token) {
+                setUserInfo({
+                    email: detail.google_email || localStorage.getItem('google_connected_email') || '',
+                    name: detail.google_name || localStorage.getItem('google_connected_name') || 'Connected'
+                });
+                setStatus('connected');
+            } else {
+                checkConnection(false);
+            }
+        };
+        window.addEventListener('celron-google-token-updated', onTokenUpdated);
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('celron-google-token-updated', onTokenUpdated);
+        };
+    }, [activeCompanyId]);
 
     const onMouseDown = (e) => {
         if (e.button !== 0) return;
@@ -102,7 +143,6 @@ const GDriveConnectionTray = ({ variant = 'floating' }) => {
         localStorage.setItem('gdrive_tray_collapsed', newState);
     };
 
-    const { activeCompanyId } = useAuth();
     const [loginHint, setLoginHint] = useState(null);
 
     const handleConnect = () => {
@@ -144,7 +184,7 @@ const GDriveConnectionTray = ({ variant = 'floating' }) => {
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
-        await checkConnection();
+        await checkConnection(true);
         setTimeout(() => setIsRefreshing(false), 1000);
     };
 

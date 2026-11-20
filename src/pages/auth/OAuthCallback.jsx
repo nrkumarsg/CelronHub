@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { exchangePermanentGoogleCode } from '../../lib/googleAuthService';
 
 export default function OAuthCallback() {
     const navigate = useNavigate();
@@ -51,10 +52,71 @@ export default function OAuthCallback() {
                 return;
             }
 
-            // ─── CASE 2: PKCE Code Exchange (code in query params, no hash token) ─
+            // ─── CASE 2: Permanent Company Google Drive OAuth Code Exchange ──────
+            // When connectGoogleAPI() initiates the offline authorization code flow,
+            // Google redirects back with ?code=...&state=perm|<originalState>.
             const urlSearchParams = new URLSearchParams(window.location.search);
             const code = urlSearchParams.get('code');
-            if (code && !state) {
+            const queryState = urlSearchParams.get('state') || '';
+            const queryError = urlSearchParams.get('error');
+
+            if (queryError) {
+                console.error('[OAuthCallback] Google OAuth error:', queryError);
+                alert(`Google connection cancelled or failed: ${queryError}`);
+                navigate('/dashboard', { replace: true });
+                return;
+            }
+
+            if (code && queryState.startsWith('perm|')) {
+                const rawInnerState = queryState.slice('perm|'.length);
+                const [baseState, companyIdFromState] = rawInnerState.split(':');
+                try {
+                    console.log('[OAuthCallback] Exchanging permanent Google OAuth code for state:', rawInnerState);
+                    const result = await exchangePermanentGoogleCode(code, companyIdFromState || null);
+
+                    const targetMap = {
+                        general: '/dashboard',
+                        mobile_upload: '/upload-media',
+                        enquiry_form: '/workflows',
+                        contacts_sync: '/contacts',
+                        manual_upload: '/catalog/manuals/new',
+                        catalog_photo_upload: '/catalog',
+                        catalog_spare_new: '/catalog',
+                        calibration_lab: '/forms/calibration-lab',
+                        scanner_module: '/scanner',
+                        apk_management: '/admin/apks',
+                        drive_status_tray: '/dashboard',
+                        drive_card_sync: '/partners/ai-drive-parser',
+                        drive_bill_sync: '/accounts/bills'
+                    };
+
+                    if (rawInnerState.startsWith('job_')) {
+                        const jobId = rawInnerState.split('_')[1];
+                        alert(`Permanent Company Google Drive Connected (${result.google_email || 'Active'})! All staff devices are now connected automatically.`);
+                        navigate(`/workflows/editor/job/${jobId}`, { replace: true });
+                        return;
+                    }
+
+                    const returnUrl = sessionStorage.getItem('google_auth_return_url');
+                    let target = returnUrl || targetMap[baseState] || '/dashboard';
+                    if (returnUrl) sessionStorage.removeItem('google_auth_return_url');
+
+                    if (target.includes('/upload-media') && !target.includes('token=')) {
+                        target += (target.includes('?') ? '&' : '?') + `token=${result.access_token}`;
+                    }
+
+                    alert(`Permanent Company Google Drive Connected (${result.google_email || 'Active'})! Every staff member & device will now stay connected automatically on load.`);
+                    window.location.href = target;
+                } catch (err) {
+                    console.error('[OAuthCallback] Permanent Google exchange failed:', err);
+                    alert(`Permanent Google Drive setup failed: ${err.message}`);
+                    navigate('/dashboard', { replace: true });
+                }
+                return;
+            }
+
+            // ─── CASE 2B: Supabase PKCE Code Exchange (code in query params, no custom state) ─
+            if (code && !state && !queryState) {
                 try {
                     const { error } = await supabase.auth.exchangeCodeForSession(code);
                     if (error) throw error;

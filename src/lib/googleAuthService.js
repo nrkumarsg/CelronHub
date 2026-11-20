@@ -4,6 +4,7 @@
  */
 
 import * as pdfjs from 'pdfjs-dist';
+import { supabase } from './supabase';
 
 // Set up PDF.js worker
 if (typeof window !== 'undefined' && !pdfjs.GlobalWorkerOptions.workerSrc) {
@@ -26,28 +27,44 @@ const SCOPES = [
 ].join(' ');
 
 /**
- * Initiates the Google OAuth 2.0 flow
- * @param {string} state - Arbitrary state (e.g. accountId or 'contacts_sync')
+ * Initiates the Google OAuth 2.0 flow.
+ * By default uses Authorization Code flow (access_type=offline, prompt=consent) so
+ * the backend can store a permanent refresh_token for the entire company.
+ * @param {string} state - Arbitrary state (e.g. accountId or 'drive_status_tray:<companyId>')
  * @param {string} customScope - Optional scope override
+ * @param {string} loginHint - Optional Google email hint
+ * @param {object} options - { permanent?: boolean }
  */
-export const connectGoogleAPI = (state = 'sync', customScope = null, loginHint = null) => {
+export const connectGoogleAPI = (state = 'sync', customScope = null, loginHint = null, options = {}) => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '646093609919-9chvqi80qq34427tejbj0vbl4o87ca3u.apps.googleusercontent.com';
     const redirectUri = window.location.origin + '/oauth-callback';
+    const usePermanentCodeFlow = options.permanent !== false;
 
     if (!clientId) {
         alert('Google Client ID not configured in .env file');
         return;
     }
 
-    const params = new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: 'token',
-        scope: customScope || SCOPES,
-        state: state,
-        prompt: 'select_account',
-        include_granted_scopes: 'true'
-    });
+    const params = usePermanentCodeFlow
+        ? new URLSearchParams({
+            client_id: clientId,
+            redirect_uri: redirectUri,
+            response_type: 'code',
+            access_type: 'offline',
+            prompt: 'consent select_account',
+            scope: customScope || SCOPES,
+            state: `perm|${state}`,
+            include_granted_scopes: 'true'
+        })
+        : new URLSearchParams({
+            client_id: clientId,
+            redirect_uri: redirectUri,
+            response_type: 'token',
+            scope: customScope || SCOPES,
+            state: state,
+            prompt: 'select_account',
+            include_granted_scopes: 'true'
+        });
 
     // Optionally hint which account should be selected
     if (loginHint) {
@@ -57,10 +74,142 @@ export const connectGoogleAPI = (state = 'sync', customScope = null, loginHint =
     console.log('Initiating Google OAuth:', {
         clientId: clientId,
         redirectUri: redirectUri,
-        state: state
+        state: state,
+        permanent: usePermanentCodeFlow
     });
     
     window.location.href = `${GOOGLE_AUTH_URL}?${params.toString()}`;
+};
+
+/**
+ * Persists a freshly minted Google access token into localStorage & notifies listeners.
+ */
+export const storeGoogleTokenLocally = (accessToken, expiresAtIso, companyId = null, meta = {}) => {
+    if (!accessToken) return;
+    const expiry = expiresAtIso || new Date(Date.now() + 3500 * 1000).toISOString();
+    try {
+        localStorage.setItem('google_access_token', accessToken);
+        localStorage.setItem('google_token_expiry', expiry);
+        sessionStorage.setItem('google_contacts_token', accessToken);
+        sessionStorage.setItem('google_contacts_expires', expiry);
+
+        const targetCompany = companyId || localStorage.getItem('active_company_id');
+        if (targetCompany) {
+            localStorage.setItem(`google_access_token_company_${targetCompany}`, accessToken);
+            localStorage.setItem(`google_token_expiry_company_${targetCompany}`, expiry);
+        }
+        if (meta?.google_email) {
+            localStorage.setItem('google_connected_email', meta.google_email);
+        }
+        if (meta?.google_name) {
+            localStorage.setItem('google_connected_name', meta.google_name);
+        }
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('celron-google-token-updated', {
+                detail: { access_token: accessToken, expires_at: expiry, ...meta }
+            }));
+        }
+    } catch (e) {
+        console.warn('[GoogleAuth] Failed storing token locally:', e);
+    }
+};
+
+let inflightRefreshPromise = null;
+
+/**
+ * Silently fetches/refreshes the permanent company-wide Google Drive access token from the backend.
+ * Safe to call on app boot, company switch, or background interval across all staff devices.
+ */
+export const refreshCompanyGoogleToken = async (companyId = null, force = false) => {
+    if (!force && inflightRefreshPromise) {
+        return inflightRefreshPromise;
+    }
+
+    const runner = (async () => {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session?.access_token) {
+                return { connected: false, reason: 'no_session' };
+            }
+
+            const targetCompany = companyId || localStorage.getItem('active_company_id') || '';
+            const qs = new URLSearchParams();
+            if (targetCompany) qs.set('companyId', targetCompany);
+            if (force) qs.set('force', 'true');
+
+            const resp = await fetch(`/api/google/token?${qs.toString()}`, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${session.access_token}`
+                }
+            });
+
+            if (!resp.ok) {
+                const errBody = await resp.json().catch(() => ({}));
+                console.warn('[GoogleAuth] Backend token refresh error:', errBody);
+                return { connected: false, reason: 'server_error', error: errBody.error };
+            }
+
+            const data = await resp.json();
+            if (data?.access_token) {
+                storeGoogleTokenLocally(data.access_token, data.expires_at, data.company_id || targetCompany, {
+                    google_email: data.google_email,
+                    google_name: data.google_name,
+                    permanent: true
+                });
+                return { connected: true, ...data };
+            }
+
+            return { connected: false, reason: data?.reason || 'not_configured', error: data?.error };
+        } catch (err) {
+            console.warn('[GoogleAuth] Silent refresh failed:', err);
+            return { connected: false, reason: 'network_error', error: err.message };
+        } finally {
+            inflightRefreshPromise = null;
+        }
+    })();
+
+    inflightRefreshPromise = runner;
+    return runner;
+};
+
+/**
+ * Exchanges a one-time OAuth authorization code with the backend to persist a permanent company refresh_token.
+ */
+export const exchangePermanentGoogleCode = async (code, companyId = null) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+        throw new Error('You must be signed in to CelronHub before linking Google Drive.');
+    }
+
+    const redirectUri = window.location.origin + '/oauth-callback';
+    const targetCompany = companyId || localStorage.getItem('active_company_id') || null;
+
+    const resp = await fetch('/api/google/oauth/exchange', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+            code,
+            redirectUri,
+            companyId: targetCompany
+        })
+    });
+
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.access_token) {
+        throw new Error(data.error || 'Failed to complete permanent Google Drive connection.');
+    }
+
+    storeGoogleTokenLocally(data.access_token, data.expires_at, data.company_id || targetCompany, {
+        google_email: data.google_email,
+        google_name: data.google_name,
+        permanent: true
+    });
+
+    return data;
 };
 
 /**
