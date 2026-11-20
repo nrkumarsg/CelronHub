@@ -11,7 +11,8 @@ import SmartUploadPanel from '../upload/SmartUploadPanel';
 export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
     if (!isOpen) return null;
 
-    const { profile } = useAuth();
+    const { profile, activeCompanyId } = useAuth();
+    const effectiveCompanyId = profile?.company_id || activeCompanyId || '8431cd0b-7449-44a5-8213-2a8680d09ebe';
 
     // Form inputs state
     const [to, setTo] = useState(data.to || '');
@@ -399,7 +400,7 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                     }
 
                     const payload = {
-                        company_id: profile?.company_id,
+                        company_id: effectiveCompanyId,
                         from_email: fromEmail,
                         to: singleTo,
                         cc: cc,
@@ -434,7 +435,7 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
             }
 
             const payload = {
-                company_id: profile?.company_id,
+                company_id: effectiveCompanyId,
                 from_email: fromEmail,
                 to: recipientTo,
                 cc: cc,

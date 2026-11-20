@@ -39,7 +39,7 @@ export default function ModuleSettings() {
         bank_details: ''
     });
 
-    const { profile } = useAuth();
+    const { profile, activeCompanyId } = useAuth();
     const [activeTab, setActiveTab] = useState('general'); // 'general', 'appearance', 'ai_providers', 'api_keys', 'database', 'security', 'about', 'my_links'
     const isAdmin = profile?.role === 'superadmin' || profile?.role === 'admin';
 
@@ -183,11 +183,15 @@ export default function ModuleSettings() {
     const handleSave = async () => {
         setSaving(true);
         try {
-            // Save Document settings to database
-            const ok = await saveDocumentSettings(settings);
+            const targetCompanyId = activeCompanyId || profile?.company_id || settings.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe';
+            // Save Document settings to database with company_id attached
+            const ok = await saveDocumentSettings({
+                ...settings,
+                company_id: targetCompanyId
+            });
             // Save Company Profile details if admin
-            if (isAdmin) {
-                await updateCompany(profile.company_id, {
+            if (isAdmin && targetCompanyId) {
+                await updateCompany(targetCompanyId, {
                     name: settings.company_name,
                     uen: settings.gst_uen,
                     address: settings.address,

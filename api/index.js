@@ -7,6 +7,11 @@ import { supabase } from '../src/lib/supabase.js';
 import { chatWithGemini } from '../src/lib/geminiService.js';
 import { handleKioskLogin } from '../src/lib/kioskAuthServer.js';
 import { handleAiComplete } from '../src/lib/ai/serverAiHandler.js';
+import {
+    handleGoogleOAuthExchange,
+    handleGetCompanyGoogleToken,
+    handleDisconnectCompanyGoogle
+} from '../src/lib/googleOAuthServer.js';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 const app = express();
@@ -33,6 +38,22 @@ app.post('/api/kiosk-login', async (req, res) => {
 // ---- AI provider proxy (keeps operator-owned API keys server-only) -------
 app.post('/api/ai/complete', async (req, res) => {
     const result = await handleAiComplete(req.body);
+    res.status(result.status).json(result.body);
+});
+
+// ---- Permanent Company-Wide Google Drive OAuth Endpoints -----------------
+app.post('/api/google/oauth/exchange', async (req, res) => {
+    const result = await handleGoogleOAuthExchange(req);
+    res.status(result.status).json(result.body);
+});
+
+app.get('/api/google/token', async (req, res) => {
+    const result = await handleGetCompanyGoogleToken(req);
+    res.status(result.status).json(result.body);
+});
+
+app.post('/api/google/disconnect', async (req, res) => {
+    const result = await handleDisconnectCompanyGoogle(req);
     res.status(result.status).json(result.body);
 });
 
@@ -340,23 +361,55 @@ app.post('/api/send-email', async (req, res) => {
     try {
         console.log(`[EmailAPI] Request to send email from ${from_email} for company ${company_id}. Thread Reply-To: ${replyToHeader}`);
 
-        // 1. Fetch SMTP Credentials
-        const { data: settings, error: settingsErr } = await supabase
-            .from('document_settings')
-            .select('*')
-            .eq('company_id', company_id)
-            .single();
+        // 1. Fetch SMTP Credentials (with graceful fallback to any existing document_settings row or env vars)
+        let settings = null;
+        if (company_id) {
+            const { data: byCompany } = await supabase
+                .from('document_settings')
+                .select('*')
+                .eq('company_id', company_id)
+                .limit(1)
+                .maybeSingle();
+            settings = byCompany;
+        }
 
-        if (settingsErr || !settings) {
-            console.error(`[EmailAPI] Settings error:`, settingsErr);
+        if (!settings) {
+            // Fallback: pick the primary document_settings record that has SMTP credentials configured
+            const { data: allSettings, error: settingsErr } = await supabase
+                .from('document_settings')
+                .select('*')
+                .order('updated_at', { ascending: false, nullsFirst: false })
+                .limit(10);
+
+            if (settingsErr) {
+                console.error(`[EmailAPI] Settings query error:`, settingsErr);
+            }
+            if (Array.isArray(allSettings) && allSettings.length > 0) {
+                settings = allSettings.find(s => s.sales_password || s.accounts_password) || allSettings[0];
+            }
+        }
+
+        const envSalesEmail = process.env.SMTP_SALES_EMAIL || process.env.SMTP_USER || 'sales@celron.net';
+        const envSalesPass = process.env.SMTP_SALES_PASSWORD || process.env.SMTP_PASS || '';
+        const envAccountsEmail = process.env.SMTP_ACCOUNTS_EMAIL || 'accounts@celron.net';
+        const envAccountsPass = process.env.SMTP_ACCOUNTS_PASSWORD || envSalesPass;
+
+        if (!settings && !envSalesPass && !envAccountsPass) {
             return res.status(400).json({ error: 'Company settings not found. Please configure SMTP in the Company Settings tab.' });
         }
 
-        const isAccountsEmail = from_email?.toLowerCase() === settings.accounts_email?.toLowerCase();
-        const senderEmail = isAccountsEmail ? settings.accounts_email : settings.sales_email;
-        const smtpPassword = isAccountsEmail ? settings.accounts_password : settings.sales_password;
-        const smtpHost = settings.smtp_host || 'smtp.zoho.com';
-        const smtpPort = parseInt(settings.smtp_port) || 465;
+        const effectiveSettings = settings || {};
+        const accountsEmailCfg = effectiveSettings.accounts_email || envAccountsEmail;
+        const salesEmailCfg = effectiveSettings.sales_email || envSalesEmail;
+        const accountsPassCfg = effectiveSettings.accounts_password || envAccountsPass || effectiveSettings.sales_password;
+        const salesPassCfg = effectiveSettings.sales_password || envSalesPass || effectiveSettings.accounts_password;
+
+        const isAccountsEmail = from_email?.toLowerCase() === accountsEmailCfg?.toLowerCase() ||
+            from_email?.toLowerCase().startsWith('accounts@');
+        const senderEmail = isAccountsEmail ? (accountsEmailCfg || salesEmailCfg) : (salesEmailCfg || accountsEmailCfg);
+        const smtpPassword = isAccountsEmail ? accountsPassCfg : salesPassCfg;
+        const smtpHost = effectiveSettings.smtp_host || process.env.SMTP_HOST || 'smtp.zoho.com';
+        const smtpPort = parseInt(effectiveSettings.smtp_port || process.env.SMTP_PORT) || 465;
 
         if (!senderEmail || !smtpPassword) {
             console.error(`[EmailAPI] Missing credentials for ${from_email}`);

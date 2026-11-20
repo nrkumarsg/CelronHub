@@ -4855,8 +4855,9 @@ export default function WorkflowEditor() {
 
             const finalAttachments = systemPdf ? [systemPdf, ...customAttachments] : customAttachments;
 
+            const effectiveCompanyId = profile?.company_id || activeCompanyId || formData.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe';
             const payload = {
-                company_id: profile.company_id,
+                company_id: effectiveCompanyId,
                 from_email: fromEmail,
                 to: emailPreview.to,
                 cc: emailPreview.cc,

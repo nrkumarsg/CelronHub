@@ -372,15 +372,29 @@ export const deleteBrand = async (id) => {
 
 // --- Document Settings ---
 export const getDocumentSettings = async (companyId = null) => {
-  let query = supabase.from('document_settings').select('*');
-
   if (companyId) {
-    query = query.eq('company_id', companyId);
+    const { data, error } = await supabase
+      .from('document_settings')
+      .select('*')
+      .eq('company_id', companyId)
+      .limit(1)
+      .maybeSingle();
+    if (!error && data) return data;
   }
 
-  const { data, error } = await query.limit(1).maybeSingle();
-  if (error) console.error('Error fetching settings:', error);
-  return data || null;
+  // Fallback: return the primary/most-recently-updated document_settings row (even if company_id was null)
+  const { data: rows, error: fallbackErr } = await supabase
+    .from('document_settings')
+    .select('*')
+    .order('updated_at', { ascending: false, nullsFirst: false })
+    .limit(5);
+
+  if (fallbackErr) {
+    console.error('Error fetching settings:', fallbackErr);
+    return null;
+  }
+  if (!rows || rows.length === 0) return null;
+  return rows.find(r => r.sales_password || r.accounts_password) || rows[0];
 };
 
 export const saveDocumentSettings = async (payload) => {
