@@ -4875,12 +4875,18 @@ export default function WorkflowEditor() {
                 return;
             }
 
+            const { data: { session: authSession } } = await supabase.auth.getSession();
+            const authHeaders = {
+                'Content-Type': 'application/json',
+                ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {})
+            };
+
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 45000);
 
             const response = await fetch(apiUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: authHeaders,
                 signal: controller.signal,
                 body: payloadString
             });

@@ -383,11 +383,15 @@ Email: sales@celron.net | Tel: +6597685891/81962270 Web : https://www.celron.net
                 });
             }));
 
+            const { data: { session: authSession } } = await supabase.auth.getSession();
             const response = await fetch(apiUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {})
+                },
                 body: JSON.stringify({
-                    company_id: enquiry?.company_id,
+                    company_id: enquiry?.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe',
                     from_email: FROM_EMAIL,
                     to: recipientTo,
                     cc: cc,

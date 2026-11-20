@@ -380,6 +380,12 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
             // Fallback from email from settings/auth
             const fromEmail = 'sales@celron.net';
 
+            const { data: { session: authSession } } = await supabase.auth.getSession();
+            const authHeaders = {
+                'Content-Type': 'application/json',
+                ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {})
+            };
+
             // If sendIndividually is enabled and multiple recipients exist, send one by one privately
             if (sendIndividually && recipientEmails.length > 1) {
                 let sentCount = 0;
@@ -391,7 +397,7 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                     if (Array.isArray(data.selectedSuppliers)) {
                         const matched = data.selectedSuppliers.find(s => 
                             (s.email1 && s.email1.toLowerCase() === singleTo.toLowerCase()) ||
-                            (s.email && s.email.toLowerCase() === singleTo.toLowerCase()) ||
+                            (s.email && s.email1?.toLowerCase() === singleTo.toLowerCase()) ||
                             (s.email2 && s.email2.toLowerCase() === singleTo.toLowerCase())
                         );
                         if (matched?.name) {
@@ -414,7 +420,7 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
 
                     const response = await fetch(apiUrl, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: authHeaders,
                         body: JSON.stringify(payload)
                     });
 
@@ -460,7 +466,7 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
 
             const response = await fetch(apiUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: authHeaders,
                 signal: controller.signal,
                 body: payloadString
             });

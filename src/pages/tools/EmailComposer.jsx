@@ -415,11 +415,15 @@ export default function EmailComposer() {
                 });
             }));
 
+            const { data: { session: authSession } } = await supabase.auth.getSession();
             const response = await fetch(apiUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {})
+                },
                 body: JSON.stringify({
-                    company_id: profile?.company_id,
+                    company_id: profile?.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe',
                     from_email: fromEmail,
                     to: to,
                     cc: cc,

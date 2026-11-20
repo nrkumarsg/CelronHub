@@ -2,6 +2,7 @@ import './polyfills.js';
 import nodemailer from 'nodemailer';
 import express from 'express';
 import cors from 'cors';
+import { createClient } from '@supabase/supabase-js';
 import { runUniversalSearch } from '../src/lib/universalFinder.js';
 import { supabase } from '../src/lib/supabase.js';
 import { chatWithGemini } from '../src/lib/geminiService.js';
@@ -361,10 +362,25 @@ app.post('/api/send-email', async (req, res) => {
     try {
         console.log(`[EmailAPI] Request to send email from ${from_email} for company ${company_id}. Thread Reply-To: ${replyToHeader}`);
 
+        // Build an authenticated/service-role Supabase client so RLS on document_settings never blocks the serverless query
+        const sbUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://dfoihdzpgkrtyerzzchm.supabase.co';
+        const sbServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+        const sbAnonKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRmb2loZHpwZ2tydHllcnp6Y2htIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1NzMxMTgsImV4cCI6MjA4NzE0OTExOH0.9FGN21KeUpS0UyyFJJ1YjXLElL4AF6ym_hKAJsr_ek4';
+        const authHeader = req.headers?.authorization || req.headers?.Authorization || '';
+
+        const dbClient = sbServiceKey
+            ? createClient(sbUrl, sbServiceKey, { auth: { persistSession: false, autoRefreshToken: false } })
+            : (authHeader
+                ? createClient(sbUrl, sbAnonKey, {
+                    auth: { persistSession: false, autoRefreshToken: false },
+                    global: { headers: { Authorization: authHeader } }
+                })
+                : supabase);
+
         // 1. Fetch SMTP Credentials (with graceful fallback to any existing document_settings row or env vars)
         let settings = null;
         if (company_id) {
-            const { data: byCompany } = await supabase
+            const { data: byCompany } = await dbClient
                 .from('document_settings')
                 .select('*')
                 .eq('company_id', company_id)
@@ -375,7 +391,7 @@ app.post('/api/send-email', async (req, res) => {
 
         if (!settings) {
             // Fallback: pick the primary document_settings record that has SMTP credentials configured
-            const { data: allSettings, error: settingsErr } = await supabase
+            const { data: allSettings, error: settingsErr } = await dbClient
                 .from('document_settings')
                 .select('*')
                 .order('updated_at', { ascending: false, nullsFirst: false })

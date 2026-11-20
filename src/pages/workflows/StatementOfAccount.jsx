@@ -973,12 +973,16 @@ export default function StatementOfAccount() {
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), 35000);
 
+                    const { data: { session: authSession } } = await supabase.auth.getSession();
                     const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/send-email`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {})
+                        },
                         signal: controller.signal,
                         body: JSON.stringify({
-                            company_id: profile?.company_id,
+                            company_id: profile?.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe',
                             from_email: fromEmail,
                             to: recipient,
                             cc: cc,
@@ -1177,12 +1181,16 @@ export default function StatementOfAccount() {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 35000);
 
+                const { data: { session: authSession } } = await supabase.auth.getSession();
                 const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/send-email`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {})
+                    },
                     signal: controller.signal,
                     body: JSON.stringify({
-                        company_id: profile?.company_id,
+                        company_id: profile?.company_id || '8431cd0b-7449-44a5-8213-2a8680d09ebe',
                         from_email: fromEmail,
                         to: recipient,
                         cc: settings?.accounts_email || 'accounts@celron.net',
