@@ -176,7 +176,7 @@ export const refreshCompanyGoogleToken = async (companyId = null, force = false)
 /**
  * Exchanges a one-time OAuth authorization code with the backend to persist a permanent company refresh_token.
  */
-export const exchangePermanentGoogleCode = async (code, companyId = null) => {
+export const exchangePermanentGoogleCode = async (code, companyId = null, clientSecret = null) => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) {
         throw new Error('You must be signed in to CelronHub before linking Google Drive.');
@@ -184,6 +184,7 @@ export const exchangePermanentGoogleCode = async (code, companyId = null) => {
 
     const redirectUri = window.location.origin + '/oauth-callback';
     const targetCompany = companyId || localStorage.getItem('active_company_id') || null;
+    const savedSecret = clientSecret || localStorage.getItem('celron_google_client_secret') || null;
 
     const resp = await fetch('/api/google/oauth/exchange', {
         method: 'POST',
@@ -194,13 +195,16 @@ export const exchangePermanentGoogleCode = async (code, companyId = null) => {
         body: JSON.stringify({
             code,
             redirectUri,
-            companyId: targetCompany
+            companyId: targetCompany,
+            ...(savedSecret ? { clientSecret: savedSecret } : {})
         })
     });
 
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data.access_token) {
-        throw new Error(data.error || 'Failed to complete permanent Google Drive connection.');
+        const err = new Error(data.message || data.error || 'Failed to complete permanent Google Drive connection.');
+        err.code = data.error;
+        throw err;
     }
 
     storeGoogleTokenLocally(data.access_token, data.expires_at, data.company_id || targetCompany, {

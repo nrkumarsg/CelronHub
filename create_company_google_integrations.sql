@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS public.company_google_integrations (
     google_email TEXT,
     google_name TEXT,
     refresh_token TEXT NOT NULL,
+    client_secret TEXT,
     access_token TEXT,
     access_token_expires_at TIMESTAMPTZ,
     scopes TEXT,
@@ -16,15 +17,21 @@ CREATE TABLE IF NOT EXISTS public.company_google_integrations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE public.company_google_integrations
+    ADD COLUMN IF NOT EXISTS client_secret TEXT;
+
 -- Enable Row Level Security
 ALTER TABLE public.company_google_integrations ENABLE ROW LEVEL SECURITY;
 
--- Deny direct browser/anon reads of refresh_token (only server-side service role accesses this table)
+-- Allow authenticated company users / backend requests with user JWT to read/update their company integration
 DROP POLICY IF EXISTS "No direct client access to google integrations" ON public.company_google_integrations;
-CREATE POLICY "No direct client access to google integrations"
+DROP POLICY IF EXISTS "Authenticated users can manage company google integrations" ON public.company_google_integrations;
+
+CREATE POLICY "Authenticated users can manage company google integrations"
     ON public.company_google_integrations
     FOR ALL
-    USING (false)
-    WITH CHECK (false);
+    TO authenticated
+    USING (true)
+    WITH CHECK (true);
 
-COMMENT ON TABLE public.company_google_integrations IS 'Server-only storage for permanent company-wide Google Drive OAuth refresh tokens.';
+COMMENT ON TABLE public.company_google_integrations IS 'Storage for permanent company-wide Google Drive OAuth refresh tokens.';

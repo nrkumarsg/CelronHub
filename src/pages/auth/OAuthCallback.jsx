@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
-import { exchangePermanentGoogleCode } from '../../lib/googleAuthService';
+import { exchangePermanentGoogleCode, connectGoogleAPI } from '../../lib/googleAuthService';
 
 export default function OAuthCallback() {
     const navigate = useNavigate();
@@ -72,7 +72,26 @@ export default function OAuthCallback() {
                 const [baseState, companyIdFromState] = rawInnerState.split(':');
                 try {
                     console.log('[OAuthCallback] Exchanging permanent Google OAuth code for state:', rawInnerState);
-                    const result = await exchangePermanentGoogleCode(code, companyIdFromState || null);
+                    let result;
+                    try {
+                        result = await exchangePermanentGoogleCode(code, companyIdFromState || null);
+                    } catch (firstErr) {
+                        if (firstErr.code === 'MISSING_GOOGLE_CLIENT_SECRET' || firstErr.message?.includes('GOOGLE_CLIENT_SECRET')) {
+                            const enteredSecret = window.prompt(
+                                'One-Time Setup for Permanent Google Drive:\n\nPlease paste your Google OAuth Client Secret (from Google Cloud Console -> Credentials -> OAuth 2.0 Client ID 646093609919-...) so CelronHub can permanently refresh tokens in the background.\n\n(Or click Cancel to connect for this session without a Client Secret):'
+                            );
+                            if (enteredSecret && enteredSecret.trim()) {
+                                localStorage.setItem('celron_google_client_secret', enteredSecret.trim());
+                                result = await exchangePermanentGoogleCode(code, companyIdFromState || null, enteredSecret.trim());
+                            } else {
+                                // Fallback to session token flow immediately so the user is never blocked!
+                                connectGoogleAPI(rawInnerState, null, null, { permanent: false });
+                                return;
+                            }
+                        } else {
+                            throw firstErr;
+                        }
+                    }
 
                     const targetMap = {
                         general: '/dashboard',
