@@ -275,8 +275,11 @@ export const getWorkflowDocuments = async (companyId, type = null, onlyJobs = fa
     let query = supabase
         .from('workflow_documents')
         .select(selectFields)
-        .eq('company_id', companyId)
         .order('created_at', { ascending: false });
+
+    if (companyId) {
+        query = query.or(`company_id.eq.${companyId},company_id.is.null`);
+    }
 
     if (onlyJobs) {
         query = query.not('assigned_job_no', 'is', null);
@@ -306,33 +309,54 @@ export const getStatementData = async (companyId, partnerId, startDate, endDate)
         ? 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, currency, total_amount, issue_date, status, partners!partner_id(id, name)'
         : 'id, document_no, document_type, assigned_job_no, enquiry_id, partner_id, currency, total_amount, issue_date, status, internal_notes, original_document_id, customer_ref, customer_po_no, subject, partners!partner_id(id, name), vessels!vessel_id(vessel_name), work_locations!work_location_id(location_name)';
 
-    let query = supabase
-        .from('workflow_documents')
-        .select(selectFields);
+    const pageSize = 1000;
+    let page = 0;
+    let allData = [];
+    let keepFetching = true;
 
-    if (companyId) {
-        query = query.or(`company_id.eq.${companyId},company_id.is.null`);
+    while (keepFetching) {
+        let query = supabase
+            .from('workflow_documents')
+            .select(selectFields)
+            .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        if (companyId) {
+            query = query.or(`company_id.eq.${companyId},company_id.is.null`);
+        }
+
+        query = query
+            .in('document_type', ['Tax Invoice', 'Proforma Invoice', 'Invoice', 'Payment Received', 'Credit Note'])
+            .neq('status', 'Cancelled')
+            .order('issue_date', { ascending: true });
+
+        if (endDate) {
+            query = query.lte('issue_date', endDate);
+        }
+
+        if (partnerId) {
+            query = query.eq('partner_id', partnerId);
+        }
+
+        const { data: chunk, error } = await query;
+
+        if (error) {
+            console.error('getStatementData query error:', error);
+            return { data: null, error };
+        }
+
+        if (chunk && chunk.length > 0) {
+            allData = [...allData, ...chunk];
+            if (chunk.length < pageSize) {
+                keepFetching = false;
+            } else {
+                page++;
+            }
+        } else {
+            keepFetching = false;
+        }
     }
 
-    query = query
-        .in('document_type', ['Tax Invoice', 'Proforma Invoice', 'Invoice', 'Payment Received', 'Credit Note'])
-        .neq('status', 'Cancelled')
-        .order('issue_date', { ascending: true });
-
-    if (endDate) {
-        query = query.lte('issue_date', endDate);
-    }
-
-    if (partnerId) {
-        query = query.eq('partner_id', partnerId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-        console.error('getStatementData query error:', error);
-        return { data: null, error };
-    }
+    const data = allData;
 
     let partner = null;
     if (partnerId) {

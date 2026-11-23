@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
-import { exchangePermanentGoogleCode, connectGoogleAPI } from '../../lib/googleAuthService';
+import { exchangePermanentGoogleCode, connectGoogleAPI, storeGoogleTokenLocally } from '../../lib/googleAuthService';
 
 export default function OAuthCallback() {
     const navigate = useNavigate();
@@ -13,23 +13,29 @@ export default function OAuthCallback() {
             const params = new URLSearchParams(hash);
 
             const accessToken = params.get('access_token');
+            const providerToken = params.get('provider_token');
             const stateRaw = params.get('state'); // Custom state for Drive flows
             const state = stateRaw || '';
             const expiresIn = params.get('expires_in') || '3600';
 
-            console.log('[OAuthCallback] hash params:', { hasToken: !!accessToken, state });
+            console.log('[OAuthCallback] hash params:', { hasToken: !!accessToken, hasProviderToken: !!providerToken, state });
 
             // ─── CASE 1: Supabase Auth Login (Google Sign-In) ────────────────────
             // When a user signs in with Google for authentication, Supabase returns
-            // an access_token in the hash but with NO custom state.
-            // We let Supabase SDK process the session automatically via onAuthStateChange.
+            // an access_token in the hash (or PKCE code) with NO custom perm| state.
             if (accessToken && !state) {
                 try {
+                    if (providerToken) {
+                        storeGoogleTokenLocally(providerToken, new Date(Date.now() + parseInt(expiresIn) * 1000).toISOString());
+                    }
                     // Supabase automatically picks up the session from the URL hash.
                     const { data: { session }, error } = await supabase.auth.getSession();
                     if (error) throw error;
 
                     if (session?.user) {
+                        if (session.provider_token) {
+                            storeGoogleTokenLocally(session.provider_token, new Date(Date.now() + 3500 * 1000).toISOString());
+                        }
                         console.log('[OAuthCallback] Auth login successful for:', session.user.email);
                         navigate('/', { replace: true });
                     } else {
@@ -37,8 +43,11 @@ export default function OAuthCallback() {
                         const urlParams = new URLSearchParams(window.location.search);
                         const code = urlParams.get('code');
                         if (code) {
-                            const { error: exchangeErr } = await supabase.auth.exchangeCodeForSession(code);
+                            const { data: exData, error: exchangeErr } = await supabase.auth.exchangeCodeForSession(code);
                             if (exchangeErr) throw exchangeErr;
+                            if (exData?.session?.provider_token) {
+                                storeGoogleTokenLocally(exData.session.provider_token, new Date(Date.now() + 3500 * 1000).toISOString());
+                            }
                             navigate('/', { replace: true });
                         } else {
                             console.warn('[OAuthCallback] No session and no code found.');
@@ -134,11 +143,14 @@ export default function OAuthCallback() {
                 return;
             }
 
-            // ─── CASE 2B: Supabase PKCE Code Exchange (code in query params, no custom state) ─
-            if (code && !state && !queryState) {
+            // ─── CASE 2B: Supabase PKCE Code Exchange (code in query params, not a custom Drive state) ─
+            if (code && !state && !queryState.startsWith('perm|')) {
                 try {
-                    const { error } = await supabase.auth.exchangeCodeForSession(code);
+                    const { data: exData, error } = await supabase.auth.exchangeCodeForSession(code);
                     if (error) throw error;
+                    if (exData?.session?.provider_token) {
+                        storeGoogleTokenLocally(exData.session.provider_token, new Date(Date.now() + 3500 * 1000).toISOString());
+                    }
                     console.log('[OAuthCallback] PKCE session exchange successful');
                     navigate('/', { replace: true });
                 } catch (err) {

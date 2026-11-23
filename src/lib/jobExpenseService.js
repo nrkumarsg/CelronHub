@@ -125,15 +125,20 @@ export const deleteJobExpense = async (id) => {
 };
 export const getGlobalExpenses = async (companyId) => {
     try {
-        const { data, error } = await supabase
+        let query = supabase
             .from('job_expenses')
             .select(`
                 *,
                 partner:supplier_id (id, name, uen),
                 job:job_id (id, job_no)
             `)
-            .eq('company_id', companyId)
             .order('created_at', { ascending: false });
+
+        if (companyId) {
+            query = query.or(`company_id.eq.${companyId},company_id.is.null`);
+        }
+
+        const { data, error } = await query;
 
         if (error) throw error;
         return { data, error: null };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { HardDrive, Brain, RefreshCw, X, GripHorizontal } from 'lucide-react';
-import { getStoredToken, validateToken, connectGoogleAPI } from '../lib/googleAuthService';
+import { getStoredToken, validateToken, connectGoogleAPI, refreshCompanyGoogleToken } from '../lib/googleAuthService';
 
 export default function FloatingControlHub({ jobId }) {
     const [status, setStatus] = useState('checking'); // 'connected' | 'expired' | 'disconnected'
@@ -17,17 +17,38 @@ export default function FloatingControlHub({ jobId }) {
     useEffect(() => {
         checkStatus();
         const interval = setInterval(checkStatus, 30000); // Check every 30s
-        return () => clearInterval(interval);
+        const onTokenUpdated = (e) => {
+            if (e?.detail?.access_token) {
+                setStatus('connected');
+            } else {
+                checkStatus();
+            }
+        };
+        window.addEventListener('celron-google-token-updated', onTokenUpdated);
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('celron-google-token-updated', onTokenUpdated);
+        };
     }, []);
 
     const checkStatus = async () => {
-        const token = getStoredToken();
+        let token = getStoredToken();
         if (!token) {
+            const refreshed = await refreshCompanyGoogleToken(null, false);
+            if (refreshed?.access_token) {
+                setStatus('connected');
+                return;
+            }
             setStatus('disconnected');
             return;
         }
         const isValid = await validateToken(token);
-        setStatus(isValid ? 'connected' : 'expired');
+        if (isValid) {
+            setStatus('connected');
+        } else {
+            const refreshed = await refreshCompanyGoogleToken(null, true);
+            setStatus(refreshed?.access_token ? 'connected' : 'expired');
+        }
     };
 
     const onMouseDown = (e) => {

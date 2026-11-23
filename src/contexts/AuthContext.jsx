@@ -333,6 +333,10 @@ export const AuthProvider = ({ children }) => {
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             console.log('Auth: onAuthStateChange event:', event, session?.user?.email);
             if (session?.user) {
+                if (session.provider_token) {
+                    localStorage.setItem('google_access_token', session.provider_token);
+                    localStorage.setItem('google_token_expiry', new Date(Date.now() + 3500 * 1000).toISOString());
+                }
                 currentUserIdRef.current = session.user.id;
                 setUser(session.user);
                 // Defer profile refresh to prevent locking/deadlocks in auth transitions
@@ -488,9 +492,10 @@ export const AuthProvider = ({ children }) => {
                 provider: 'google',
                 options: {
                     redirectTo: `${siteUrl}/oauth-callback`,
+                    scopes: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/calendar.events',
                     queryParams: {
                         access_type: 'offline',
-                        prompt: 'consent',
+                        prompt: 'select_account',
                     }
                 }
             });
