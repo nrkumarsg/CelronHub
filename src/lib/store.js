@@ -12,8 +12,8 @@ export const deduplicatePartners = (partnersList) => {
 
   for (const p of partnersList) {
     if (!p) continue;
-    // Exclude merged duplicates and pending approval records
-    if (p.status === 'merged_duplicate' || p.status === 'pending_approval') continue;
+    // Exclude only merged duplicates (pending_approval records are still selectable in workflows/quotations)
+    if (p.status === 'merged_duplicate') continue;
 
     const key = (p.name || '').trim().toLowerCase();
     if (!key) {
@@ -82,11 +82,12 @@ export const getPartners = async (profile = null) => {
       .range(page * pageSize, (page + 1) * pageSize - 1)
       .order('name', { ascending: true });
 
-    // Exclude pending drafts and merged duplicates from active lists
-    query = query.or('status.is.null,and(status.neq.pending_approval,status.neq.merged_duplicate)');
+    // Exclude merged duplicates from active lists (include pending_approval so newly scanned/imported partners appear in dropdowns)
+    query = query.or('status.is.null,status.neq.merged_duplicate');
 
     // ONLY filter if user is NOT a superadmin. Include company-specific and global/unassigned partners.
-    if (profile?.company_id && profile.role !== 'superadmin') {
+    const isValidUuid = typeof profile?.company_id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(profile.company_id);
+    if (isValidUuid && profile.role !== 'superadmin') {
       query = query.or(`company_id.eq.${profile.company_id},company_id.is.null`);
     }
 
@@ -109,11 +110,11 @@ export const getPartners = async (profile = null) => {
   }
 
   // Fallback: If company filter returned 0 records, fetch global partners to prevent empty directory
-  if (allData.length === 0 && profile?.company_id) {
+  if (allData.length === 0) {
     const { data } = await supabase
       .from('partners')
       .select('*, contacts(*)')
-      .or('status.is.null,and(status.neq.pending_approval,status.neq.merged_duplicate)')
+      .or('status.is.null,status.neq.merged_duplicate')
       .order('name', { ascending: true })
       .limit(1000);
     if (data && data.length > 0) {

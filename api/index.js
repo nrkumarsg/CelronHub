@@ -449,15 +449,42 @@ app.post('/api/send-email', async (req, res) => {
             }
         });
 
-        // 3. Process Attachments
-        const mailAttachments = (attachments || []).map(file => {
-            const content = file.content.includes('base64,') ? file.content.split('base64,')[1] : file.content;
-            return {
-                filename: file.name,
-                content: Buffer.from(content, 'base64'),
-                contentType: file.type
-            };
-        });
+        // 3. Process Attachments (supports direct base64 content OR url/driveFileId fetched server-side to bypass Vercel 4.5MB request body limit)
+        const mailAttachments = [];
+        for (const file of (attachments || [])) {
+            if (file.driveFileId && file.googleAccessToken) {
+                const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.driveFileId}?alt=media`, {
+                    headers: { Authorization: `Bearer ${file.googleAccessToken}` }
+                });
+                if (!driveRes.ok) {
+                    throw new Error(`Failed to fetch large attachment "${file.name}" from Google Drive (${driveRes.status})`);
+                }
+                const arrBuf = await driveRes.arrayBuffer();
+                mailAttachments.push({
+                    filename: file.name,
+                    content: Buffer.from(arrBuf),
+                    contentType: file.type || 'application/octet-stream'
+                });
+            } else if (file.url) {
+                const urlRes = await fetch(file.url);
+                if (!urlRes.ok) {
+                    throw new Error(`Failed to download large attachment "${file.name}" from storage (${urlRes.status})`);
+                }
+                const arrBuf = await urlRes.arrayBuffer();
+                mailAttachments.push({
+                    filename: file.name,
+                    content: Buffer.from(arrBuf),
+                    contentType: file.type || 'application/octet-stream'
+                });
+            } else if (file.content) {
+                const content = file.content.includes('base64,') ? file.content.split('base64,')[1] : file.content;
+                mailAttachments.push({
+                    filename: file.name,
+                    content: Buffer.from(content, 'base64'),
+                    contentType: file.type
+                });
+            }
+        }
 
         // 4. Send Mail with Threading Headers if available
         const mailOptions = {

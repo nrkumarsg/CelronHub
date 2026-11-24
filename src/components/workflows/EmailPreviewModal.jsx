@@ -195,6 +195,7 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
             
             const blob = await response.blob();
             const file = new File([blob], fileInfo.name, { type: fileInfo.mimeType || 'application/octet-stream' });
+            file.driveFileId = fileInfo.id;
             
             setAttachments(prev => [...prev, file]);
             toast.success(`Attached ${fileInfo.name}`);
@@ -367,9 +368,52 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
                 });
             };
 
-            // Convert attachments to base64 payload
+            const totalRawBytes = attachments.reduce((acc, f) => acc + (f.size || 0), 0);
+            const useServerSideFetch = totalRawBytes > 2.2 * 1024 * 1024;
+            const gToken = getStoredToken();
+
+            // Convert attachments to base64 payload (or server-side Drive/Storage reference for large files > 800 KB)
             const customAttachments = await Promise.all(attachments.map(async (file) => {
                 const processed = await compressAttachmentImage(file);
+                if (useServerSideFetch && processed.size > 800 * 1024) {
+                    if (file.driveFileId && gToken) {
+                        return {
+                            name: processed.name,
+                            type: processed.type,
+                            driveFileId: file.driveFileId,
+                            googleAccessToken: gToken
+                        };
+                    }
+                    if (gToken) {
+                        try {
+                            const targetFolder = supplierUploadsFolderId || photosFolderId || quotationsFolderId || data.enquiryFolderId || null;
+                            const uploaded = await uploadFileToDrive(gToken, processed, targetFolder ? { folderId: targetFolder } : {});
+                            if (uploaded?.id) {
+                                return {
+                                    name: processed.name,
+                                    type: processed.type,
+                                    driveFileId: uploaded.id,
+                                    googleAccessToken: gToken
+                                };
+                            }
+                        } catch (e) {
+                            console.warn('[EmailPreviewModal] Drive staging fallback failed:', e);
+                        }
+                    }
+                    try {
+                        const { uploadFile } = await import('../../lib/store');
+                        const publicUrl = await uploadFile('company_assets', 'email_temp', processed);
+                        if (publicUrl) {
+                            return {
+                                name: processed.name,
+                                type: processed.type,
+                                url: publicUrl
+                            };
+                        }
+                    } catch (e) {
+                        console.warn('[EmailPreviewModal] Supabase storage staging failed:', e);
+                    }
+                }
                 return new Promise((resolve) => {
                     const reader = new FileReader();
                     reader.onload = (e) => resolve({ name: processed.name, type: processed.type, content: e.target.result });
@@ -454,9 +498,9 @@ export default function EmailPreviewModal({ isOpen, onClose, onSent, data }) {
             };
 
             const payloadString = JSON.stringify(payload);
-            if (payloadString.length > 4.2 * 1024 * 1024) {
+            if (payloadString.length > 4.4 * 1024 * 1024) {
                 const totalMB = (payloadString.length / (1024 * 1024)).toFixed(1);
-                toast.error(`Total attachment size (${totalMB} MB) exceeds the email server limit (4.0 MB). Please remove some attachments or share larger files via Google Drive.`);
+                toast.error(`Total inline attachment size (${totalMB} MB) exceeds the 4.4 MB limit. Please connect Google Drive so large attachments can be routed automatically.`);
                 setSaving(false);
                 return;
             }

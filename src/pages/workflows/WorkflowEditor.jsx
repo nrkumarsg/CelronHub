@@ -1764,6 +1764,8 @@ export default function WorkflowEditor() {
             if (!response.ok) throw new Error('Failed to retrieve file content from Google Drive');
             const blob = await response.blob();
             const file = new File([blob], fileInfo.name, { type: fileInfo.mimeType || 'application/octet-stream' });
+            // Tag with driveFileId so large files (>1.5 MB) can be fetched directly by the backend without hitting Vercel's 4.5MB HTTP body limit
+            file.driveFileId = fileInfo.id;
             
             setEmailPreview(prev => ({
                 ...prev,
@@ -4844,8 +4846,57 @@ export default function WorkflowEditor() {
                 });
             };
 
+            const totalRawBytes = (emailPreview.attachments || []).reduce((acc, f) => acc + (f.size || 0), 0);
+            const useServerSideFetch = totalRawBytes > 2.2 * 1024 * 1024;
+            const gToken = getStoredToken();
+
             const customAttachments = await Promise.all((emailPreview.attachments || []).map(async (file) => {
                 const processed = await compressAttachmentImage(file);
+
+                // If payload is large (>2.2 MB total), avoid base64 in the HTTP request body for large files (>800 KB)
+                if (useServerSideFetch && processed.size > 800 * 1024) {
+                    // 1. If already on Google Drive, let backend fetch directly from Drive
+                    if (file.driveFileId && gToken) {
+                        return {
+                            name: processed.name,
+                            type: processed.type,
+                            driveFileId: file.driveFileId,
+                            googleAccessToken: gToken
+                        };
+                    }
+                    // 2. If Google Drive token is available, upload temp copy to job folder / root and pass driveFileId
+                    if (gToken) {
+                        try {
+                            const targetFolder = worksuiteFolderId || supportDocsFolderId || explorerFolderId || null;
+                            const uploaded = await uploadFileToDrive(gToken, processed, targetFolder ? { folderId: targetFolder } : {});
+                            if (uploaded?.id) {
+                                return {
+                                    name: processed.name,
+                                    type: processed.type,
+                                    driveFileId: uploaded.id,
+                                    googleAccessToken: gToken
+                                };
+                            }
+                        } catch (driveUpErr) {
+                            console.warn('[Email] Drive staging fallback failed, trying Supabase storage:', driveUpErr);
+                        }
+                    }
+                    // 3. Fallback: upload to Supabase Storage 'company_assets' and send public URL
+                    try {
+                        const { uploadFile } = await import('../../lib/store');
+                        const publicUrl = await uploadFile('company_assets', 'email_temp', processed);
+                        if (publicUrl) {
+                            return {
+                                name: processed.name,
+                                type: processed.type,
+                                url: publicUrl
+                            };
+                        }
+                    } catch (sbUpErr) {
+                        console.warn('[Email] Supabase storage staging failed, falling back to inline base64:', sbUpErr);
+                    }
+                }
+
                 return new Promise((resolve) => {
                     const reader = new FileReader();
                     reader.onload = (e) => resolve({ name: processed.name, type: processed.type, content: e.target.result });
@@ -4868,9 +4919,9 @@ export default function WorkflowEditor() {
             };
 
             const payloadString = JSON.stringify(payload);
-            if (payloadString.length > 4.2 * 1024 * 1024) {
+            if (payloadString.length > 4.4 * 1024 * 1024) {
                 const totalMB = (payloadString.length / (1024 * 1024)).toFixed(1);
-                toast.error(`Total attachment size (${totalMB} MB) exceeds the email server payload limit (4.0 MB). Please remove some attachments or share larger files via Google Drive.`);
+                toast.error(`Total inline attachment size (${totalMB} MB) exceeds the 4.4 MB limit. Please connect Google Drive so large attachments can be routed automatically.`);
                 setSaving(false);
                 return;
             }
@@ -9674,22 +9725,23 @@ export default function WorkflowEditor() {
                                     <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
                                         {(() => {
                                             const totalBytes = (emailPreview.attachments || []).reduce((acc, f) => acc + (f.size || 0), 0);
-                                            const isNearLimit = totalBytes > 3.2 * 1024 * 1024;
+                                            const isOver25MB = totalBytes > 25 * 1024 * 1024;
+                                            const isCloudRouted = totalBytes > 2.2 * 1024 * 1024 && !isOver25MB;
                                             return (
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                                     <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                                         Currently Attached ({emailPreview.attachments?.length || 0})
                                                     </label>
-                                                    <span style={{ fontSize: '11px', fontWeight: 600, color: isNearLimit ? '#e11d48' : '#64748b' }}>
-                                                        Total: {Math.round(totalBytes / 1024)} KB {isNearLimit ? '(Near Server Limit 3.5 MB)' : '/ 3.5 MB Max'}
+                                                    <span style={{ fontSize: '11px', fontWeight: 600, color: isOver25MB ? '#e11d48' : (isCloudRouted ? '#0284c7' : '#64748b') }}>
+                                                        Total: {Math.round(totalBytes / 1024)} KB {isCloudRouted ? '(Auto Cloud-Relay Active • Up to 25 MB)' : '/ 25 MB Max'}
                                                     </span>
                                                 </div>
                                             );
                                         })()}
-                                        {((emailPreview.attachments || []).reduce((acc, f) => acc + (f.size || 0), 0) > 3.5 * 1024 * 1024) && (
+                                        {((emailPreview.attachments || []).reduce((acc, f) => acc + (f.size || 0), 0) > 25 * 1024 * 1024) && (
                                             <div style={{ background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', color: '#be123c', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                 <AlertCircle size={15} color="#e11d48" />
-                                                <span>Attachments exceed 3.5 MB. Please remove large files or share via Google Drive to prevent mail delivery failure.</span>
+                                                <span>Attachments exceed the 25 MB email limit. Please remove large files or share via Google Drive link.</span>
                                             </div>
                                         )}
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
